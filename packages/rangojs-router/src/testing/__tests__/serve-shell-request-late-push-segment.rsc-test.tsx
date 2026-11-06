@@ -208,7 +208,11 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     expect(latePushSegment(reported)).toBe(slot);
   });
 
-  it("the route's, for a component the route handler handed its ctx to", async () => {
+  // Control: the route's ctx carries nothing, so this reads the walker's pin,
+  // which is still the route's here because the route declares no parallel
+  // slot. One that does pins the slot after the handler and is named instead
+  // (execution-model.md, "A streamed handler keeps its segment").
+  it("the route's, for a component the route handler handed its ctx to, when the route declares no slot", async () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);

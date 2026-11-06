@@ -2621,10 +2621,16 @@ split them.
 
 Not changed: an awaited route handler (a route without `loading()`, an
 action's route) has no scope and reads the shared pin, which is its own while
-the walker waits on it. An orphan layout pins its own segment for that wait
-and puts the previous pin back after it (`resolveOrphanLayout`); its
-handler's ctx carries the orphan's segment either way. A push function bound
-before the await (`const push = ctx.use(Handle)`) was always filed right.
+the walker waits on it. A component that route handler handed its ctx to
+renders after the wait, so the pin it reads is whatever the walk set since: a
+parallel slot the route declares pins its own id after the route handler, and
+the message then names that slot. Giving the route's ctx a carried segment
+the way a layout's has one would change what `{ ...ctx }` copies there, which
+this section's last paragraph relies on, so the route case waits for a
+decision. An orphan layout pins its own segment for that wait and puts the
+previous pin back after it (`resolveOrphanLayout`); its handler's ctx carries
+the orphan's segment either way. A push function bound before the await
+(`const push = ctx.use(Handle)`) was always filed right.
 
 An intercept's handler still gets the shared ctx (its `loading()` case is
 covered by its `runAsSegment` scope, a component it hands the ctx to is not).
@@ -2634,9 +2640,9 @@ Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.
 the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
-segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, `const { use } = ctx` included, and the bucket a push
-that lands before collection completes files in) and
+segment a `LateHandlePushError` names for a component a route with no parallel
+slot, a layout and a slot handed the ctx to, `const { use } = ctx` included,
+and the bucket a push that lands before collection completes files in) and
 `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
