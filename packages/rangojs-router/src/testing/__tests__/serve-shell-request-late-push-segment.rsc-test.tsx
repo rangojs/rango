@@ -189,14 +189,6 @@ async function serve(url: string, hold: Hold) {
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
 
-/** The one LateHandlePushError the response reported, and its segment. */
-function latePushSegment(reported: string[]): string {
-  expect(reported).toHaveLength(1);
-  const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
-  expect(segment).not.toBeNull();
-  return segment![1]!;
-}
-
 /** Every LateHandlePushError's segment, in the order the response reported it. */
 function latePushSegments(reported: string[]): string[] {
   return reported
@@ -206,6 +198,14 @@ function latePushSegments(reported: string[]): string[] {
       expect(segment).not.toBeNull();
       return segment![1]!;
     });
+}
+
+/** The one LateHandlePushError the response reported, and its segment. */
+function latePushSegment(reported: string[]): string {
+  expect(reported).toHaveLength(1);
+  const segments = latePushSegments(reported);
+  expect(segments).toHaveLength(1);
+  return segments[0]!;
 }
 
 beforeEach(async () => {
