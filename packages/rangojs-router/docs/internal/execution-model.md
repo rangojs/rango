@@ -2577,6 +2577,10 @@ Limits:
   (`$$routePrefix`), not a route name; a `Static()` route's is its route name.
   The scope itself is read only through `reverse` (and `_reverseScope`, which
   keys a `"use cache"` call taking the ctx).
+- A bake has no request, so `ctx.reverse(".name")` gets no mount-param
+  autofill: a dot-local route with a required mount param throws `Missing
+param` at build where the same layout live fills it from the URL. Name a
+  param-free route when the bake only needs to show the scope.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
