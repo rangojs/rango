@@ -25,6 +25,7 @@ import {
   cookies,
   createLoader,
   createRouter,
+  notFound,
   Prerender,
   redirect,
   urls,
@@ -122,6 +123,27 @@ const OffHostDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+// One sibling redirects, another calls notFound(): both arrive as Flight error
+// rows, so which outcome wins is firstFlightError's rule.
+async function NotFoundSibling(): Promise<never> {
+  notFound();
+}
+
+async function RedirectSibling(): Promise<never> {
+  throw redirect("/sibling-moved", 302);
+}
+
+const MixedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async () => (
+    <div>
+      <NotFoundSibling />
+      <RedirectSibling />
+    </div>
+  ),
+  { onDemand: true },
+);
+
 function makeRouter(
   config: PrerenderConfig,
   options: { id?: string; version?: string } = {},
@@ -139,6 +161,7 @@ function makeRouter(
         name: "componentMoved",
       }),
       path("/off-host/:slug", OffHostDef, { name: "offHost" }),
+      path("/mixed/:slug", MixedDef, { name: "mixed" }),
     ]),
   );
 }
@@ -492,6 +515,18 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       expect(served.response.headers.get("Location")).toBe(
         "/component-moved/a",
       );
+    });
+
+    it("a redirect outranks a notFound() collected in the same render, and a real failure outranks both", async () => {
+      const router = makeRouter({ store });
+
+      // One component redirects, one calls notFound(): the redirect is an
+      // answer for this URL, the notFound() may be an unrelated sibling.
+      expect(await router.prerender({ env: {} })("/mixed/a")).toMatchObject({
+        ok: true,
+        status: "redirected",
+        location: "/sibling-moved",
+      });
     });
 
     it("an off-host redirect keeps its external opt-in: the guard does not neutralize the stored target", async () => {

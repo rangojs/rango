@@ -2388,6 +2388,19 @@ describe("createPrerenderTrigger: warming a route that is not on-demand", () => 
       expect(h.fetch).not.toHaveBeenCalled();
     });
 
+    it("does not warm after a redirect: the URL answers a 3xx, so there is no page to rebuild caches on", async () => {
+      const h = handler();
+      const result = await warmHarness({
+        fetch: h.fetch,
+        runProducer: async () =>
+          output({ redirect: { status: 301, location: "/products/new-42" } }),
+      }).trigger("https://shop.example/products/42");
+
+      expect(result).toMatchObject({ ok: true, status: "redirected" });
+      expect(result).not.toHaveProperty("caches");
+      expect(h.fetch).not.toHaveBeenCalled();
+    });
+
     it("a Passthrough param the producer declined is still warmed: the marker is stored first, so the live handler serves it", async () => {
       const order: string[] = [];
       const h = handler((record) => {

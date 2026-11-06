@@ -996,6 +996,18 @@ permanent one. A stored `301` is a real 301: the browser caches it, and a later
 refresh that turns the URL back into a page cannot uncache it. Use a `302`/`307`
 for a move that may be undone.
 
+One part of a live redirect is not carried: `redirect(url, { state })`
+(`Flash` messages and the like). The state reaches a document request through
+`RequestContext._locationState` (`server/document-location-state.ts`), and the
+producer's requestless context sets it to nothing, so there is no state to
+store: the redirect is stored without it and the target page renders with none.
+Carrying it is a separate decision, not a small fix: a stored state would be
+the same for every visitor of the moved URL, which is right for "this page
+moved" and wrong for anything per visitor, so it needs the owner's call before
+it is stored. Until then, a prerendered redirect that needs state should
+redirect without it and have the target explain, or the app should keep that
+URL live.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build

@@ -343,7 +343,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // Quiet: the refresh is complete without it. Never after `removed`: there
     // is no page to rebuild a cache on, and a Passthrough route's live handler
     // may still render the removed page from a data source that has not
-    // caught up, which the warm would then write to its caches.
+    // caught up, which the warm would then write to its caches. Never after
+    // `redirected` either: the request answers a 3xx, so there is no page to
+    // rebuild caches on.
     if (
       result.status === "rendered" ||
       result.status === "skipped-passthrough"
