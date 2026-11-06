@@ -899,9 +899,11 @@ async function readPrerenderSource<TEnv>(
 
 /**
  * The Response a stored redirect answers with: the status and target the
- * render's `redirect()` carried. `external` is re-branded rather than carried
- * as a header, because the opt-in is out-of-band (redirect-origin.ts): a stored
- * off-host redirect must pass the outgoing 3xx guard exactly like a live one.
+ * render's `redirect()` carried. Built here, not through `redirect()` again:
+ * that would re-apply the basename to a location the render already prefixed.
+ * `external` is re-branded rather than carried as a header, because the opt-in
+ * is out-of-band (redirect-origin.ts): a stored off-host redirect must pass the
+ * outgoing 3xx guard exactly like a live one.
  */
 function storedRedirectResponse(redirect: PrerenderRedirect): Response {
   const response = new Response(null, {
