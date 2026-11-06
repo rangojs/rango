@@ -634,7 +634,10 @@ function executeLoaderData<TEnv>(
     overrides = internal._loaderCacheOverrides = new Map();
     const originalUse = ctx.use;
     internal._loaderCacheOriginalUse = originalUse;
-    ctx.use = ((item: any) => {
+    // A regular function that forwards the receiver: setupLoaderAccess
+    // resolves a handle push's segment from the ctx `use` was called on, so a
+    // layout's or slot's ctx must reach it through this interceptor too.
+    ctx.use = function (this: unknown, item: any) {
       const cached = overrides!.get(item?.$$id);
       if (cached) {
         // A read is a consumption (#957, #964): see createLoaderExecutor's
@@ -643,8 +646,8 @@ function executeLoaderData<TEnv>(
         readValueTags(cached);
         return readStartedLoaderValue(cached, item.$$id);
       }
-      return originalUse(item);
-    }) as typeof ctx.use;
+      return originalUse.call(this, item);
+    } as typeof ctx.use;
   }
   const runMiss = internal._loaderCacheOriginalUse!;
 

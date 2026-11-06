@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
+
+**Before.** An async server component a layout's (or a parallel slot's)
+handler handed its `ctx` to that pushed a handle after an `await` was rejected
+— by design, the `.defer()` path is the mitigation — and the dev
+`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
+the request's shared segment id when it was called, and by then the route
+handler had run and moved it on.
+
+**Now.** The message names the layout's or the slot's segment, the one that
+owns the ctx the push went through:
+`Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
+The push is still rejected, at the same moment, and production still shows no
+message.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
