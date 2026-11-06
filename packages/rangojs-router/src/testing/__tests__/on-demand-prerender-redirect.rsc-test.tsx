@@ -54,10 +54,6 @@ const onDemand = {
   ],
 };
 
-function Page({ children }: { children?: React.ReactNode }): React.ReactNode {
-  return <div>{children}</div>;
-}
-
 const RouteRedirectDef = Prerender<{ slug: string }>(
   async () => [],
   async (ctx) => {
