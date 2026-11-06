@@ -26,6 +26,7 @@ import {
 } from "../handler-context";
 import { scopeReverse, type ReverseScope } from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
+import { callShapes } from "../../testing/__tests__/helpers/call-shapes.js";
 
 beforeEach(() => {
   getSearchSchemaMock.mockReset();
@@ -621,6 +622,33 @@ describe("createReverseFunction", () => {
       expect(scoped._reverseScope).toBeUndefined();
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
+    });
+
+    it("withSegmentScope: the child's use reaches the installed one in every call shape", async () => {
+      // The installed `use` resolves the segment from its receiver
+      // (segmentCtxOf, router/loader-resolution.ts): a consumer that
+      // destructures it, spreads the ctx or hands `use` on as a callback has
+      // no receiver, so the child's own wrapper must supply one.
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        _currentSegmentId: "M0L0L0R0",
+        use(this: unknown, item: unknown) {
+          receivers.push(this);
+          return item;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      for (const shape of callShapes(
+        scoped as unknown as Record<string, unknown>,
+        "use",
+      )) {
+        await shape.call("item");
+      }
+      expect(receivers).toHaveLength(6);
+      for (const receiver of receivers) {
+        expect(receiver).toBe(scoped);
+      }
     });
   });
 

@@ -207,17 +207,17 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a handler gets: a prototype child of the request's one handler ctx
+ * that carries the segment the handler belongs to.
  *
- * The segment rides the object for the same reason the scope does: the walker
- * moves the shared `_currentSegmentId` on while an async component the handler
- * handed this ctx to is still rendering, so a push made through this ctx after
- * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * The segment rides the object for the same reason the reverse scope does:
+ * the walker moves the shared `_currentSegmentId` on while an async component
+ * the handler handed this ctx to is still rendering (a route's own parallel
+ * slot, the next segment), so a push made through this ctx after an `await`
+ * would otherwise file under (and a LateHandlePushError name) whatever segment
+ * the walker pinned since. `ctx.use` reads `_handleSegmentId` off the receiver
+ * it was called on (`segmentCtxOf`, router/loader-resolution.ts), which holds
+ * after an `await` and in a component the ctx is handed to.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,10 +231,19 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: HandlerContext<any, any>["use"];
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  // Own `use`, not the prototype's: the installed one resolves the segment
+  // from the ctx it was called on, and `const { use } = ctx`, `{ ...ctx }`
+  // and a `use` passed on as a callback have no receiver. The wrapper reads
+  // the live `use` at call time, so a later replacement (the loader-cache
+  // interceptor, segment-resolution/loader-cache.ts) is honored, and hands it
+  // this ctx.
+  scoped.use = ((item: unknown) =>
+    (ctx as any).use.call(scoped, item)) as HandlerContext<any, any>["use"];
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

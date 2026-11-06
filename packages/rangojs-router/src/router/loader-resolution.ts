@@ -101,27 +101,26 @@ export type LoaderErrorCallback = (
  */
 
 /**
- * The segment a handle push through `ctx.use` files under.
+ * The ctx a call through `ctx.use` came through: the receiver when it carries
+ * a segment, else the ctx `use` was installed on.
  *
- * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
- * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
- * the walker pins — a handler that built a smaller ctx with `use` copied onto
- * it (a Prerender handler forwarding to a shared page handler) included.
+ * A handler's ctx carries its segment (withSegmentScope,
+ * router/handler-context.ts), and the segment holds however long after the
+ * handler returned, so an async component the handler handed the ctx to still
+ * files under it after the walker moved the shared pin on. Any other receiver
+ * reads the installed ctx, whose `_currentSegmentId` the walker pins — a
+ * handler that built a smaller ctx with `use` copied onto it (a Prerender
+ * handler forwarding to a shared page handler) included.
  */
-function handlePushSegment(
+function segmentCtxOf(
   receiver: unknown,
   installed: HandlerContext<any, any>,
-): string | undefined {
+): InternalHandlerContext<any, any> {
   const carried = (receiver as { _handleSegmentId?: string } | undefined)
     ?._handleSegmentId;
-  return segmentPinOf(
-    carried === undefined
-      ? (installed as { _currentSegmentId?: string })
-      : { _handleSegmentId: carried },
-  );
+  return carried === undefined
+    ? (installed as InternalHandlerContext<any, any>)
+    : (receiver as InternalHandlerContext<any, any>);
 }
 
 /**
@@ -514,6 +513,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  ownerCtx?: InternalHandlerContext<any, TEnv>,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -532,6 +532,10 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    // The ctx the read came through: a handler's own (withSegmentScope) when
+    // a component it handed the ctx to starts the loader, else the installed
+    // one, whose pin the walker sets at each kickoff.
+    ownerCtx: InternalHandlerContext<any, TEnv> = internal,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -629,7 +633,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ownerCtx, loader.$$id);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1006,18 +1010,19 @@ export function setupLoaderAccess<TEnv>(
       },
     )(loader, null);
 
-  // A regular function, not an arrow: `ctx.use` resolves the push segment
-  // from the RECEIVER when it carries one (handlePushSegment), so a layout's
-  // or slot's ctx files the push under its own segment however long after the
-  // handler returned.
+  // A regular function, not an arrow: `ctx.use` resolves the segment from the
+  // RECEIVER when it carries one (segmentCtxOf), so a handler's ctx files the
+  // push and the loader it starts under its own segment however long after
+  // the handler returned.
   ctx.use = function (
     this: HandlerContext<any, TEnv> | undefined,
     item: LoaderDefinition<any, any> | Handle<any, any>,
   ) {
+    const owner = segmentCtxOf(this, ctx);
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = segmentPinOf(owner);
 
       if (!segmentId) {
         throw new Error(
@@ -1074,7 +1079,7 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    return useLoader(loader, null, owner);
   } as typeof ctx.use;
 }
 
@@ -1095,7 +1100,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = segmentPinOf(segmentCtxOf(this, ctx));
 
       if (!segmentId) {
         throw new Error(

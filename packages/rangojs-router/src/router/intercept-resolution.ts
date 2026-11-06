@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -357,6 +358,10 @@ export async function resolveInterceptEntry<TEnv>(
 
   const { context, params } = pass;
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
+  // The pin the slot's loaders and handler put back after they ran: the
+  // entry the walker was resolving before this intercept.
+  const internal = context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
   const { segments: loaderSegments } = await resolveInterceptLoaders(
     pass,
     interceptEntry,
@@ -366,8 +371,7 @@ export async function resolveInterceptEntry<TEnv>(
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
   // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
   // it when called).
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
+  internal._currentSegmentId = slotSegmentId;
 
   const slotSegment = (
     component: ReactNode,
@@ -393,6 +397,11 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The slot's own ctx carries its segment (withSegmentScope), so a component
+  // the handler hands the ctx to still files under the slot after the walker
+  // moved the shared pin on, and the pin itself goes back to the entry being
+  // resolved once the handler returned.
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +409,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -412,6 +421,8 @@ export async function resolveInterceptEntry<TEnv>(
       slotSegmentId,
       options?.background,
     );
+  } finally {
+    internal._currentSegmentId = pinned;
   }
   // Consumed only after the layout and loader awaits below; a rejection in that
   // window would be an unhandledRejection (process crash on Node's default
@@ -425,7 +436,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

@@ -9,13 +9,17 @@ handler handed its `ctx` to that pushed a handle after an `await` was rejected
 — by design, the `.defer()` path is the mitigation — and the dev
 `LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
 the request's shared segment id when it was called, and by then the route
-handler had run and moved it on.
+handler had run and moved it on. The same push named the wrong segment when
+the component had destructured `use` or copied the ctx with `{ ...ctx }`, when
+the handler was a route's with its own parallel slot, and when the component
+started a loader or a `"use cache"` function through that ctx.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment that owns the ctx the push went
+through — the layout's, the slot's or the intercept's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+That holds for every way the call is written, and a loader or a `"use cache"`
+function a component starts through such a ctx files under it too. The push is
+still rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

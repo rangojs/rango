@@ -305,6 +305,9 @@ The public DOM seam is
 - Client app entrypoint: [browser/rsc-router.tsx](../../src/browser/rsc-router.tsx), [browser/react/NavigationProvider.tsx](../../src/browser/react/NavigationProvider.tsx), [browser/index.ts](../../src/browser/index.ts).
 - Default prefetch strategy: [router/prefetch-default.ts](../../src/router/prefetch-default.ts), [browser/prefetch/default-strategy.ts](../../src/browser/prefetch/default-strategy.ts), [browser/prefetch/invalidation.ts](../../src/browser/prefetch/invalidation.ts), [browser/prefetch/loader.ts](../../src/browser/prefetch/loader.ts), [browser/prefetch/observer.ts](../../src/browser/prefetch/observer.ts), [browser/react/Link.tsx](../../src/browser/react/Link.tsx), [browser/link-interceptor.ts](../../src/browser/link-interceptor.ts).
 - Prefetch-aware e2e helpers: [testing/e2e/page-helpers.ts](../../src/testing/e2e/page-helpers.ts), [testing/e2e/parity.ts](../../src/testing/e2e/parity.ts).
+- Review probes for unit tests: [helpers/call-shapes.ts](../../src/testing/__tests__/helpers/call-shapes.ts)
+  (`callShapes` calls a method as a method, detached, through a spread copy
+  and after an `await`).
 - Server entrypoint: [rsc/handler.ts](../../src/rsc/handler.ts) (the Flight executor around [rsc/request-stages.ts](../../src/rsc/request-stages.ts)), [ssr/index.tsx](../../src/ssr/index.tsx).
 - Nested `cache()` keys (#970, #974, #975): [cache/cache-scope.ts](../../src/cache/cache-scope.ts)
   (`CacheScope.keyFns`, `storeScopes`, `resolveKeyFrom`, `resolvePartition`,
