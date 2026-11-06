@@ -241,6 +241,33 @@ describe("a live intercept slot in resolvedIds", () => {
     expect(document.flight).not.toContain("_handlerRan");
   });
 
+  it("is not listed when its handler and layout are static, so nothing of it ran", async () => {
+    const staticRouter = createRouter({}).routes(
+      urls(({ path, layout, intercept }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            path("/list", () => <ul>list</ul>, { name: "list" }),
+            path("/item/:id", () => <article>item</article>, { name: "item" }),
+            intercept("@modal", ".item", <dialog>static</dialog>),
+          ],
+        ),
+      ]),
+    );
+    const cacheStore = new MemorySegmentCacheStore();
+    const list = await readAnswer(
+      await serveShellRequest(staticRouter, "/list", { cacheStore }),
+    );
+    const opened = await serveShellRequest(staticRouter, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: list.answer.matched },
+    });
+    const { answer } = await readAnswer(opened);
+
+    expect(answer.slots?.["@modal"]?.segments[0]).toBeDefined();
+    expect(answer.resolvedIds).toEqual([]);
+  });
+
   it("sends no internal marker on a partial response either", async () => {
     const { cacheStore, openedAnswer } = await openModal();
 

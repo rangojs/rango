@@ -494,7 +494,12 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement, true), ...loaderSegments];
+  // A static handler or layout is a ReactNode, not a run: nothing of the
+  // slot's can have pushed, so the answer lists it as it lists a kept one.
+  const handlerRan =
+    typeof interceptEntry.handler === "function" ||
+    typeof interceptEntry.layout === "function";
+  return [slotSegment(component, layoutElement, handlerRan), ...loaderSegments];
 }
 
 /**
