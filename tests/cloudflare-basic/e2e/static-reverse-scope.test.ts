@@ -62,6 +62,21 @@ function defineCases(f: Fixture) {
     await expectRootLayout(page);
   });
 
+  test("a partial navigation into the subtree keeps the same baked links", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url(`${BASE}/`));
+    await waitForHydration(page);
+
+    await testId(page, "srs-to-issues").click();
+    await expect(page).toHaveURL(new RegExp(`${BASE}/acme/web/issues$`));
+    await expect(testId(page, "srs-project-issues")).toBeVisible();
+    await expectRootLayout(page);
+    await expectAccountLayout(page);
+    await expectProjectScope(page);
+  });
+
   test("the project settings page keeps the same baked links", async ({
     page,
   }) => {

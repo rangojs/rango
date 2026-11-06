@@ -1,5 +1,5 @@
 import { Static, urls } from "@rangojs/router";
-import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 /**
  * A Static() layout or slot bakes ctx.reverse(".name") in the module that
@@ -78,9 +78,20 @@ const accountPatterns = urls(({ path, layout, include }) => [
 
 export const staticReverseScopePatterns = urls(({ path, layout, include }) => [
   layout(StaticRootLayout, () => [
-    path("/", () => <div data-testid="srs-index">Static scope index</div>, {
-      name: "staticScopeHome",
-    }),
+    path(
+      "/",
+      (ctx) => (
+        <div data-testid="srs-index">
+          <Link
+            to={ctx.reverse("staticAccount.project.issues")}
+            data-testid="srs-to-issues"
+          >
+            Project issues
+          </Link>
+        </div>
+      ),
+      { name: "staticScopeHome" },
+    ),
     include("/acme", accountPatterns, { name: "staticAccount" }),
   ]),
 ]);
