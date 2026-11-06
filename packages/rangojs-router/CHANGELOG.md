@@ -15,7 +15,10 @@ resolved live.
 
 **Now.** A `Static()` layout or slot bakes `ctx.reverse(".name")` in the
 include scope that declared it — the same `ReverseScope` its live ctx
-carries — at every nesting depth, the root included.
+carries — at every nesting depth, the root included. A definition mounted
+more than once bakes in its last mount's scope, prefix and root scope
+together, so a shared `Static()` layout no longer keeps one mount's include
+prefix beside another's root scope.
 
 ## 0.35.0 (2026-11-04)
 

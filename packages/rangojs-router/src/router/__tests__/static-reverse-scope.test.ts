@@ -23,6 +23,7 @@ import type { RangoInternal } from "../../router/router-interfaces.js";
 import { urls } from "../../urls/urls-function.js";
 import { Static } from "../../static-handler.js";
 import { generateManifestFull } from "../../build/generate-manifest.js";
+import { staticDefReverseScope } from "../../vite/discovery/prerender-collection.js";
 
 // A Static() layout or slot bakes ctx.reverse(".name") in the include scope
 // that declared it, like the segment's live ctx (withReverseScope). The bake
@@ -88,13 +89,7 @@ const router = createRouter({
 }).routes(patterns) as unknown as RangoInternal<any, any>;
 
 /** The collector's exact production call (prerender-collection.ts). */
-async function bake(def: any): Promise<void> {
-  // Only a mounted layout or slot has a ReverseScope: path() stamps a route
-  // name, layout() and parallel() stamp the include prefix and root scope.
-  const reverseScope =
-    def.$$routeName === undefined && def.$$rootScoped !== undefined
-      ? { prefix: def.$$routePrefix, rootScoped: def.$$rootScoped }
-      : undefined;
+async function bake(router: RangoInternal<any, any>, def: any): Promise<void> {
   await router
     .renderStaticSegment(
       def.handler,
@@ -103,7 +98,7 @@ async function bake(def: any): Promise<void> {
       undefined,
       undefined,
       def.$$rootScoped,
-      reverseScope,
+      staticDefReverseScope(def),
     )
     .catch(() => {});
 }
@@ -123,7 +118,7 @@ describe("Static() layout and slot reverse scope at bake time", () => {
       ["slot", innerSlot],
       ["route", dottedRoute],
     ] as const) {
-      await bake(def);
+      await bake(router, def);
     }
 
     // Every row in one assertion: a bake that resolves one include too high
@@ -147,5 +142,86 @@ describe("Static() layout and slot reverse scope at bake time", () => {
       // keeps resolving from its route name, not from the "outer" module.
       route: "/outer/blog/settings",
     });
+  });
+
+  it("bakes a def mounted twice in its last mount's scope", async () => {
+    // One Static() layout in three places: a named include (prefix "outer"),
+    // the router root, and a transparent include nested in the root layout.
+    // The transparent mount stamps last, at root scope with no prefix. Stamps
+    // that do not land together keep the named include's prefix beside that
+    // root-scope flag, and the bake resolves `.settings` in a module the last
+    // mount never declared.
+    const shared = capture("shared", ".settings");
+    const sharedNamedPatterns = urls(({ layout, path }) => [
+      layout(shared, () => [
+        path("/settings", () => null, { name: "settings" }),
+      ]),
+    ]);
+    const sharedTransparentPatterns = urls(({ layout, path }) => [
+      layout(shared, () => [
+        path("/t-settings", () => null, { name: "tSettings" }),
+      ]),
+    ]);
+    const sharedPatterns = urls(({ path, layout, include }) => [
+      include("/named", sharedNamedPatterns, { name: "outer" }),
+      layout(shared, () => [
+        path("/settings", () => null, { name: "settings" }),
+        include("/t", sharedTransparentPatterns, { name: "" }),
+      ]),
+    ]);
+    const sharedRouter = createRouter({
+      id: "static-reverse-scope-shared",
+      $$routeNames: {
+        settings: "/settings",
+        tSettings: "/t/t-settings",
+        "outer.settings": "/named/settings",
+      },
+    }).routes(sharedPatterns) as unknown as RangoInternal<any, any>;
+
+    // Same two passes a build runs: the router's own mount, then discovery's
+    // (include children evaluate there).
+    await generateManifestFull(sharedPatterns, 0, {
+      routerId: "static-reverse-scope-shared",
+    });
+    await bake(sharedRouter, shared);
+
+    // The last mount is at root scope, so `.settings` is the bare root name.
+    // A prefix left over from the named include bakes /named/settings.
+    expect(baked.shared?.value).toBe("/settings");
+  });
+
+  it("bakes a def remounted as a layout in its include scope, not its old route name", async () => {
+    // A Static() def used as a route in one module and as a layout in another.
+    // The route mount stamps a route name; the layout mount that follows must
+    // clear it, or the bake keeps resolving dot names from a route that is no
+    // longer what the def is mounted as.
+    const remounted = capture("remounted", ".settings");
+    const asRoutePatterns = urls(({ path }) => [
+      path("/settings", remounted, { name: "settings" }),
+    ]);
+    const asLayoutPatterns = urls(({ layout, path }) => [
+      layout(remounted, () => [
+        path("/settings", () => null, { name: "settings" }),
+      ]),
+    ]);
+    const remountedPatterns = urls(({ include }) => [
+      include("/as-route", asRoutePatterns, { name: "asRoute" }),
+      include("/as-layout", asLayoutPatterns, { name: "asLayout" }),
+    ]);
+    const remountedRouter = createRouter({
+      id: "static-reverse-scope-remounted",
+      $$routeNames: {
+        "asRoute.settings": "/as-route/settings",
+        "asLayout.settings": "/as-layout/settings",
+      },
+    }).routes(remountedPatterns) as unknown as RangoInternal<any, any>;
+
+    await generateManifestFull(remountedPatterns, 0, {
+      routerId: "static-reverse-scope-remounted",
+    });
+    await bake(remountedRouter, remounted);
+
+    // The layout mount is last: prefix "asLayout", not the route name.
+    expect(baked.remounted?.value).toBe("/as-layout/settings");
   });
 });

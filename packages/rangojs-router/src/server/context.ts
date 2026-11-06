@@ -862,6 +862,11 @@ export function scopeReverse(
  * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
  * never contains, silently degrading to the dot-heuristic).
  * A definition mounted more than once is stamped each time; the last mount wins.
+ * The whole identity is written together for that reason: `$$routePrefix` and
+ * `$$rootScoped` are one ReverseScope to the bake, so a def whose earlier mount
+ * was inside a named include and whose last mount is at root scope must lose
+ * that prefix, or the bake resolves dot names in a module neither mount
+ * declared (a prefix from one mount beside the other's root-scope flag).
  */
 export function stampStaticDefScope(
   handler: unknown,
@@ -869,8 +874,14 @@ export function stampStaticDefScope(
 ): void {
   const store = RangoContext.getStore();
   const def = handler as Record<string, unknown>;
-  if (routeName !== undefined) def.$$routeName = routeName;
-  def.$$rootScoped = getRootScoped();
+  const scope = getReverseScope();
+  // A route resolves dot names from its name; a layout or slot from its
+  // include scope. Only one of the two is a mount's identity.
+  if (routeName === undefined) delete def.$$routeName;
+  else def.$$routeName = routeName;
+  if (scope.prefix === undefined) delete def.$$routePrefix;
+  else def.$$routePrefix = scope.prefix;
+  def.$$rootScoped = scope.rootScoped;
   if (store?.routerId !== undefined) def.$$routerId = store.routerId;
 }
 

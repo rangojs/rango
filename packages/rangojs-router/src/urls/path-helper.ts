@@ -258,9 +258,6 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
     };
 
     if (isStaticHandler(handler) && handler.$$id) {
-      if (ctx.namePrefix) {
-        (handler as any).$$routePrefix = ctx.namePrefix;
-      }
       stampStaticDefScope(handler, routeName);
     }
 

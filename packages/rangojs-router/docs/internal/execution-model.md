@@ -2548,7 +2548,13 @@ request, so no `EntryData` and no live ctx: `renderStaticSegment`
 wraps it in `withReverseScope` with the def's own scope, which the DSL stamps
 on the definition at mount time — `$$routePrefix` is the `include()` name
 prefix (`ctx.namePrefix`), `$$rootScoped` is `getRootScoped()`. The collector
-(`vite/discovery/prerender-collection.ts`) passes both. Without the wrap the
+(`vite/discovery/prerender-collection.ts`) reads the pair as one scope
+(`staticDefReverseScope`) and passes both. Those two are one
+scope to the bake, so `stampStaticDefScope` writes them together: a def whose
+earlier mount sat inside a named include and whose last mount is at root scope
+must lose the prefix, or the bake reads a prefix from one mount beside a
+root-scope flag from the other and resolves `.name` in a module neither mount
+declared. Without the wrap the
 bake read `$$routePrefix` as a route name and dropped its last segment, so a
 layout at prefix `account.project` baked the account module's URL for
 `.settings`, and at root scope, where the prefix is empty, the bake threw
@@ -2568,6 +2574,9 @@ Limits:
   child inherits.
 - A `Static()` def mounted more than once is stamped by its last mount, and
   its artifact is keyed by handler id: both mounts bake in that one scope.
+  The same stamp decides whether the def bakes as a route (dot names from its
+  route name) or as a layout/slot (dot names from its include scope), so a
+  def remounted the other way bakes the way its last mount runs.
 - A `Static()` layout's or slot's `ctx.routeName` is its include name prefix
   (`$$routePrefix`), not a route name; a `Static()` route's is its route name.
   Only `reverse` reads the scope.

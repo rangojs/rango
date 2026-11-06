@@ -21,6 +21,7 @@ import {
   warnLiveIntercepts,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
+import type { ReverseScope } from "../../server/context.js";
 import { createRangoDebugger, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.prerender);
@@ -374,6 +375,29 @@ export async function expandPrerenderRoutes(
 }
 
 /**
+ * The ReverseScope a Static() def bakes in, or undefined when its dot-local
+ * names resolve from its route name instead.
+ *
+ * A route stamps `$$routeName` (path()); a layout or parallel slot stamps the
+ * include scope that declared it (layout(), parallel()). A def mounted more
+ * than once carries its last mount's pair: `stampStaticDefScope` writes
+ * `$$routePrefix` and `$$rootScoped` together for exactly this read.
+ */
+export function staticDefReverseScope(
+  def: Record<string, unknown>,
+): ReverseScope | undefined {
+  const stampedRouteName = def.$$routeName as string | undefined;
+  const stampedRootScoped = def.$$rootScoped as boolean | undefined;
+  if (stampedRouteName !== undefined || stampedRootScoped === undefined) {
+    return undefined;
+  }
+  return {
+    prefix: def.$$routePrefix as string | undefined,
+    rootScoped: stampedRootScoped,
+  };
+}
+
+/**
  * Render Static handlers at build time. Each Static handler is called
  * with a synthetic BuildContext and its output is RSC-serialized.
  * Stages asset modules and stores handlerId-to-file entries in
@@ -438,23 +462,11 @@ export async function renderStaticHandlers(
       const owner = (def as any).$$routerId as string | undefined;
       const owned = owner !== undefined ? registry.get(owner) : undefined;
       const candidates = owned ? [owned] : [...registry.values()];
-      // path() stamps the mounted route's full name; layout() and parallel()
-      // stamp only the include name prefix, since a layout or slot is not a
-      // route. A mounted layout or slot is the only kind that has a
-      // ReverseScope to bake in: its dot-local names resolve in the include
-      // scope that declared it, the same scope its live ctx carries. A route's
-      // resolve from its own route name, as its live handler does.
       const stampedRouteName = (def as any).$$routeName as string | undefined;
       const stampedRootScoped = (def as any).$$rootScoped as
         | boolean
         | undefined;
-      const reverseScope =
-        stampedRouteName === undefined && stampedRootScoped !== undefined
-          ? {
-              prefix: (def as any).$$routePrefix as string | undefined,
-              rootScoped: stampedRootScoped,
-            }
-          : undefined;
+      const reverseScope = staticDefReverseScope(def);
       for (const routerInstance of candidates) {
         if (!routerInstance.renderStaticSegment) continue;
         try {
