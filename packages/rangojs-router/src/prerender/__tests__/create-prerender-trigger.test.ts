@@ -239,8 +239,10 @@ describe("createPrerenderTrigger", () => {
   it("maps a redirect throw to skipped-redirect and writes nothing", async () => {
     let redirecting = false;
     const { trigger, store } = harness({
-      runProducer: async () => {
-        if (redirecting) throw redirect("/login");
+      runProducer: async ({ pathname }) => {
+        if (redirecting && pathname === "/products/42") {
+          throw redirect("/login");
+        }
         return output();
       },
     });
@@ -268,6 +270,31 @@ describe("createPrerenderTrigger", () => {
     await expect(
       trigger("/products/42", { throwOnError: true }),
     ).rejects.toMatchObject({ result: { status: "skipped-redirect" } });
+
+    // A batch reports it per target and carries on with the others.
+    const many = await trigger.many(["/products/42", "/products/43"]);
+    expect(many.map((r) => r.status)).toEqual(["skipped-redirect", "rendered"]);
+  });
+
+  it("does not warm after a redirecting refresh: there is nothing to build caches on", async () => {
+    class SharedStore extends MemorySegmentCacheStore {
+      readonly scope = "global" as const;
+    }
+    const sharedStore = new SharedStore();
+    const fetch = vi.fn(async () => new Response("ok"));
+    const { trigger } = harness({
+      runProducer: async () => {
+        throw redirect("/login");
+      },
+      // A shared store and an origin: the refresh after a page render warms.
+      resolveCacheConfig: () => ({ store: sharedStore }),
+      ambientOrigin: () => "https://shop.example",
+      fetch,
+    });
+    expect(await trigger("/products/42")).toMatchObject({
+      status: "skipped-redirect",
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("keeps a non-redirect Response a render-failed", async () => {

@@ -277,6 +277,19 @@ describe("on-demand prerender: a redirecting refresh", () => {
       ok: true,
       status: "already-fresh",
     });
+
+    // A stale entry a sweep renders into a redirect stays stale: the sweep
+    // reported no render, so it wrote nothing to refresh it.
+    await prerender.markStale(["od:sweep"]);
+    redirecting = "route";
+    expect(await prerender(url, { onlyIfStale: true })).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
+    expect(await prerender(url, { onlyIfStale: true })).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
   });
 
   describe("a render that redirects and also reports something else", () => {
@@ -347,6 +360,74 @@ describe("on-demand prerender: a redirecting refresh", () => {
         path: "on-demand",
         status: "skipped-redirect",
       });
+      expect(store.size).toBe(0);
+    });
+  });
+
+  describe("a component that throws redirect()", () => {
+    /** A deep async component: Flight reports its throw through onError. */
+    function childRouter(...children: Array<() => Promise<React.ReactNode>>) {
+      return createRouter({
+        id: `od-redirect-child-${++id}`,
+        prerender: { store },
+      }).routes(
+        urls(({ path }) => [
+          path(
+            "/child/:slug",
+            Prerender<{ slug: string }>(
+              async () => [],
+              async () => (
+                <div>
+                  {children.map((Child, i) => (
+                    <Child key={i} />
+                  ))}
+                </div>
+              ),
+              { onDemand: true },
+            ),
+            { name: "child" },
+          ),
+        ]),
+      );
+    }
+
+    const throwRedirect = async (): Promise<React.ReactNode> => {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      throw redirect("/login");
+    };
+    const throwNotFound = async (): Promise<React.ReactNode> => {
+      await new Promise((resolve) => setTimeout(resolve, 3));
+      notFound();
+    };
+    const throwFailure = async (): Promise<React.ReactNode> => {
+      await new Promise((resolve) => setTimeout(resolve, 3));
+      throw new Error("upstream down");
+    };
+
+    it("is skipped-redirect, ahead of a notFound() it reported too", async () => {
+      const result = await childRouter(throwRedirect, throwNotFound).prerender({
+        env: {},
+      })("/child/a");
+      expect(result).toMatchObject({
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
+      });
+      expect(store.size).toBe(0);
+    });
+
+    it("loses to a failure the same render reported", async () => {
+      const result = await childRouter(throwRedirect, throwFailure).prerender({
+        env: {},
+      })("/child/a");
+      expect(result).toMatchObject({
+        ok: false,
+        path: "on-demand",
+        status: "render-failed",
+      });
+      expect((result as { error?: Error }).error?.message).toBe(
+        "upstream down",
+      );
       expect(store.size).toBe(0);
     });
   });

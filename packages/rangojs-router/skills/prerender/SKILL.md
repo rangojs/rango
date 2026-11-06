@@ -1000,7 +1000,11 @@ await prerender("/products/42"); // { ok: false, status: "skipped-redirect" }
 One outcome wins when a render reports several: a failure ahead of a redirect,
 a redirect ahead of a `notFound()`. So a render that redirects and also fails
 some other way is `render-failed` and keeps the page, and one that redirects
-and also hits `notFound()` elsewhere stores nothing rather than a marker.
+and also hits `notFound()` elsewhere stores nothing rather than a marker. A
+deep server component takes part too: `throw redirect(...)` inside one is
+collected like a handler's throw, while a component that _returns_ a Response
+is not control flow (React rejects it as a non-serializable child, and the
+refresh is `render-failed`).
 
 At build time nothing changes: a `Prerender` render that redirects throws the
 Response out of the build, so `prerender.onError` decides, as for any other
