@@ -2584,8 +2584,9 @@ Limits:
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
 `router/__tests__/static-reverse-scope.test.ts` for the build path, and the
-`reverse-segment-scope` and `static-reverse-scope` e2e (test-app, both modes;
-`reverse-segment-scope` also in cloudflare-basic).
+`reverse-segment-scope` and `static-reverse-scope` e2e in the test-app, both
+modes. In cloudflare-basic, `reverse-segment-scope` and the nested Static
+layout case in `static-handler` pin it in both modes.
 
 ### A streamed handler keeps its segment
 
