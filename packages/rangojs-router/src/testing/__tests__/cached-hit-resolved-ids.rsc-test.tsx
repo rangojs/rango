@@ -7,9 +7,10 @@
  * A stored record carries no `_handlerRan`: serializeSegments
  * (cache/segment-codec.ts) copies named fields, and the record is written by
  * another render (a proactive re-render runs every handler), so a persisted
- * flag would name every segment on every HIT. The serve path therefore marks
- * each segment it sends in place of a re-run handler (cache-lookup.ts), and a
- * HIT names the same ids its MISS named.
+ * flag would name every segment on every HIT. The serve path therefore records
+ * the stored segments it sends in place of a re-run handler
+ * (state.storedResolvedIds, cache-lookup.ts), and a HIT names the same ids its
+ * MISS named.
  *
  * The case below: a chain layout whose `revalidate()` re-runs it on every
  * navigation, pushing its breadcrumb crumb on the document and nothing after.
@@ -166,22 +167,15 @@ async function crumbsAfter(
   );
 }
 
-/** The id of the segment that holds `crumb` in a document's handle data. */
-async function segmentOf(
-  result: ServeShellRequestResult,
-  crumb: string,
-): Promise<string> {
-  const data = await handlesOf(result);
-  const [id] = Object.entries(data[Crumbs.$$id] ?? {})
+/** The id of the segment that holds `crumb` in a page's handle data. */
+function segmentOf(handles: HandleData, crumb: string): string {
+  const [id] = Object.entries(handles[Crumbs.$$id] ?? {})
     .filter(([, values]) => (values as string[]).includes(crumb))
     .map(([segmentId]) => segmentId);
   return id!;
 }
 
-/**
- * The document the client shows, its handle data and mounted ids, and the
- * `resolvedIds` a partial response of `router` names.
- */
+/** The document the client shows: its handle data, mounted ids and store. */
 async function pageOf(
   router: Router,
   url: string,
@@ -217,12 +211,7 @@ describe("a stored HIT names the runs its MISS named in resolvedIds", () => {
     const router = makeRouter("cache");
     const page = await pageOf(router, "/a");
     expect(page.crumbs).toEqual(["root", "chain", "a"]);
-    const chainId = await segmentOf(
-      await serveShellRequest(router, "/a", {
-        cacheStore: new MemorySegmentCacheStore(),
-      }),
-      "chain",
-    );
+    const chainId = segmentOf(page.handles, "chain");
 
     chainPushes = false;
     const partial = { from: "/a", segments: page.matched };
