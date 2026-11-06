@@ -13,7 +13,8 @@
  * time, kept its previous push on the page (a stale breadcrumb) on every HIT.
  *
  * Each source of stored segments is covered: a cache() record, a Prerender()
- * entry, and a PPR navigation replay (the shell's doc record).
+ * entry, a PPR navigation replay (the shell's doc record), and a cache() record
+ * whose slot reaches the payload a second way, through `metadata.slots`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -395,9 +396,7 @@ describe("a cache() HIT of an intercept navigation lists the slot it re-renders"
       partial: { from: "/list", segments: held.answer.matched },
     });
     expect(await crumbsAfter(held, hit)).toEqual(["root", "list"]);
-    expect(await resolvedIdsOf(hit)).toEqual(
-      held.answer.matched.filter((id) => id.includes(".@")),
-    );
+    expect(await resolvedIdsOf(hit)).toEqual(await resolvedIdsOf(miss));
     await expectNoMarkers(hit);
   });
 });
