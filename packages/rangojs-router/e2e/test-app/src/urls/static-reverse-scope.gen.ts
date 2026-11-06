@@ -5,5 +5,6 @@ export const routes = {
   "outer.settings": "/outer/settings",
   settings: "/settings",
   staticScopeHome: "/home",
+  staticScopeSpread: "/spread",
 } as const;
 export type routes = typeof routes;

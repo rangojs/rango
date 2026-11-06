@@ -726,6 +726,7 @@ export const routes = {
   "static-reverse": "/static-reverse",
   "static-shell": "/static-shell/:tag",
   staticScopeHome: "/static-scope/home",
+  staticScopeSpread: "/static-scope/spread",
   streamedHandleOwner: "/streamed-handle-owner",
   streamedHandleOwnerLoader: "/streamed-handle-owner/:wait/loader",
   streamedHandleOwnerRoute: "/streamed-handle-owner/:wait/route",

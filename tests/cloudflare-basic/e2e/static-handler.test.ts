@@ -95,6 +95,24 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "static-docs-list")).toBeVisible();
   });
 
+  test("a Static route's ctx copy links like the handler's own ctx", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/spread"));
+    await waitForHydration(page);
+
+    // Dev runs the handler with a live ctx; production serves the baked
+    // artifact. `{ ...ctx }` must work in both, or the build throws on an
+    // unavailable read before reverse() runs.
+    await expect(testId(page, "static-spread-page")).toBeVisible();
+    await expect(testId(page, "static-spread-link")).toHaveAttribute(
+      "href",
+      "/static-content",
+    );
+  });
+
   // -- parallel() with Static --
 
   test("static parallel slot renders TOC sidebar", async ({ page }) => {
@@ -286,6 +304,23 @@ test.describe("static-handler (production)", () => {
     await expect(testId(page, "docs-index-link-getting-started")).toBeVisible();
     await expect(testId(page, "docs-index-link-configuration")).toBeVisible();
     await expect(testId(page, "docs-index-link-deployment")).toBeVisible();
+  });
+
+  test("a Static route's ctx copy links like the handler's own ctx", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/spread"));
+    await waitForHydration(page);
+
+    // The baked artifact of a Static route: the ctx copy must have been made
+    // at build time (dev runs the handler with a live ctx instead).
+    await expect(testId(page, "static-spread-page")).toBeVisible();
+    await expect(testId(page, "static-spread-link")).toHaveAttribute(
+      "href",
+      "/static-content",
+    );
   });
 
   // -- parallel() with Static --

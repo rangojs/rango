@@ -2560,6 +2560,15 @@ layout at prefix `account.project` baked the account module's URL for
 `.settings`, and at root scope, where the prefix is empty, the bake threw
 `Unknown route` for a name the same layout resolved live.
 
+The build ctx's unavailable reads (`params`, `url`, `request`, …) are
+non-enumerable getters (`defineUnavailable`, `router/handler-context.ts`), as
+the live ctx's `theme` is: reading one on the ctx throws the same "not
+available" error, and a handler that copies its ctx (`{ ...ctx }`,
+`Object.assign({}, ctx)`) skips them instead of throwing before it can use
+the copy. While they were enumerable, a `Static()` route handler that spread
+its ctx failed the build, though the same handler spread a live ctx in dev.
+A configured `buildEnv` is a data property, so a copy carries it.
+
 Limits:
 
 - A loader runs once per request, keyed by its `$$id`. A loader Def declared

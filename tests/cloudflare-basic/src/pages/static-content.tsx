@@ -181,6 +181,25 @@ export const DocsNestedLayout = Static((ctx) => (
   </div>
 ));
 
+// --- Static route that copies its ctx. ---
+// `{ ...ctx }` is an ordinary call shape: a live handler's ctx (dev) is all
+// data properties, so the copy works there. The build-time ctx reads its
+// unavailable properties through non-enumerable accessors, so the same copy
+// works in a build instead of throwing before `reverse` runs.
+export const DocsSpreadPage = Static((ctx) => {
+  const copy = { ...ctx };
+  return (
+    <div data-testid="static-spread-page">
+      <Link
+        to={copy.reverse("staticContent.index")}
+        data-testid="static-spread-link"
+      >
+        Docs index
+      </Link>
+    </div>
+  );
+});
+
 export function DocsNestedPage(ctx: { params: { slug: string } }) {
   return (
     <div data-testid="static-nested-page">

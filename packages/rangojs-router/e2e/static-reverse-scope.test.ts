@@ -36,6 +36,19 @@ async function expectInnerLinks(page: Page) {
 }
 
 function defineCases(f: Fixture) {
+  test("a Static route's ctx copy links like the handler's own ctx", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url(`${BASE}/spread`));
+    await waitForHydration(page);
+    // Dev renders the handler with a live ctx and production serves the baked
+    // artifact; `{ ...ctx }` in the handler must work in both, or the build
+    // throws on an unavailable read before reverse() runs.
+    await expect(testId(page, "srs-spread-page")).toBeVisible();
+    await expect(testId(page, "srs-spread-home")).toHaveText(`${BASE}/home`);
+  });
+
   test("root-scope Static layout links at root scope", async ({ page }) => {
     using _ = expectNoPageError(page);
     await page.goto(f.url(`${BASE}/home`));

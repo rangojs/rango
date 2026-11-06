@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: a build-time handler can copy its ctx with `{ ...ctx }`
+
+**Before.** A `Static()` or `Prerender()` handler that copied its ctx —
+`const copy = { ...ctx }`, `Object.assign({}, ctx)` — threw before it could
+use the copy. The build-time ctxs read their unavailable properties
+(`params`, `url`, `request`, …) through enumerable getters, so the copy
+invoked them and the build failed with `Property "params" is not available
+in Static() handlers`. The same handler ran fine in dev, where a `Static()`
+definition runs with the live request ctx, so the copy worked there and
+broke only in a build.
+
+**Now.** Those reads are non-enumerable, as the live ctx's `theme` already
+is: a copy skips them and keeps every value the ctx has, `reverse` and `use`
+included. Reading an unavailable property on the ctx itself still throws the
+same error, and a configured `buildEnv` stays a data property the copy
+carries.
+
 ### Fixed: a `Static()` layout or parallel slot links with `ctx.reverse(".name")` in its own module
 
 **Before.** At build, a `Static()` layout's or parallel slot's

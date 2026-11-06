@@ -332,6 +332,54 @@ describe("createStaticContext routeName", () => {
   });
 });
 
+describe("a build-time ctx spread", () => {
+  // A handler that copies its ctx ({ ...ctx }, Object.assign) is ordinary
+  // usage: a live handler's ctx is all data properties, so its copy works.
+  // The build-time ctxs read their unavailable properties through accessors;
+  // while those were enumerable the copy threw before the handler could use
+  // its reverse, so the same handler spread its ctx in dev and failed at
+  // build. They are non-enumerable now (like the live ctx's theme), so a copy
+  // skips them and keeps every value the ctx does have.
+  const routeMap = {
+    "blog.post": "/blog/:slug",
+    "blog.settings": "/blog/settings",
+  };
+
+  it("copies a Static() ctx, keeps its reverse, and still throws on a direct unavailable read", () => {
+    const ctx = createStaticContext(routeMap, "blog.post");
+    const copy = { ...ctx } as Record<string, any>;
+
+    expect(() => ctx.params).toThrow('Property "params" is not available');
+    expect(copy.reverse(".settings")).toBe("/blog/settings");
+    expect(copy.params).toBeUndefined();
+    expect(copy.build).toBe(true);
+  });
+
+  it("carries a configured build env into the Static() ctx copy", () => {
+    const ctx = createStaticContext(routeMap, "blog.post", {
+      KV: "binding",
+    } as any);
+    const copy = { ...ctx } as Record<string, any>;
+
+    expect(copy.env).toEqual({ KV: "binding" });
+    expect(copy.reverse(".settings")).toBe("/blog/settings");
+  });
+
+  it("copies a Prerender() ctx, keeps its reverse and params", () => {
+    const ctx = createPrerenderContext(
+      { slug: "x" },
+      "/blog/x",
+      routeMap,
+      "blog.post",
+    );
+    const copy = { ...ctx } as Record<string, any>;
+
+    expect(() => ctx.request).toThrow('Property "request" is not available');
+    expect(copy.reverse(".settings")).toBe("/blog/settings");
+    expect(copy.params).toEqual({ slug: "x" });
+  });
+});
+
 describe("createReverseFunction", () => {
   // Simulates route map from include("/tenant/:tenantId", innerPatterns)
   // where innerPatterns has path("/", ...) and path("/settings", ...)

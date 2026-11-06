@@ -418,6 +418,7 @@ export const NamedRoutes = {
   "staticContent.docsPage": "/static-content/:slug",
   "staticContent.index": "/static-content",
   "staticContent.nested.docsPage": "/static-content/nested/:slug",
+  "staticContent.spread": "/static-content/spread",
   streamedDocument: "/streamed-document",
   streamedHandleOwner: "/streamed-handle-owner",
   streamedHandleOwnerLoader: "/streamed-handle-owner/loader",

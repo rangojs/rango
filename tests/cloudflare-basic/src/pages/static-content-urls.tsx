@@ -5,6 +5,7 @@ import {
   DocsIndexPage,
   DocsNestedLayout,
   DocsNestedPage,
+  DocsSpreadPage,
   DocsTocSidebar,
 } from "./static-content.js";
 
@@ -40,6 +41,9 @@ export const staticContentPatterns = urls(
     layout(DocsNavLayout, () => [
       // Static index page -- also rendered at build time (on path())
       path("/", DocsIndexPage, { name: "index" }),
+      // Static route that copies its ctx at build time; before the dynamic
+      // "/:slug" so the literal path wins.
+      path("/spread", DocsSpreadPage, { name: "spread" }),
       // Dynamic page -- rendered at request time, with static parallel @toc sidebar
       path("/:slug", DocsPage, { name: "docsPage" }, () => [
         // Static parallel slot -- TOC sidebar rendered once at build time

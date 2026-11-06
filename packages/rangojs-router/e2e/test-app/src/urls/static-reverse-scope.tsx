@@ -46,6 +46,23 @@ export const StaticScopeInnerSlot = Static((ctx) => (
   </aside>
 ));
 
+/**
+ * A Static() route whose handler copies its ctx (`{ ...ctx }`), an ordinary
+ * call shape a live handler's all-data ctx supports. The build-time ctx reads
+ * its unavailable properties through non-enumerable accessors, so the copy
+ * skips them instead of throwing before the handler reaches `reverse`.
+ */
+export const StaticScopeSpreadPage = Static((ctx) => {
+  const copy = { ...ctx };
+  return (
+    <div data-testid="srs-spread-page">
+      <span data-testid="srs-spread-home">
+        {copy.reverse("staticScopeHome")}
+      </span>
+    </div>
+  );
+});
+
 const innerPatterns = urls(({ path, layout, parallel }) => [
   layout(StaticScopeInnerLayout, () => [
     parallel({ "@aside": StaticScopeInnerSlot }),
@@ -75,6 +92,7 @@ export const staticReverseScopePatterns = urls(({ path, layout, include }) => [
       () => <div data-testid="srs-home-page">Static scope home</div>,
       { name: "staticScopeHome" },
     ),
+    path("/spread", StaticScopeSpreadPage, { name: "staticScopeSpread" }),
     include("/outer", outerPatterns, { name: "outer" }),
   ]),
 ]);

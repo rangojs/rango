@@ -3,5 +3,6 @@ export const routes = {
   docsPage: "/:slug",
   index: "/",
   "nested.docsPage": "/nested/:slug",
+  spread: "/spread",
 } as const;
 export type routes = typeof routes;
