@@ -13,6 +13,43 @@ Guard locations below are relative to `src/`: `path()` guards live in
 
 ## Nesting Rules
 
+### every helper
+
+| Rule                                                                    | Example                                                                         | Guard location                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| A definition must be created in the callback that nests it              | `const a = path("/a", A); return [layout(L, () => [a])]`                        | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same for a loader, boundary, `middleware()` or `include()`          | `const data = loader(L); return [layout(Shell, () => [data])]`                  | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same through `cache()`'s children                                   | `const a = path("/a", A); return [cache(c, () => [a])]`                         | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same inside an orphan `cache()` marker's region                     | `const a = path("/a", A); return [cache({ ttl: 60 }), a]`                       | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The reverse: an item created inside a marker's region, listed before it | `const c = cache({ ttl: 60 }); const a = path("/a", A); return [a, c]`          | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same in the list `urls()` returns                                   | `urls(({ path, cache }) => { const a = path("/a", A); return [cache(c), a]; })` | `urls/urls-function.ts` + `assertDeclaredIn`           |
+| A definition created in a nested callback, returned to an ancestor      | `let a; return [layout(L, () => { a = path("/a", A); return []; }), a]`         | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+
+Each helper records the entry its item was declared under (the symbol key on
+the returned item), and a `use()`/children callback rejects an item declared
+outside it. A helper fixes its entry's parent pointer, short code and namespace
+when it runs, so nesting the item elsewhere does not move it: before this guard
+the definition stayed registered where it was created and the layout it was
+nested in silently disappeared from the tree (the route still answered 200).
+
+The guard reads the list in order, tracking the entry the list has reached:
+`cache()` without children (the orphan marker) moves `ctx.parent` down to the
+entry it opens, so every item after the marker is declared under that entry.
+An item declared at the callback's own entry and listed after the marker is
+written inside the cache and registered outside it — the same silent split one
+level up — and so is the reverse, an item created inside the marker's region
+and listed before the marker. Each marker records the entry it opened, so a
+marker called for its effect and not returned still opens its region:
+`cache({ ttl: 60 }); return [path("/a", A)]` stays valid. Only entries a
+marker of this list opened count, so a definition created in a nested
+`layout()`/`use()` callback and returned here is rejected too.
+
+A factory called inside the callback whose result holds its items is valid, and
+each call creates its own items:
+`const payouts = () => [layout(L, () => [path("/p", P)])]`. Calling it in
+another callback — at the top of `urls()` and spread into a `layout()`'s
+children, say — throws the same way a constant does.
+
 ### path()
 
 | Rule                                        | Example                                                   | Guard location                        |

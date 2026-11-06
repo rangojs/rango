@@ -194,22 +194,26 @@ function makeRouter(shape: Shape, cached: boolean, target: Target) {
         PARALLEL_DEFAULT.has(shape)
           ? [parallel({ "@modal": () => <aside>no modal</aside> })]
           : [];
-      const tree = layout(
-        () => <main>shell</main>,
-        () => [
-          ...parallels(),
-          source("/list", "list"),
-          source("/other", "other"),
-          source("/home", "home"),
-          path(
-            "/item/:id",
-            target === "prerender" ? PrerenderedItem : liveItem,
-            { name: "item" },
-          ),
-          ...intercepts(),
-        ],
-      );
-      return cached ? [cache({ ttl: 600 }, () => [tree])] : [tree];
+      // Built inside the callback it is nested in: a definition registers under
+      // the entry whose callback creates it, so a tree built above the cache()
+      // would stay outside the cache boundary.
+      const tree = () =>
+        layout(
+          () => <main>shell</main>,
+          () => [
+            ...parallels(),
+            source("/list", "list"),
+            source("/other", "other"),
+            source("/home", "home"),
+            path(
+              "/item/:id",
+              target === "prerender" ? PrerenderedItem : liveItem,
+              { name: "item" },
+            ),
+            ...intercepts(),
+          ],
+        );
+      return cached ? [cache({ ttl: 600 }, () => [tree()])] : [tree()];
     },
   );
   return createRouter({}).routes(

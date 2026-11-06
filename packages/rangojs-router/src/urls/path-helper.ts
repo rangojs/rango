@@ -36,6 +36,7 @@ import {
   mergeHandlerUse,
 } from "../route-definition/resolve-handler-use.js";
 import {
+  declaredUnder,
   emptySegmentBase,
   runAndValidateUseItems,
 } from "../route-definition/dsl-helpers.js";
@@ -305,10 +306,16 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
         "path",
         "use",
       );
-      return { name: namespace, type: "route", uses: result } as RouteItem;
+      return declaredUnder(
+        { name: namespace, type: "route", uses: result } as RouteItem,
+        ctx.parent,
+      );
     }
 
-    return { name: namespace, type: "route" } as RouteItem;
+    return declaredUnder(
+      { name: namespace, type: "route" } as RouteItem,
+      ctx.parent,
+    );
   }) as PathFn<TEnv>;
 }
 

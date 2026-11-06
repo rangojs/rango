@@ -17,6 +17,7 @@ import {
   isClientUrlSource,
 } from "../client-urls/server-projection.js";
 import type { ClientUrlPatterns } from "../client-urls/types.js";
+import { declaredUnder } from "../route-definition/dsl-helpers.js";
 
 function hasExplicitNameOption(options: IncludeOptions | undefined): boolean {
   return !!options && Object.prototype.hasOwnProperty.call(options, "name");
@@ -181,24 +182,27 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
           ? (parentRootScoped ?? false)
           : parentRootScoped;
 
-    return {
-      type: "include",
-      name,
-      prefix,
-      patterns,
-      options,
-      lazy: true,
-      _lazyContext: {
-        urlPrefix: capturedUrlPrefix,
-        namePrefix: fullNamePrefix,
-        parent: capturedParent,
-        counters: capturedCounters,
-        cacheProfiles: ctx.cacheProfiles,
-        rootScoped: capturedRootScoped,
-        routerId: ctx.routerId,
-        includeScope,
-        ...position,
-      },
-    } as IncludeItem;
+    return declaredUnder(
+      {
+        type: "include",
+        name,
+        prefix,
+        patterns,
+        options,
+        lazy: true,
+        _lazyContext: {
+          urlPrefix: capturedUrlPrefix,
+          namePrefix: fullNamePrefix,
+          parent: capturedParent,
+          counters: capturedCounters,
+          cacheProfiles: ctx.cacheProfiles,
+          rootScoped: capturedRootScoped,
+          routerId: ctx.routerId,
+          includeScope,
+          ...position,
+        },
+      } as IncludeItem,
+      capturedParent,
+    );
   };
 }
