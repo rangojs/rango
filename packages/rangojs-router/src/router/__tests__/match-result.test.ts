@@ -459,6 +459,27 @@ describe("match-result", () => {
     // #1103: the browser replaces the handle pushes of a loader that ran and
     // keeps those of a loader the response skipped, so resolvedIds names the
     // loaders that ran. A skipped loader is in matched only.
+    // The payload carries an intercept's segments twice: in `segments` and in
+    // `slots`, the second by the same objects (match-result.ts MatchResult.
+    // slots). An internal field left on them reaches the client.
+    it("strips _handlerRan from the segments slots also carry", () => {
+      const ctx = createMockContext({ isFullMatch: false });
+      const state = createPipelineState();
+      state.matchedIds = ["L0.@modal"];
+      const slot = createSegment("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        _handlerRan: true,
+      });
+      state.slots = { "@modal": { active: true, segments: [slot] } };
+
+      const result = buildMatchResult([slot], ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0.@modal"]);
+      const served = result.slots?.["@modal"]?.segments?.[0];
+      expect(served && "_handlerRan" in served).toBe(false);
+    });
+
     it("partial match resolvedIds names the loader segments that ran", () => {
       const ctx = createMockContext({
         isFullMatch: false,
@@ -572,6 +593,26 @@ describe("match-result", () => {
       expect(
         buildMatchResult([route], createMockContext(), stale).fromStorage,
       ).toBeUndefined();
+    });
+
+    // A stored segment a HIT serves arrives marked (cache-lookup.ts
+    // serveStoredSegments). The mark is the server's and the answer is still a
+    // stored one: fromStorage reads the served objects by identity, which the
+    // strip must not disturb.
+    it("is set when the served stored segments carry the HIT's mark", () => {
+      const layout = createSegment("L0", {
+        type: "layout",
+        _handlerRan: true,
+      });
+      const route = createSegment("L0R0", { _handlerRan: true });
+      const result = buildMatchResult(
+        [layout, route],
+        createMockContext(),
+        hitState([layout, route]),
+      );
+      expect(result.fromStorage).toBe(true);
+      expect(result.resolvedIds).toEqual(["L0", "L0R0"]);
+      expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
     });
 
     it("is unset without a cache hit, and on a full match", () => {

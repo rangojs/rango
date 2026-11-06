@@ -1260,9 +1260,17 @@ which run made each one.
    `collectHandleData` reads a handle by its `$$id`, so no collect sees it.
    `resolveDeferredHandleValues` keeps it aligned when it drops a value;
    `serveShellRequest` strips it from what it returns.
-3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
-   A partial match resolves only the loaders it runs, so each loader segment
-   it returns is in `resolvedIds` next to the handlers that ran. That also
+3. **`resolvedIds` names the runs whose values the response owns**
+   (`router/match-result.ts`). A partial match resolves only the loaders it
+   runs, so each loader segment it returns is in `resolvedIds` next to the
+   handlers that ran. A segment a HIT serves from a stored record is named the
+   same way: the serve marks it as the live walk marks a handler that ran
+   (`cache-lookup.ts` serveStoredSegments, the `send` decision that also gates
+   `restoreHandles`' `sent`), so a HIT names what its MISS named and the
+   browser replaces exactly the buckets the record re-serves. A segment the
+   HIT keeps, and a slot a `prefetch: false` fill keeps, stay unnamed and keep
+   the client's values. An intercept slot whose handler ran is named by the
+   live walk too (`intercept-resolution.ts` resolveInterceptEntry). That also
    makes the field's documented "superset of `diff`" true.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
