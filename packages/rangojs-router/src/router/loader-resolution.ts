@@ -514,6 +514,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  callerSegment?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -529,9 +530,14 @@ function createLoaderExecutor<TEnv>(
   // A dependency on a pending loader that closes a cycle means deadlock.
   const pendingLoaders = new Set<string>();
 
+  // `callerSegment` is the segment the calling ctx carries (handlePushSegment):
+  // a handler that started this loader through a layout's or slot's ctx makes
+  // the body's pushes file under it, before or after an `await`. Unset for a
+  // loader-to-loader read, whose owner the body's runAsSegment scope supplies.
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    callerSegment?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -629,7 +635,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, callerSegment);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1074,7 +1080,10 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // The receiver's segment, so a loader a component starts through a
+    // layout's or slot's ctx after an await files its pushes under that
+    // segment, not the pin the walker moved on (handlePushSegment).
+    return useLoader(loader, null, handlePushSegment(this, ctx));
   } as typeof ctx.use;
 }
 

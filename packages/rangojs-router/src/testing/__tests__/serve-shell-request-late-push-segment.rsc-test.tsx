@@ -7,7 +7,9 @@
  * the message is all a consumer sees of it: it must name the segment whose
  * ctx made the push, not whichever segment the walker pinned last. A layout
  * handler's ctx carries its own segment, so the message names the layout; a
- * route handler's ctx reads the request's pin, which is still the route's.
+ * route handler's ctx is the request's one ctx, and the walk restores the pin
+ * to the route after the route's own slots resolve. A loader a component
+ * starts through a handed ctx files its pushes under that ctx's segment too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -24,6 +26,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -46,6 +49,25 @@ async function LatePush({
   await new Promise((resolve) => setTimeout(resolve, 0));
   ctx.use(Crumbs)(label);
   return <span>{label}</span>;
+}
+
+/** A loader pushing its own crumb: started through a ctx handed to a component. */
+const CrumbLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("from loader");
+  return "loaded";
+});
+
+/** An async server component starting a loader through the ctx it was handed. */
+async function LateLoaderPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const value = await ctx.use(CrumbLoader);
+  return <span>{`${label} ${value}`}</span>;
 }
 
 function makeRouter() {
@@ -84,6 +106,36 @@ function makeRouter() {
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          // A route with a parallel slot: the slot's resolution moves the
+          // request's pin on after the route handler returned, and the route
+          // handler's ctx is that shared one.
+          path(
+            "/component-route-slot",
+            (ctx) => <LatePush ctx={ctx} label="route" />,
+            { name: "componentRouteSlot" },
+            () => [parallel({ "@panel": () => <p>panel</p> })],
+          ),
+          layout(
+            (ctx) => <LateLoaderPush ctx={ctx} label="layout loader" />,
+            () => [
+              path("/component-loader-layout", () => <p>page</p>, {
+                name: "componentLoaderLayout",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({
+                "@panel": (ctx) => (
+                  <LateLoaderPush ctx={ctx} label="slot loader" />
+                ),
+              }),
+              path("/component-loader-slot", () => <p>page</p>, {
+                name: "componentLoaderSlot",
+              }),
+            ],
+          ),
         ],
       ),
     ]),
@@ -135,5 +187,25 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the route's, for a component the route handler handed its ctx to, with a parallel slot on the route", async () => {
+    const { errors: reported, matched } = await serve("/component-route-slot");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a loader a component the layout handler handed its ctx to starts", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-loader-layout",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a loader a component the slot handler handed its ctx to starts", async () => {
+    const { errors: reported, matched } = await serve("/component-loader-slot");
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
   });
 });

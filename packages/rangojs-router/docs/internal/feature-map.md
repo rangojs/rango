@@ -269,8 +269,10 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 **A streamed handler's pushes stay in its own segment:** `runAsSegment` /
 `segmentPinOf` (`server/context.ts`), plus `_handleSegmentId` on a layout's or
 slot's ctx (`withSegmentScope`, `router/handler-context.ts`) for a push from a
-component the handler handed that ctx to; see execution-model.md "A streamed
-handler keeps its segment".
+component the handler handed that ctx to (a loader that component starts through
+the same ctx takes it as its owner, `loaderOwner`); the walk restores the shared
+pin to the route after the route's own slots resolve, so a route handler's ctx
+names the route; see execution-model.md "A streamed handler keeps its segment".
 
 ---
 

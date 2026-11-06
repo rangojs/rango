@@ -1368,6 +1368,15 @@ export async function resolveSegment<TEnv>(
       );
       segments.push(...parallelResult.segments);
       matchedIds.push(...parallelResult.matchedIds);
+      // Each slot's resolution pins the shared `_currentSegmentId` to the
+      // slot (resolveParallelSlotComponent) and never puts it back. The route
+      // handler's ctx IS that shared ctx: the components it handed the ctx to
+      // render after this walk, and a push they make reads the pin. Restore
+      // the route's own, so such a push (and the dev LateHandlePushError it
+      // throws) names the route rather than the slot pinned last. A layout's
+      // or slot's ctx carries its segment instead (withSegmentScope).
+      (pass.context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
+        entry.shortCode;
     }
 
     segments.push(routeHandlerResult.segment);

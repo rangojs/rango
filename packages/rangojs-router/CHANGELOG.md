@@ -14,8 +14,12 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+A route handler's ctx is the request's one ctx, so the walk puts the request's
+segment back on the route once the route's own parallel slots have resolved:
+its message names the route, not the slot. A loader a component starts through
+a layout's or slot's ctx files its pushes under that segment, so a late push
+from the loader body names the layout or the slot as well. The push is still
+rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 
