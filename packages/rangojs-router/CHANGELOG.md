@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render redirects stores the redirect instead of keeping the page
+
+**Before.** A `Prerender(..., { onDemand })` render that answered `redirect()`
+— the URL moved, the item merged into another one — was treated as a failed
+render: `router.prerender()` reported `render-failed`, replace-on-success kept
+the previous entry, and the URL kept serving the page it used to be. A visitor
+never reached the new URL, and no sweep fixed it: every later refresh failed
+the same way.
+
+**Now.** A redirect is a render outcome, like `notFound()`: the refresh stores
+it in place of the page and reports `{ ok: true, status: "redirected" }`, and a
+request for that URL is answered with the redirect — a 302 to the stored
+`Location` for a document request, the Flight redirect for a client
+navigation — instead of the page it replaced. It is stamped with the route's
+`ttl` and `tags`, so it goes stale, is rechecked by `{ onlyIfStale: true }` and
+is reached by `markStale()` exactly like a page, and a later refresh that
+renders the page again replaces it. `redirect(url, { external: true })` keeps
+its off-host target. A render that fails any other way still reports
+`render-failed` and keeps the stored answer.
+
+```ts
+// The producer decides the URL moved; the refresh stores the redirect.
+const ProductDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const product = await getProduct(ctx.params.slug);
+    if (product.movedTo) throw redirect(product.movedTo);
+    return <ProductView product={product} />;
+  },
+  { onDemand: { ttl: 3600 } },
+);
+
+await router.prerender({ env })("/products/42");
+// { ok: true, path: "on-demand", status: "redirected", … }
+// GET /products/42 -> 302 Location: /products/43
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

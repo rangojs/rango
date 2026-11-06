@@ -1,6 +1,7 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
+import { GuidePlainRelink } from "../components/GuidePlainRelink.js";
 
 /**
  * KV key of a slug the e2e deleted from the data source. Per mode: the dev
@@ -13,6 +14,10 @@ export const guidePlainGoneKey = (slug: string): string =>
 /** KV key of a slug whose data source the e2e took down: a refresh throws. */
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** KV key of a slug whose URL moved: the producer answers a redirect. */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -38,6 +43,16 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
     ) {
       throw new Error("upstream 500");
     }
+    // The URL moved: a render outcome, not a failure. A refresh stores the
+    // redirect in place of the page (e2e/prerender-ondemand.test.ts).
+    // Thrown, not returned: a Prerender handler's type is a ReactNode, and
+    // segment resolution rethrows a Response (handleHandlerResult) either way.
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug)))
+    ) {
+      throw redirect(`/guide-plain/moved-${ctx.params.slug}`);
+    }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.
     const stamp = `${new Date().toISOString()}:${Math.random().toString(36).slice(2, 10)}`;
@@ -50,6 +65,10 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
         <p data-testid="gp-stamp">{stamp}</p>
         <GuidePlainLoaderValue />
         <GuidePlainActionPanel slug={ctx.params.slug} />
+        <GuidePlainRelink
+          href={`/guide-plain/${ctx.params.slug}?via=link`}
+          testId="gp-relink"
+        />
       </div>
     );
   },

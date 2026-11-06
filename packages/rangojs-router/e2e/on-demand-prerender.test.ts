@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageServesRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -299,6 +300,8 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   path: (slug) => `/on-demand-plain/${slug}`,
   stampTestId: "od-plain-stamp",
   onDemandTestId: "od-plain-ondemand",
+  movedTo: (slug) => `/on-demand-plain/moved-${slug}`,
+  relinkTestId: "od-plain-relink",
   pageUrl: (slug) => f.url(`/on-demand-plain/${slug}`),
   triggerUrl: (slug) => f.url(`/od-plain-trigger/${slug}`),
   tag: (slug) => `od-plain:${slug}`,
@@ -360,6 +363,12 @@ function defineOutcomeTests(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, removeFixture(f));
+  });
+
+  test("a refresh whose render redirects stores the redirect: the visitor gets the 302, not the page it replaced", async ({
+    page,
+  }) => {
+    await expectRedirectedPageServesRedirect(page, removeFixture(f));
   });
 }
 

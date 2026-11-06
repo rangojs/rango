@@ -84,6 +84,7 @@ import {
 import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
 import { paramsEqual } from "../params-util.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { markSourceHeld, readsOfAllParams } from "../source-reads.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
@@ -849,6 +850,22 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if (stored.redirect !== undefined) {
+        // The URL is not a page any more: a refresh's render answered a
+        // redirect, and that is the stored answer. Thrown as the middleware
+        // short-circuit every other redirect takes (match-handlers rethrows
+        // it, rsc/handler.ts turns it into a 302 for a document request and a
+        // 204 + X-RSC-Redirect for a client navigation), and rebuilt with
+        // redirect() so it carries the same headers the live one did — the
+        // out-of-band `{ external: true }` brand included, which the document
+        // guard needs and a stored value cannot carry.
+        throw redirect(
+          stored.redirect.location,
+          stored.redirect.external === true
+            ? { status: stored.redirect.status, external: true }
+            : { status: stored.redirect.status },
+        );
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }

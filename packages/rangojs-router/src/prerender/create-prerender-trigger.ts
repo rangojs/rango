@@ -26,6 +26,11 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A `redirect()` in the render is not a failure either: it stores the
+ *   redirect (status, `Location`, the `{ external: true }` opt-in) in place of
+ *   the page, stamped like one, and a request for that URL is answered with
+ *   it. A marker would not do: the live path that follows a marker is not the
+ *   producer that decided the URL moved.
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -47,6 +52,7 @@ import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryStale,
   readVerifiedStoredEntry,
@@ -89,6 +95,11 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /**
+   * The render answered a redirect (a handler returned one, or a component
+   * threw one): stored in place of the page, so the URL keeps answering it.
+   */
+  redirect?: { status: number; location: string; external?: true };
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -481,7 +492,7 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     const store = config.store;
     /** What the store holds for the page, as a result reports it. */
     const held = (
-      status: "already-fresh" | "removed",
+      status: "already-fresh" | "removed" | "redirected",
       meta: PrerenderStoredEntry["meta"],
     ): PrerenderResult => ({
       ok: true,
@@ -535,7 +546,11 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // past its ttl, or marked stale) is rendered again below.
       if (existing && !isStoredEntryStale(existing, Date.now())) {
         return held(
-          existing.removed === true ? "removed" : "already-fresh",
+          existing.removed === true
+            ? "removed"
+            : existing.redirect !== undefined
+              ? "redirected"
+              : "already-fresh",
           existing.meta,
         );
       }
@@ -590,6 +605,12 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     // store does). Both store the "removed" marker, stamped below with the
     // route's ttl and tags like a page, so the outcome is rechecked like one.
     const noPage = produced.notFound === true || produced.passthrough === true;
+    // The other outcome that is not a page: the render answered a redirect.
+    // Stored as the redirect rather than as a "removed" marker, which would
+    // answer with the live path instead (a plain on-demand route's gate: 404;
+    // a Passthrough route's live handler, which is not the producer that
+    // decided the URL moved).
+    const redirect = produced.redirect;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
@@ -633,13 +654,15 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         key,
         noPage
           ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
-          : composeStoredEntry(
-              key,
-              { segments: produced.segments, handles: produced.handles },
-              stamp,
-              startedAt,
-              writtenAt,
-            ),
+          : redirect
+            ? composeStoredRedirect(key, redirect, stamp, startedAt, writtenAt)
+            : composeStoredEntry(
+                key,
+                { segments: produced.segments, handles: produced.handles },
+                stamp,
+                startedAt,
+                writtenAt,
+              ),
       );
     } catch (err) {
       return storeFailed(err);
@@ -657,7 +680,11 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return {
       ok: true,
       path: "on-demand",
-      status: produced.notFound ? "removed" : "rendered",
+      status: produced.notFound
+        ? "removed"
+        : redirect
+          ? "redirected"
+          : "rendered",
       target: display,
       routeName: match.routeName,
       key: keyStr,

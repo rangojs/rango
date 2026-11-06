@@ -3867,6 +3867,19 @@ export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
   };
+  /**
+   * Where the plain route's producer sends a moved slug: the `Location` of the
+   * redirect a refresh stores. Nothing needs to be served there.
+   * `?moved=1` / `?moved=0` on `triggerUrl(slug)` make the producer redirect /
+   * render the page again.
+   */
+  movedTo: (slug: string) => string;
+  /**
+   * A `Link` on the plain route's stored page that targets that same route
+   * with a search param, so a click from the page it was served as sends a
+   * client navigation the stored redirect answers.
+   */
+  relinkTestId: string;
 }
 
 /** The page serves from the store (200, rendered on demand); its render stamp. */
@@ -3988,6 +4001,87 @@ export async function expectDeclinedPassthroughParamServedLive(
   await waitForShellHydration(page);
   await expect(source).toHaveText("live");
   await expectDeclined();
+}
+
+/**
+ * A refresh whose producer answers `redirect()` because the URL moved: the
+ * redirect is the stored answer, so the page a previous refresh stored stops
+ * serving. A visitor gets the 302 to the new URL, as a document request and as
+ * a client navigation from the page that used to be this URL, never the page
+ * the route used to render. A refresh that renders the page again replaces the
+ * redirect back.
+ *
+ * A "removed" marker would not do: the live path that follows one is the
+ * plain route's 404 gate, so the redirect would reach the visitor as a 404.
+ */
+export async function expectRedirectedPageServesRedirect(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const trigger = fixture.triggerUrl(slug);
+  const target = fixture.movedTo(slug);
+
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+  // The page as it was, hydrated: the client navigation below starts here.
+  await page.goto(fixture.pageUrl(slug));
+  await waitForShellHydration(page);
+
+  await removeTrigger(page, trigger, "?moved=1");
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      tags: [fixture.tag(slug)],
+    });
+
+    // A document request: the redirect, and no render of the page it replaced.
+    const res = await page.request.get(fixture.pageUrl(slug), {
+      headers: PUSH_HTML_HEADERS,
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(302);
+    expect(res.headers()["location"]).toBe(target);
+    const body = await res.text();
+    expect(body).not.toContain(`data-testid="${fixture.slugTestId}"`);
+
+    // A client navigation from the page the URL used to be: the stored
+    // redirect answers it, and the router moves the browser to the target.
+    await byTestId(page, fixture.relinkTestId).click();
+    await page.waitForURL((url) => url.pathname === target, {
+      timeout: 15_000,
+    });
+    await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+
+    // Frozen like a page: a sweep leaves it and it still answers.
+    const swept = await removeTrigger(page, trigger, "?onlyIfStale=1");
+    expect(swept, JSON.stringify(swept)).toMatchObject({
+      ok: true,
+      status: "redirected",
+    });
+    const again = await page.request.get(fixture.pageUrl(slug), {
+      headers: PUSH_HTML_HEADERS,
+      maxRedirects: 0,
+    });
+    expect(again.status()).toBe(302);
+    expect(again.headers()["location"]).toBe(target);
+  } finally {
+    await removeTrigger(page, trigger, "?moved=0");
+  }
+
+  // The URL is a page again: a refresh replaces the redirect with it.
+  await refreshPage(page, trigger);
+  const back = await page.request.get(fixture.pageUrl(slug), {
+    headers: PUSH_HTML_HEADERS,
+    maxRedirects: 0,
+  });
+  expect(back.status()).toBe(200);
+  expect(await back.text()).toContain(`data-testid="${fixture.slugTestId}"`);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
 }
 
 /**

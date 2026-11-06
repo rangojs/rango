@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageServesRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -317,6 +318,8 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   path: (slug) => `/guide-plain/${slug}`,
   stampTestId: "gp-stamp",
   onDemandTestId: "gp-ondemand",
+  movedTo: (slug) => `/guide-plain/moved-${slug}`,
+  relinkTestId: "gp-relink",
   pageUrl: (slug) => f.url(`/guide-plain/${slug}`),
   triggerUrl: (slug) => f.url(`/guide-plain-trigger/${slug}`),
   tag: (slug) => `guide-plain:${slug}`,
@@ -378,6 +381,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, guideFixture(f));
+  });
+
+  test("a refresh whose render redirects stores the redirect: the visitor gets the 302, not the page it replaced", async ({
+    page,
+  }) => {
+    await expectRedirectedPageServesRedirect(page, guideFixture(f));
   });
 }
 

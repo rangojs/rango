@@ -35,6 +35,8 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +112,13 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered with a redirect (a handler's
+   * `redirect()`, which throws its Response through segment resolution). The
+   * trigger stores it in place of the page, so the visitor is sent where the
+   * render said instead of being served the page this URL used to be.
+   */
+  redirect?: { status: number; location: string; external?: true };
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -637,17 +646,38 @@ export async function matchForPrerender<TEnv = any>(
   // An on-demand refresh reports a notFound() anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) as an
   // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // "removed" marker stamped like a page (create-prerender-trigger.ts). A
+  // redirect is the other render outcome that is not a page: it is stored as
+  // the redirect, so the request that used to be this page is answered with
+  // it. Anything else stays a throw (render-failed, keeping the old entry).
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    if (!(error instanceof Response) || !isRedirectResponse(error)) {
+      throw error;
+    }
     return {
       segments: [],
       handles: "",
       routeName: matched.routeKey,
       params: matchedParams,
-      notFound: true,
+      redirect: {
+        status: error.status,
+        location: error.headers.get("Location")!,
+        // The brand does not survive the store; the trigger persists the
+        // opt-in so the serve path can re-brand the rebuilt redirect.
+        ...(isExternalRedirect(error) ? { external: true as const } : {}),
+      },
       onDemandConfig,
     };
   }

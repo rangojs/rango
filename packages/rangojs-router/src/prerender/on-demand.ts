@@ -159,8 +159,18 @@ export type PrerenderResult =
        * rechecked like a page. `onlyIfStale` finding a fresh marker reports
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
+       *
+       * `redirected`: the render answered `redirect()` (from the route
+       * handler, a layout or a slot), so the redirect is stored in place of
+       * the page and a request for the URL is answered with it — the 302 the
+       * live handler would have sent — instead of the page this URL used to
+       * be. Stamped with the route's `tags` and `ttl` and rechecked like a
+       * page; `onlyIfStale` finding a fresh one reports `redirected` too. Not
+       * `removed`: a marker hands the request to the live path, which for a
+       * plain on-demand route is the 404 gate and for a Passthrough route is
+       * a live handler that is not the producer that decided the move.
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
