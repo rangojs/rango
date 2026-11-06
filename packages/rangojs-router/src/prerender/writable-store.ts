@@ -113,10 +113,15 @@ type StoredTombstone = StoredEnvelope & {
 
 /**
  * The redirect stored in place of a page, by a refresh whose render redirected
- * (`redirect()` in the route handler, a layout or slot handler, or any server
- * component). A request that finds it is answered with that redirect, never
- * with a page or the build-time entry below the overlay: the render said this
- * URL is no longer the page, and the target it named is the answer.
+ * (`redirect()` returned from the route handler or from a layout handler: the
+ * results the resolution boundary awaits, which is where a Response
+ * short-circuits. A redirect thrown while the tree is encoded — a component's,
+ * or a `loading()` handler's — is rendered into the stream instead, in the
+ * live path too: see warnOnStreamedResponse in
+ * router/segment-resolution/helpers.ts). A request that finds it is answered
+ * with that redirect, never with a page or the build-time entry below the
+ * overlay: the render said this URL is no longer the page, and the target it
+ * named is the answer.
  *
  * No `entry`: a router from before this variant rejects it as malformed (a
  * miss) instead of serving an empty page. `meta` is stamped like a page's, so
@@ -189,9 +194,39 @@ export function serializePrerenderKey(key: PrerenderKey): string {
 }
 
 /**
- * @internal Compose the versioned envelope the trigger hands to `store.set()`.
+ * @internal The `meta` all three envelopes carry, composed once so a page, a
+ * marker and a redirect cannot drift in how `ttl` or `tags` are stamped.
  * `now` is `meta.storedAt`; `staleFrom` (default `now`) is where the ttl
  * starts counting. Both are passed explicitly so tests stay deterministic.
+ */
+function composeStoredMeta(
+  key: PrerenderKey,
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number,
+): StoredEnvelope["meta"] {
+  // Only a finite, non-negative ttl produces a staleAt: NaN would never go
+  // stale and a negative ttl would be stale on every request.
+  const hasTtl =
+    options.ttl != null &&
+    Number.isFinite(options.ttl) &&
+    (options.ttl as number) >= 0;
+  return {
+    storedAt: now,
+    ...(hasTtl
+      ? {
+          staleAt: staleFrom + (options.ttl as number) * 1000,
+          ttl: options.ttl as number,
+        }
+      : {}),
+    tags: options.tags,
+    version: key.version,
+    params: options.params,
+  };
+}
+
+/**
+ * @internal Compose the versioned envelope the trigger hands to `store.set()`.
  */
 export function composeStoredEntry(
   key: PrerenderKey,
@@ -200,35 +235,14 @@ export function composeStoredEntry(
   now: number,
   staleFrom: number = now,
 ): StoredPage {
-  // Only a finite, non-negative ttl produces a staleAt: NaN would never go
-  // stale and a negative ttl would be stale on every request.
-  const hasTtl =
-    options.ttl != null &&
-    Number.isFinite(options.ttl) &&
-    (options.ttl as number) >= 0;
-  return {
-    v: 1,
-    entry,
-    meta: {
-      storedAt: now,
-      ...(hasTtl
-        ? {
-            staleAt: staleFrom + (options.ttl as number) * 1000,
-            ttl: options.ttl as number,
-          }
-        : {}),
-      tags: options.tags,
-      version: key.version,
-      params: options.params,
-    },
-  };
+  return { v: 1, entry, meta: composeStoredMeta(key, options, now, staleFrom) };
 }
 
 /**
  * @internal Compose the "removed" marker stored in place of a page. Its meta
- * is a page's (composeStoredEntry), so `ttl` and `tags` mean the same: the
- * marker of a render outcome is given the route's and is rechecked like a
- * page; `prerender.remove()` gives neither, and its marker never goes stale.
+ * is a page's, so `ttl` and `tags` mean the same: the marker of a render
+ * outcome is given the route's and is rechecked like a page;
+ * `prerender.remove()` gives neither, and its marker never goes stale.
  */
 export function composeStoredTombstone(
   key: PrerenderKey,
@@ -236,20 +250,17 @@ export function composeStoredTombstone(
   now: number,
   staleFrom: number = now,
 ): StoredTombstone {
-  const { v, meta } = composeStoredEntry(
-    key,
-    { segments: [], handles: "" },
-    options,
-    now,
-    staleFrom,
-  );
-  return { v, removed: true, meta };
+  return {
+    v: 1,
+    removed: true,
+    meta: composeStoredMeta(key, options, now, staleFrom),
+  };
 }
 
 /**
  * @internal Compose the redirect stored in place of a page by a refresh whose
- * render redirected. Its meta is a page's (composeStoredEntry), so `ttl` and
- * `tags` mean the same and the redirect is rechecked like a page.
+ * render redirected. Its meta is a page's, so `ttl` and `tags` mean the same
+ * and the redirect is rechecked like a page.
  */
 export function composeStoredRedirect(
   key: PrerenderKey,
@@ -258,14 +269,11 @@ export function composeStoredRedirect(
   now: number,
   staleFrom: number = now,
 ): StoredRedirect {
-  const { v, meta } = composeStoredEntry(
-    key,
-    { segments: [], handles: "" },
-    options,
-    now,
-    staleFrom,
-  );
-  return { v, redirect, meta };
+  return {
+    v: 1,
+    redirect,
+    meta: composeStoredMeta(key, options, now, staleFrom),
+  };
 }
 
 /**

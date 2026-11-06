@@ -77,6 +77,7 @@ export type {
   WritablePrerenderStore,
   PrerenderStoredEntry,
   PrerenderKey,
+  StoredRedirectTarget,
 } from "../prerender/writable-store.js";
 export type {
   PrerenderConfig,

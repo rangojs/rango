@@ -34,6 +34,10 @@ cast. A build render of a param that redirects is still a render error under
 `prerender.onError` (`"fail"` by default): there is no page to bake, so
 return a redirect only for the params a refresh renders.
 
+`PrerenderStoredEntry` gains the redirect variant, and its
+`StoredRedirectTarget` is exported from `@rangojs/router/prerender` for a
+custom store that reads envelopes.
+
 ```ts
 Prerender(
   async () => [],

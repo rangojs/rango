@@ -496,6 +496,18 @@ describe("withCacheLookup: a stored redirect answers instead of any page", () =>
     expect(otherVersion.served).toEqual(["BUILD"]);
   });
 
+  it("an intercepted navigation does not read the overlay, so it does not see the redirect", async () => {
+    // The documented v1 limit: only the main variant is written and read.
+    const { served, error, buildReads } = await lookup({
+      overlay: redirectEntry,
+      intercept: true,
+    });
+
+    expect(error).toBeUndefined();
+    expect(served).toEqual(["BUILD"]);
+    expect(buildReads).toBe(1);
+  });
+
   it("a stale redirect schedules onRevalidate and still answers the request", async () => {
     const onRevalidate = vi.fn();
     const { error } = await lookup({

@@ -160,9 +160,11 @@ export type PrerenderResult =
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
        *
-       * `redirected`: the render redirected (`redirect()` anywhere in it), so
-       * the redirect is stored in place of the page and requests are answered
-       * with it instead of the page or its build-time entry. Stamped and
+       * `redirected`: the render redirected (`redirect()` returned by the
+       * route handler or a layout handler, the results the resolution boundary
+       * awaits), so the redirect is stored in place of the page and requests
+       * are answered with it instead of the page or its build-time entry.
+       * Stamped and
        * rechecked like a page: a `notFound()` marker's rules apply, with the
        * redirect in the marker's place. `onlyIfStale` finding a fresh one
        * reports `redirected` too. A later refresh renders again and replaces

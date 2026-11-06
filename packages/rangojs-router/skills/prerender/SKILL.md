@@ -996,6 +996,12 @@ await prerender("/products/old-slug");
   re-render of the route. Never the page the store held, and never the
   build-time entry under it. A 404 would drop the target the app named, and
   serving the old page is the bug this fixes.
+- **Only a handler's return counts.** `redirect()` returned from the route
+  handler or from a layout handler short-circuits the render; a redirect
+  thrown while the tree is encoded (a component's, or a `loading()`
+  handler's) is rendered into the stream instead, in the live path too, so it
+  is neither a page nor a stored redirect.
+
 - **A handler may return it.** `Prerender` handlers accept a `Response` return,
   which is what `redirect()` produces. A BUILD render of a param that redirects
   is still a render error under `prerender.onError` (`"fail"` by default):

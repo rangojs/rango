@@ -1566,6 +1566,27 @@ describe("createPrerenderTrigger", () => {
         expect(store.peek(productKey())).toBe(page);
       });
 
+      it("a failed redirect write is store-failed and keeps the previous entry", async () => {
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({
+          config: { store },
+          runProducer: async () => output({ redirect: redirectTarget }),
+        });
+        store.set = async () => {
+          throw new Error("kv down");
+        };
+
+        const result = await trigger("/products/42");
+
+        expect(result).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "store-failed",
+        });
+        expect((result as { error: Error }).error.message).toBe("kv down");
+        expect(store.peek(productKey())).toBeNull();
+      });
+
       it("a redirect that lands during the render wins over that render's page", async () => {
         const h = harness({
           runProducer: async () => {

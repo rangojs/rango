@@ -638,15 +638,14 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       };
       if (!removed) {
         // A page or a redirect is served, so a marker stored after this render
-        // started must not be overwritten by it:
-        // a remove() (stamped with its write time) always qualifies. A
-        // render's own marker carries that render's start, so only a render
-        // that started later than this one wins; an older render's notFound()
-        // does not (this one read newer data). This narrows the race, it
-        // cannot close it: the read and the write are two store calls, and KV
-        // is eventually consistent. Otherwise last write wins. A tombstone this
-        // render writes needs no guard: writing one marker over another serves
-        // the same answer.
+        // started must not be overwritten by it: a remove() (stamped with its
+        // write time) always qualifies. A render's own marker carries that
+        // render's start, so only a render that started later than this one
+        // wins; an older render's notFound() does not (this one read newer
+        // data). This narrows the race, it cannot close it: the read and the
+        // write are two store calls, and KV is eventually consistent.
+        // Otherwise last write wins. A tombstone this render writes needs no
+        // guard: writing one marker over another serves the same answer.
         const current = await readVerifiedStoredEntry(store, key, match.params);
         if (
           current != null &&

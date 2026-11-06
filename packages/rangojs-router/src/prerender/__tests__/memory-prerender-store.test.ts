@@ -503,6 +503,23 @@ describe("the removed marker (tombstone)", () => {
     }
   });
 
+  it("a router from before the stored redirect reads it as a miss too: it serves or renders, never an empty page", () => {
+    const redirect = JSON.parse(
+      JSON.stringify(
+        composeStoredRedirect(
+          key(),
+          { location: "/product/43", status: 301 },
+          { params, tags: [] },
+          1000,
+        ),
+      ),
+    );
+    expect(isStoredEntryValidFor(redirect, key(), params)).toBe(true);
+    expect(validatorBeforeTheRemovedMarker(redirect, key(), params)).toBe(
+      false,
+    );
+  });
+
   it("the memory store persists a remove() marker as given, and markStale leaves it alone", async () => {
     const store = createMemoryPrerenderStore({ now: () => 5000 });
     const tombstone = removeMarker();

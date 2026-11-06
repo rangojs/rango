@@ -104,8 +104,11 @@ function PlainPage(): React.ReactNode {
   return <p>target</p>;
 }
 
-function makeRouter(prerender: PrerenderConfig) {
-  const router = createRouter({ prerender }).routes(
+function makeRouter(prerender: PrerenderConfig, basename?: string) {
+  const router = createRouter({
+    prerender,
+    ...(basename ? { basename } : {}),
+  }).routes(
     urls(({ path, layout }) => [
       path("/products/:slug", ProductDef, { name: "product" }),
       layout(MovedLayout, () => [
@@ -220,6 +223,25 @@ describe("on-demand prerender: a refresh whose render redirects", () => {
     const served = await serveShellRequest(router, "/in-layout/a");
     expect(served.response.status).toBe(302);
     expect(served.response.headers.get("Location")).toBe("/target");
+  });
+
+  it("a router with a basename prefixes it at serve time, not in the stored location", async () => {
+    const router = makeRouter({ store }, "/app");
+    const prerender = router.prerender({ env: {} });
+    catalog.set("a", { movedTo: "/target" });
+
+    // The requestless render has no basename, so the entry holds the app path.
+    expect(await prerender("/app/products/a")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      location: "/target",
+    });
+    expect(store.entries()[0]![1]).toMatchObject({
+      redirect: { location: "/target", status: 301 },
+    });
+    const served = await serveShellRequest(router, "/app/products/a");
+    expect(served.response.status).toBe(301);
+    expect(served.response.headers.get("Location")).toBe("/app/target");
   });
 
   it("a redirect carrying location state is per-visitor: skipped-personalized, and the page keeps serving", async () => {

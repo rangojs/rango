@@ -960,8 +960,14 @@ is the visitor's (a flash message, a return path), so a redirect that has any
 is `skipped-personalized` and writes nothing, exactly as `cookies()` does.
 
 A `Prerender` handler may return a `Response` (the `redirect()` result) for
-this; the type accepts it. A BUILD render of a param that redirects is still a
-render error under `prerender.onError`, since there is no page to bake.
+this; the type accepts it. Only a handler's RETURN short-circuits: the route
+handler's or a layout handler's, the results the resolution boundary awaits. A
+redirect thrown while the tree is encoded (a component's, or a `loading()`
+handler's) is rendered into the stream instead, in the live path too
+(`warnOnStreamedResponse`, `router/segment-resolution/helpers.ts`), so it is
+neither a page nor a stored redirect. A BUILD render of a param that redirects
+is still a render error under `prerender.onError`, since there is no page to
+bake.
 
 **Serving one.** `readPrerenderSource` throws the Response `redirect()` would
 have built, rather than returning a stored source. A thrown Response is this

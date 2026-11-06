@@ -18,6 +18,7 @@ export {
   serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
+  type StoredRedirectTarget,
   type WritablePrerenderStore,
 } from "./writable-store.js";
 

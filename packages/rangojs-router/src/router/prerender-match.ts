@@ -646,7 +646,8 @@ export async function matchForPrerender<TEnv = any>(
   // the route's onDemand config, so the trigger can stamp what it stores like a
   // page (create-prerender-trigger.ts): a `notFound()` anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) becomes the
-  // "removed" marker, and a `redirect()` becomes the stored redirect.
+  // "removed" marker, and a redirect a handler RETURNED (the route's or a
+  // layout's) becomes the stored redirect.
   try {
     return await rendered;
   } catch (error) {
@@ -660,13 +661,20 @@ export async function matchForPrerender<TEnv = any>(
         onDemandConfig,
       };
     }
-    if (error instanceof Response && isRedirectResponse(error)) {
+    // Structural, not `instanceof`: a Response a handler built through another
+    // realm's constructor is a redirect all the same (isRedirectResponse reads
+    // status and Location, response-utils.ts).
+    if (
+      error != null &&
+      typeof error === "object" &&
+      isRedirectResponse(error as Response)
+    ) {
       return {
         segments: [],
         handles: "",
         routeName: matched.routeKey,
         params: matchedParams,
-        redirect: storedRedirectTarget(error),
+        redirect: storedRedirectTarget(error as Response),
         onDemandConfig,
       };
     }
