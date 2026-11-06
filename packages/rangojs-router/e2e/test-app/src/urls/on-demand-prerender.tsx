@@ -4,9 +4,16 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import {
+  declineSlugs,
+  failSlugs,
+  goneSlugs,
+  MOVED_PATH,
+  redirectSlugs,
+} from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -133,6 +140,11 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async (ctx) => {
     if (goneSlugs.has(ctx.params.slug)) notFound();
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
+    // The item moved: a refresh of it stores this redirect in place of the
+    // page, so the URL answers with it instead of the page or a 404.
+    // 302, not a permanent 301: the e2e navigates to this URL again after
+    // the redirect is replaced, and a browser caches a 301 across the run.
+    if (redirectSlugs.has(ctx.params.slug)) return redirect(MOVED_PATH);
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-plain-detail">
@@ -156,9 +168,10 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
 // ?gone=0 (delete / restore the slug in the data source, so the next refresh
 // hits notFound() or renders again), ?fail=1 / ?fail=0 (the data source goes
-// down / comes back: a refresh throws something other than notFound()) and
-// repeated ?target=<path> (prerender.many(targets), the results as a JSON
-// array in target order).
+// down / comes back: a refresh throws something other than notFound()),
+// ?redirect=1 / ?redirect=0 (the item moved / moved back: a refresh redirects
+// to MOVED_PATH and stores the redirect) and repeated ?target=<path>
+// (prerender.many(targets), the results as a JSON array in target order).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const prerender = router.prerender({ env: ctx.env as AppEnv });
@@ -178,6 +191,12 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const moved = ctx.searchParams.get("redirect");
+  if (moved) {
+    if (moved === "1") redirectSlugs.add(ctx.params.slug);
+    else redirectSlugs.delete(ctx.params.slug);
+    return Response.json({ redirect: redirectSlugs.has(ctx.params.slug) });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {

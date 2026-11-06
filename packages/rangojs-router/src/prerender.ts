@@ -329,6 +329,15 @@ let runtimePrerenderIdCounter = 0;
 // Explicit params work as before:
 //   Prerender<{ slug: string }> → params = { slug: string }
 
+/**
+ * What a Prerender handler may return. A `Response` is `redirect()` (or any
+ * 3xx): on an on-demand refresh the redirect is stored in place of the page
+ * and requests are answered with it; a BUILD render of a param that redirects
+ * is a render error under `prerender.onError` (`"fail"` by default), because
+ * there is no page to bake. Return it only from the params a refresh renders.
+ */
+type PrerenderHandlerResult = ReactNode | PrerenderPassthroughResult | Response;
+
 // Overload 1: Static handler (build-time only)
 export function Prerender<
   T extends
@@ -339,10 +348,7 @@ export function Prerender<
 >(
   handler: (
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
-  ) =>
-    | ReactNode
-    | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+  ) => PrerenderHandlerResult | Promise<PrerenderHandlerResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -362,10 +368,7 @@ export function Prerender<
     | ResolvePrerenderParams<T, TRouteMap>[],
   handler: (
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
-  ) =>
-    | ReactNode
-    | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+  ) => PrerenderHandlerResult | Promise<PrerenderHandlerResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;

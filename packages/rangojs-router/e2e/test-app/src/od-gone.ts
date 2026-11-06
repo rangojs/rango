@@ -13,3 +13,13 @@ export const failSlugs: Set<string> = new Set();
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();
+
+// The same for a data source that moved an item: the plain producer redirects
+// a slug in this set (?redirect=1 / ?redirect=0 on /od-plain-trigger) to
+// MOVED_PATH, so a refresh stores the redirect in place of the page
+// (e2e/on-demand-prerender.test.ts).
+export const redirectSlugs: Set<string> = new Set();
+
+// Where a moved slug lives: a param of the plain route itself, so following the
+// redirect lands on a page that route serves.
+export const MOVED_PATH = "/on-demand-plain/moved";

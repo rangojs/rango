@@ -822,7 +822,8 @@ A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
-page"), `no-match`, `no-store`, `skipped-personalized`,
+page"), `redirected` (the render redirected, see "Redirect from a refresh"),
+`no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
@@ -954,7 +955,8 @@ The two differ in how long they last:
   refreshed page) is gone after one.
 - **Intercepted navigations do not see it.** They do not read the prerender
   store (see the rules below), so the build's intercept variant of a removed
-  page still serves.
+  page still serves, and an intercepted navigation to a stored redirect renders
+  the route live instead of following it.
 
 The `notFound()` half is the Next.js Pages Router's rule: "With
 `notFound: true`, the page will return a `404` even if there was a
@@ -963,17 +965,77 @@ user-generated content getting removed by its author. Note, `notFound`
 follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
 
+### Redirect from a refresh
+
+A product that moved is neither a page nor a 404: the handler knows where it
+lives now. `redirect()` in a render is not a failure, and it is not a
+removal. A refresh that redirects stores the redirect in place of the page,
+stamped with the route's `ttl` and `tags` like a page, and every request for
+that URL is answered with it.
+
+```typescript
+export const ProductPage = Prerender(
+  async () => [],
+  async (ctx) => {
+    const product = await ctx.env.PRODUCTS.get(ctx.params.slug);
+    if (!product) notFound();
+    if (product.slug !== ctx.params.slug) redirect(`/products/${product.slug}`, 301);
+    return <Product data={product} />;
+  },
+  { onDemand: { ttl: 3600 } },
+);
+
+await prerender("/products/old-slug");
+// { ok: true, status: "redirected", location: "/products/new-slug", ... }
+// GET /products/old-slug -> 301, Location: /products/new-slug
+```
+
+- **What a visitor gets.** The redirect, in every request shape: a document
+  GET (the 3xx and its `Location`), a client navigation (the
+  `X-RSC-Redirect` soft form, resolved server-side), and a server action's
+  re-render of the route. Never the page the store held, and never the
+  build-time entry under it. A 404 would drop the target the app named, and
+  serving the old page is the bug this fixes.
+- **A handler may return it.** `Prerender` handlers accept a `Response` return,
+  which is what `redirect()` produces. A BUILD render of a param that redirects
+  is still a render error under `prerender.onError` (`"fail"` by default):
+  there is no page to bake, so return a redirect only for the params a refresh
+  renders.
+
+**The basename and `{ external: true }` survive it.** The `Location` is
+stored as the render produced it, without the request's basename, and each
+request prefixes its own through `redirect()`; the off-host opt-in rides
+the entry and is re-branded per request. The server's open-redirect guard
+applies as it does to any handler redirect.
+
+- **`redirect(url, { state })` is not stored.** Location state is the
+  visitor's (a flash message, a return path), so a render that redirects with
+  it is `skipped-personalized`: nothing is written and the previous entry
+  keeps serving. A flash replayed to every visitor from a shared store would
+  be the leak the personalization guard exists to prevent.
+- **A later refresh decides again.** The next render replaces the redirect
+  with whatever it produces: a page, another redirect, or a removal.
+  `{ onlyIfStale: true }` leaves a fresh redirect and reports `redirected`;
+  once stale, `onRevalidate` or a sweep renders again. `markStale(tags)`
+  reaches a redirect through the route's tags like a page.
+- **A marker that lands during a redirecting render wins**, as it does over a
+  page: a `remove()` that runs while the render is in flight is not
+  overwritten by the render's redirect.
+- **No warm follows a redirect.** There is no page to rebuild a cache on.
+
 ### What is served
 
-| Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                   |
-| --------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)       | same                                       |
-| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured   | same                                       |
-| "removed" marker                  | **404** (dev and production); the build entry is not served | the live handler (dev and production)      |
-| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured        | the live handler; `onRevalidate` likewise  |
-| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render  | same                                       |
-| no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint | the live handler (dev and production)      |
-| server action re-render           | overlay, then build entry, then 404, as above               | the live handler (the overlay is not read) |
+| Request finds                     | `Prerender(..., { onDemand })`                                       | `Passthrough(def, live)`                     |
+| --------------------------------- | -------------------------------------------------------------------- | -------------------------------------------- |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)                | same                                         |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured            | same                                         |
+| "removed" marker                  | **404** (dev and production); the build entry is not served          | the live handler (dev and production)        |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured                 | the live handler; `onRevalidate` likewise    |
+| stored redirect                   | **the redirect** (dev and production); the build entry is not served | the redirect (the live handler does not run) |
+| stale stored redirect             | the same redirect; `onRevalidate` scheduled if configured            | the redirect; `onRevalidate` likewise        |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render           | same                                         |
+| no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint          | the live handler (dev and production)        |
+| server action re-render           | overlay, then build entry, then 404, as above                        | the live handler (the overlay is not read)   |
 
 The retained handler never renders inside a production request: a plain
 on-demand route 404s for a param until something refreshes it. Dev renders any

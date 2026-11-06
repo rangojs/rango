@@ -28,12 +28,21 @@ per-visitor, so it is not stored: the refresh reports
 `{ ok: false, status: "skipped-personalized" }` and the previous entry keeps
 serving, as it does for `cookies()` and `headers()`.
 
+A `Prerender` handler's return type now includes `Response`, which is what
+`redirect()` returns: before, the pattern above was a type error and needed a
+cast. A build render of a param that redirects is still a render error under
+`prerender.onError` (`"fail"` by default): there is no page to bake, so
+return a redirect only for the params a refresh renders.
+
 ```ts
 Prerender(
+  async () => [],
   async (ctx) => {
     const product = await db.product(ctx.params.slug);
     if (!product) notFound();
-    if (product.slug !== ctx.params.slug) redirect(`/products/${product.slug}`, 301);
+    if (product.slug !== ctx.params.slug) {
+      return redirect(`/products/${product.slug}`, 301);
+    }
     return <Product product={product} />;
   },
   { onDemand: { ttl: 3600 } },

@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectingRefreshStoresTheRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -363,10 +364,22 @@ function defineOutcomeTests(f: Fixture) {
   });
 }
 
+// A refresh whose render redirects stores the redirect in place of the page,
+// and every request shape is answered with it. The body is shared with
+// tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+function defineRedirectTests(f: Fixture) {
+  test("a refresh whose render redirects stores the redirect in place of the page, and a later refresh replaces it", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshStoresTheRedirect(page, removeFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   defineRemoveTests(f);
   defineOutcomeTests(f);
+  defineRedirectTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,
@@ -436,6 +449,7 @@ test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   defineRemoveTests(f);
   defineOutcomeTests(f);
+  defineRedirectTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,

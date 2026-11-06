@@ -1038,11 +1038,22 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
   neither and is permanent until a refresh without `onlyIfStale`.
+- A refresh whose render redirects stores the redirect in place of the page
+  (`composeStoredRedirect`, `prerender/writable-store.ts`; reported by
+  `matchForPrerender` as `{ redirect: { location, status, external? } }`), and
+  result status `redirected` carries `location`. A request that finds it is
+  answered with the Response `redirect()` would have built — thrown by
+  `readPrerenderSource`, the router's short-circuit control flow — so a
+  document GET gets the 3xx, a client navigation the soft form and an action
+  its redirect marker; the request's basename and the `{ external: true }`
+  brand are applied there. A redirect carrying location state is
+  `skipped-personalized`. Stamped with the route's `ttl` and `tags` like a
+  page, so it is rechecked the same way; no warm follows it.
 - `remove()` and a refresh are two writes to one key: last write wins, except
-  that a page is not written over a marker stored after its render started
-  (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
-  removal does not reach the document cache or a Passthrough route's live
-  caches: remove first, then `updateTag()`.
+  that a page or a redirect is not written over a marker stored after its
+  render started (`renderOnDemand` re-reads the key). No warm request follows
+  `removed` or `redirected`. A removal does not reach the document cache or a
+  Passthrough route's live caches: remove first, then `updateTag()`.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are

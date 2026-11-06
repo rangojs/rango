@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectingRefreshStoresTheRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -381,12 +382,24 @@ function defineOutcomesFlow(f: Fixture) {
   });
 }
 
+// A refresh whose render redirects stores the redirect in place of the page,
+// and every request shape is answered with it. The body is shared with
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+function defineRedirectFlow(f: Fixture) {
+  test("a refresh whose render redirects stores the redirect in place of the page, and a later refresh replaces it", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshStoresTheRedirect(page, guideFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
   defineOutcomesFlow(f);
+  defineRedirectFlow(f);
 
   test("plain onDemand route: unbaked param 404s until refreshed", async ({
     page,
@@ -419,6 +432,7 @@ test.describe("on-demand prerender (dev)", () => {
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
   defineOutcomesFlow(f);
+  defineRedirectFlow(f);
 
   test("plain onDemand route: unbaked param renders live (dev fall-through)", async ({
     page,

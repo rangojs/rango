@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -13,6 +13,16 @@ export const guidePlainGoneKey = (slug: string): string =>
 /** KV key of a slug whose data source the e2e took down: a refresh throws. */
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/**
+ * KV key of a slug the e2e moved: a refresh redirects to GUIDE_PLAIN_MOVED_PATH
+ * and stores the redirect in place of the page.
+ */
+export const guidePlainRedirectKey = (slug: string): string =>
+  `gp-redirect:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** Where a moved slug lives: a param of this route, so the redirect lands on a page. */
+export const GUIDE_PLAIN_MOVED_PATH = "/guide-plain/moved";
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -37,6 +47,14 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
     ) {
       throw new Error("upstream 500");
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainRedirectKey(ctx.params.slug)))
+    ) {
+      // 302, not a permanent 301: the e2e navigates here again after the
+      // redirect is replaced, and a browser caches a 301 across the run.
+      return redirect(GUIDE_PLAIN_MOVED_PATH);
     }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.

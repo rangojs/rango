@@ -51,7 +51,7 @@ function item(slug: string): Item {
 }
 
 /** The route handler: a page, a redirect for a moved item, a 404 for a gone one. */
-function page(slug: string): React.ReactNode {
+function page(slug: string): React.ReactNode | Response {
   const found = item(slug);
   if (found === null) notFound(`no item ${slug}`);
   if ("movedTo" in found) {
@@ -59,15 +59,15 @@ function page(slug: string): React.ReactNode {
       return redirect(found.movedTo, {
         status: 301,
         state: [{} as never],
-      }) as never;
+      });
     }
     if (external) {
       return redirect(found.movedTo, {
         status: 301,
         external: true,
-      }) as never;
+      });
     }
-    return redirect(found.movedTo, 301) as never;
+    return redirect(found.movedTo, 301);
   }
   runs.producer += 1;
   return <h1>{`${slug}:${found.title}:render-${runs.producer}`}</h1>;
@@ -83,11 +83,13 @@ const ProductDef = Prerender<{ slug: string }>(
  * A redirect from a layout handler rather than the route's: the render's
  * redirect counts wherever a handler produces one, as a `notFound()` does.
  */
-function MovedLayout(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+function MovedLayout(
+  ctx: HandlerContext<{ slug: string }>,
+): React.ReactNode | Response {
   const found = item(ctx.params.slug);
   if (found !== null && "movedTo" in found) {
     runs.layout += 1;
-    return redirect(found.movedTo, 302) as never;
+    return redirect(found.movedTo, 302);
   }
   return <header>chrome</header>;
 }
