@@ -10,12 +10,16 @@ the segments whose handler re-ran; a page served from a record or an entry did
 not, because the record does not carry the marker the walk sets. So a value
 only the page being left pushed — a breadcrumb a layout no longer pushes —
 cleared on a MISS and stayed on a HIT: the same navigation gave two different
-pages depending on whether the record was there.
+pages depending on whether the record was there. An intercept's slot was never
+listed, live or stored: a modal moved to an item whose handler pushes nothing
+kept the crumb the previous item pushed.
 
 **Now.** A stored segment the response sends is listed in `resolvedIds`, as a
 re-run handler's is: the record's values replace the browser's, or clear them
 when the record carries none. A segment the response keeps is not listed, so
-its values stay. The client is unchanged; only `resolvedIds` on the wire.
+its values stay. An intercept's slot is listed whenever its handler runs, and
+whenever a record sends it. The client is unchanged; only `resolvedIds` on the
+wire.
 
 ```ts
 // A chain layout above /a and /b, inside cache({ ttl: 60 })

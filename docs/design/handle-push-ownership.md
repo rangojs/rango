@@ -1271,7 +1271,13 @@ which run made each one.
    when the record carries none. Without that a HIT listed only the loaders it
    re-ran, and a value the record did not carry stayed on the page the
    navigation left. A segment the lookup keeps stays unmarked, as a segment a
-   live walk keeps.
+   live walk keeps. An intercept's slot is marked when its handler runs
+   (`resolveInterceptEntry`, `router/intercept-resolution.ts`), so a modal
+   moved to an item whose handler pushes nothing clears the crumb the last
+   item pushed, live or from the record; a fill that keeps the slot leaves it
+   unmarked. The slot travels in `slots` as well as in `segments`, and
+   `buildMatchResult` strips the marker from both, handing each slot the
+   same stripped copy `segments` holds.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

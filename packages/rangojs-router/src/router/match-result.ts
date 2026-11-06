@@ -202,12 +202,14 @@ export function buildMatchResult<TEnv>(
   // collect the diff ids (id is unchanged by the strip) together.
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
+  let cleanedOf: Map<ResolvedSegment, ResolvedSegment> | undefined;
   for (const s of segmentsToRender) {
     if (s._handlerRan === undefined) {
       cleanedSegments.push(s);
     } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
+      const cleaned = withoutHandlerRan(s);
+      (cleanedOf ??= new Map()).set(s, cleaned);
+      cleanedSegments.push(cleaned);
     }
     diff.push(s.id);
   }
@@ -227,7 +229,10 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots:
+      Object.keys(state.slots).length > 0
+        ? cleanedSlots(state.slots, cleanedOf)
+        : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -237,6 +242,37 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * An intercept's slot segments travel in `slots` as well as in `segments`,
+ * and carry `_handlerRan` like any other (intercept-resolution.ts, and
+ * cache-lookup.ts serveStoredSegments on a HIT). Each slot takes the same
+ * stripped copy `segments` holds, so both stay one object in the payload.
+ */
+function cleanedSlots(
+  slots: MatchPipelineState["slots"],
+  cleanedOf: ReadonlyMap<ResolvedSegment, ResolvedSegment> | undefined,
+): MatchPipelineState["slots"] {
+  let out: MatchPipelineState["slots"] | undefined;
+  for (const name in slots) {
+    const slot = slots[name]!;
+    if (!slot.segments.some((s) => s._handlerRan !== undefined)) continue;
+    (out ??= { ...slots })[name] = {
+      ...slot,
+      segments: slot.segments.map((s) =>
+        s._handlerRan === undefined
+          ? s
+          : (cleanedOf?.get(s) ?? withoutHandlerRan(s)),
+      ),
+    };
+  }
+  return out ?? slots;
 }
 
 /**

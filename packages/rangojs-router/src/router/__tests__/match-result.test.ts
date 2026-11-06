@@ -480,6 +480,38 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
       expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
     });
+
+    it("strips _handlerRan from an intercept's slot, as the same object segments holds", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0"];
+      const slot = createSegment("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      const kept = createSegment("L0.@side", {
+        type: "parallel",
+        slot: "@modal",
+        component: null,
+        _handlerRan: false,
+      } as Partial<ResolvedSegment>);
+      state.interceptSegments = [slot];
+      state.slots = { "@modal": { active: true, segments: [slot, kept] } };
+
+      const result = buildMatchResult([slot], ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0.@modal"]);
+      const sent = result.slots?.["@modal"]?.segments ?? [];
+      expect(sent).toHaveLength(2);
+      expect(sent.every((s) => !("_handlerRan" in s))).toBe(true);
+      expect(sent[0]).toBe(result.segments[0]);
+      // The pipeline's own state keeps its marker for its other readers.
+      expect(state.slots["@modal"].segments[0]).toBe(slot);
+    });
   });
 
   describe("buildMatchResult() - fromStorage", () => {

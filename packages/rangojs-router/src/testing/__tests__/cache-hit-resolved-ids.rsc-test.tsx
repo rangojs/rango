@@ -17,6 +17,12 @@
  * (match-middleware/cache-lookup.ts) marks it as run, exactly as a re-run
  * handler's is marked. A segment it keeps stays unmarked: the browser keeps
  * that segment's values, as on a live walk.
+ *
+ * An intercept's slot follows the same rule. The live resolver marks it when
+ * its handler runs (intercept-resolution.ts resolveInterceptEntry), so the
+ * MISS lists it as the HIT does, and the slot reaches the client in `slots`
+ * too, where buildMatchResult (match-result.ts) strips the marker as it does
+ * from `segments`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -370,6 +376,161 @@ describe("a stored answer lists what it sends, as the live render lists what it 
       expect([...(hit.answer.resolvedIds ?? [])].sort()).toEqual(
         [...(miss.answer.resolvedIds ?? [])].sort(),
       );
+    });
+  }
+});
+
+/** Whether the intercept's modal pushes its crumb. */
+let modalPushes = true;
+
+const interceptRouter = createRouter({}).routes(
+  urls(({ path, cache, layout, intercept }) => [
+    layout(
+      (ctx: HandlerContext) => {
+        ctx.use(Crumbs)("root");
+        return <main>shell</main>;
+      },
+      () => [
+        cache({ ttl: 600 }, () => [
+          path(
+            "/list",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("list");
+              return <ul>list</ul>;
+            },
+            { name: "list" },
+          ),
+          path(
+            "/item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)("item");
+              return <article>item</article>;
+            },
+            { name: "item" },
+          ),
+          intercept("@modal", ".item", (ctx: HandlerContext) => {
+            if (modalPushes) ctx.use(Crumbs)("modal");
+            return <dialog>modal</dialog>;
+          }),
+        ]),
+      ],
+    ),
+  ]),
+);
+
+/** The client after a document of /list: its handles and matched ids. */
+async function listPage(): Promise<{ handles: HandleData; matched: string[] }> {
+  const { answer, handles } = await readAnswer(
+    await serveShellRequest(interceptRouter, "/list", {
+      cacheStore: new MemorySegmentCacheStore(),
+    }),
+  );
+  return { handles, matched: answer.matched };
+}
+
+/** The client after it opened the modal at /item/1 over /list, pushing. */
+async function openedModal(): Promise<{
+  handles: HandleData;
+  matched: string[];
+}> {
+  modalPushes = true;
+  const list = await listPage();
+  const { answer, handles } = await readAnswer(
+    await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: {
+        from: "/list",
+        interceptSource: "/list",
+        segments: list.matched,
+      },
+    }),
+  );
+  const order = filterSegmentOrder(answer.matched);
+  return {
+    handles: mergePartialHandleData(
+      list.handles,
+      handles,
+      order,
+      answer.matched,
+      answer.resolvedIds,
+    ),
+    matched: answer.matched,
+  };
+}
+
+/** The intercept requests: opened over /list, and moved on to /item/2. */
+const INTERCEPT_SHAPES = [
+  { name: "an intercept opened", url: "/item/1", from: "/list" },
+  { name: "an intercept moved", url: "/item/2", from: "/item/1" },
+] as const;
+
+describe("an intercept's slot is listed when its handler runs, live or stored", () => {
+  beforeEach(() => {
+    modalPushes = true;
+  });
+
+  it("clears the crumb a moved modal no longer pushes, on the MISS and the HIT", async () => {
+    const from = await openedModal();
+    expect(
+      collectHandleData(Crumbs, from.handles, filterSegmentOrder(from.matched)),
+    ).toEqual(["root", "modal", "list"]);
+    const partial = {
+      from: "/item/1",
+      interceptSource: "/list",
+      segments: from.matched,
+    };
+
+    modalPushes = false;
+    const miss = await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial,
+    });
+    const cacheStore = new MemorySegmentCacheStore();
+    await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore,
+      partial,
+    });
+    // A live render would push it again: the HIT answers from the record.
+    modalPushes = true;
+    const hit = await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore,
+      partial,
+    });
+
+    expect(await crumbsAfter(from.handles, miss)).toEqual(["root", "list"]);
+    expect(await crumbsAfter(from.handles, hit)).toEqual(["root", "list"]);
+  });
+
+  for (const shape of INTERCEPT_SHAPES) {
+    it(`${shape.name}: the HIT lists what the MISS lists, the slot included`, async () => {
+      const from =
+        shape.from === "/list" ? await listPage() : await openedModal();
+      const cacheStore = new MemorySegmentCacheStore();
+      const partial = {
+        from: shape.from,
+        interceptSource: "/list",
+        segments: from.matched,
+      };
+      const missResult = await serveShellRequest(interceptRouter, shape.url, {
+        cacheStore,
+        partial,
+      });
+      const hitResult = await serveShellRequest(interceptRouter, shape.url, {
+        cacheStore,
+        partial,
+      });
+      const miss = await readAnswer(missResult);
+      const hit = await readAnswer(hitResult);
+
+      const slot = miss.answer.matched.find((id) => id.endsWith(".@modal"));
+      expect(slot).toBeDefined();
+      expect(miss.answer.resolvedIds).toContain(slot);
+      expect([...(hit.answer.resolvedIds ?? [])].sort()).toEqual(
+        [...(miss.answer.resolvedIds ?? [])].sort(),
+      );
+      // The slot travels in `slots` as well as in `segments`.
+      expect(missResult.flight).not.toContain("_handlerRan");
+      expect(hitResult.flight).not.toContain("_handlerRan");
     });
   }
 });
