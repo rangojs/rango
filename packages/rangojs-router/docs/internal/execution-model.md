@@ -2628,7 +2628,11 @@ identity, so a derived request context per segment would split them.
 Not changed: a push function bound before the await (`const push =
 ctx.use(Handle)`) was always filed right. A `"use cache"` call made from a
 component the handler handed the ctx to still reads the ctx's pin, not the
-handler's segment.
+handler's segment. A `Static()` handler and a baked intercept handler run on
+the build ctx itself, not through the walker (`prerender-match.ts`), so
+their ctx carries no segment and a component they hand it to reads the bake
+pass's pin — the same push that names the segment at runtime files under
+whatever the bake pinned.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader

@@ -255,7 +255,7 @@ export function withSegmentScope<C>(
   for (const key of Reflect.ownKeys(ctx as object)) {
     const desc = Object.getOwnPropertyDescriptor(ctx as object, key);
     if (desc === undefined || !desc.enumerable || !("value" in desc)) continue;
-    Object.defineProperty(scoped, key, desc);
+    (scoped as Record<PropertyKey, unknown>)[key] = desc.value;
   }
   Object.defineProperty(scoped, "_currentSegmentId", {
     enumerable: true,
