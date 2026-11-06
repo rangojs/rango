@@ -123,7 +123,6 @@ const router = createRouter({}).routes(
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
-  segments: { id: string; type: string }[];
 }
 
 /** A response's metadata and the last handle state it streamed. */
