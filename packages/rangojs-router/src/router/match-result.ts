@@ -204,12 +204,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -228,10 +223,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots:
-      Object.keys(state.slots).length > 0
-        ? withoutHandlerRanInSlots(state.slots)
-        : undefined,
+    slots: withoutHandlerRanInSlots(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -243,9 +235,16 @@ export function buildMatchResult<TEnv>(
   };
 }
 
+/** `segment` without its internal `_handlerRan` marker. */
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
 /**
- * `slots` with each segment's internal `_handlerRan` marker removed. An
- * intercept slot holds the pipeline's own segment objects
+ * The intercept slots, each segment stripped of `_handlerRan`, or undefined
+ * when there are none. A slot holds the pipeline's own segment objects
  * (match-middleware/intercept-resolution.ts), which the strip above replaces
  * only in `segments`: a marker the result's segments lost would otherwise
  * reach the client through the slot. A stored intercept slot is marked by
@@ -254,22 +253,15 @@ export function buildMatchResult<TEnv>(
  */
 function withoutHandlerRanInSlots(
   slots: Record<string, SlotState>,
-): Record<string, SlotState> {
+): Record<string, SlotState> | undefined {
   const out: Record<string, SlotState> = {};
   for (const [name, slot] of Object.entries(slots)) {
     const segments = slot.segments;
     out[name] = segments
-      ? {
-          ...slot,
-          segments: segments.map((s) => {
-            if (s._handlerRan === undefined) return s;
-            const { _handlerRan: _drop, ...rest } = s;
-            return rest as ResolvedSegment;
-          }),
-        }
+      ? { ...slot, segments: segments.map(withoutHandlerRan) }
       : slot;
   }
-  return out;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

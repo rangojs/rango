@@ -166,7 +166,9 @@ is decided on its own: an intercept variant can hold a layout's parallel and
 the intercept's slot under one id, and the slot is sent while the held
 parallel is kept. On a partial request the entry replays a handle bucket
 only when a segment with its id is sent, so a kept layout keeps the
-client's values. It used to re-send every held segment and all their
+client's values — and the segments it sends are the ones it lists in
+`resolvedIds`, so the browser replaces a sent segment's bucket with the
+record's, empty included, where it kept the page's before. It used to re-send every held segment and all their
 handle values when the params changed: a `/list` to `/item/1`
 navigation, an intercept's included, replaced the layout on screen and its
 crumbs with the build's render. A `cache()` record asks its `revalidate()`
