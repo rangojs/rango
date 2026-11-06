@@ -1283,7 +1283,9 @@ one partition warmed).
 
 - Middleware runs and sees an anonymous request. An auth middleware that
   redirects makes the result `render-failed` with `responseStatus: 302`: an
-  anonymous visitor is not served a cached page there either.
+  anonymous visitor is not served a cached page there either. That is the
+  warm's own answer; an on-demand refresh, whose route's render redirects, is
+  `skipped-redirect` instead (see "A redirect keeps the page").
 - `cookies()` or `headers()` read outside any cached scope see nothing, and
   the anonymous view is rendered and stored wherever a cookie-free visitor's
   would be.

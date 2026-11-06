@@ -39,7 +39,9 @@ export const PrerenderChildBoom = Prerender(async () => (
 // anonymous, so a route that answers elsewhere there cannot be baked. It is a
 // render error for prerender.onError, like a throw. Registered only when
 // RANGO_TEST_PRERENDER_REDIRECT is set.
-export const PrerenderRedirect = Prerender(async () => redirect("/login"));
+export const PrerenderRedirect = Prerender(
+  async () => redirect("/login") as never,
+);
 
 // A Static handler exercising the SAME prerender.onError policy via the
 // renderStaticHandlers loop. Static handlers are discovered by export (not route
