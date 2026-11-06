@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a navigation served from a `cache()`, `Prerender()` or `ppr` record replaces the handle values its segments no longer push
+
+**Before.** A partial response lists the segments it re-rendered in
+`resolvedIds`, and the browser replaces those segments' `ctx.use(Handle)`
+values with the ones the response carries, dropping any the segment no longer
+pushes. A live render marked each segment it re-rendered, but a response
+served from storage (a `cache()` record, a `Prerender()` bake, a `ppr` shell
+replay) listed none of them: a layout that re-ran on a navigation and pushed
+nothing kept the value the previous page showed. A breadcrumb cleared on the
+first navigation to a page came back on the next one, which was served from
+the record the first had written.
+
+**Now.** Every segment a stored response re-renders is listed in
+`resolvedIds`, as the live render lists it, so the browser drops the handle
+values the segment no longer pushes. The values the record carries are
+unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

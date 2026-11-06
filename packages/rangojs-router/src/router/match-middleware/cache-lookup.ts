@@ -612,8 +612,19 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // A sent stored segment re-resolved for this response, as the live
+      // walk's does. The record does not carry the marker (serializeSegments,
+      // segment-codec.ts copies named fields), and a partial response reports
+      // the segments it re-resolved as `resolvedIds` (buildMatchResult,
+      // match-result.ts) so the browser replaces their handle values with the
+      // record's, clearing any the segment no longer pushes. Its handle values
+      // are replayed below, or by decodeStoredEntry for a bake.
+      segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
