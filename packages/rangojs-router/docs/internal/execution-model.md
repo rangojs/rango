@@ -468,6 +468,17 @@ See "Rewrite" below for what moves and what stays.
   and `releaseRecordedValues` in `handle-store.ts`, held by
   `serveStoredSegments`; pinned by `cached-handle-push-order.rsc-test.tsx`.
 
+- A stored hit names in `resolvedIds` every stored segment it sends, so the
+  browser replaces exactly the runs whose values the response carries
+  (`mergePartialHandleData`), as a live render names the handlers that ran. A
+  record stores no `_handlerRan` (`serializeSegments` copies named fields) and
+  needs none: both write paths render every stored segment's handler, so the
+  only thing a response decides is which segments it sends. Source: the send
+  branch of `serveStoredSegments` in `cache-lookup.ts` (the same decision that
+  feeds `restoreHandles`' sent ids); pinned by
+  `cached-hit-resolved-ids.rsc-test.tsx` and the replay parity cases of
+  `serve-shell-request-replay-revalidate.rsc-test.tsx`.
+
 - Under PPR shell capture, of the DSL `loader()` registrations only
   `loader(Def, { ssr: "await" })` executes and bakes; every other registration
   is masked and live, whatever its `loading()`
