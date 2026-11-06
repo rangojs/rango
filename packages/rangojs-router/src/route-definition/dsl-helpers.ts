@@ -107,6 +107,50 @@ const emptySegmentBase = (): EntryPropDatas &
 });
 
 /**
+ * The entry whose callback created a use item, recorded by each DSL helper on
+ * the item it returns.
+ *
+ * A helper fixes its entry's parent pointer, short code and namespace the
+ * moment it runs, so an item created in one callback and returned from another
+ * cannot be moved afterwards: it stays registered where it was created. Without
+ * the mark the tree silently disagrees with the code — a `const a = path("/a",
+ * A)` declared at the top of urls() and nested in a layout() registers under
+ * the root, the layout never renders, and the route answers 200 from the root.
+ */
+const DECLARED_UNDER: unique symbol = Symbol("rango.declaredUnder");
+
+type DeclaredUseItem = { [DECLARED_UNDER]?: EntryData | null };
+
+/** Record `parent` on a helper's use item; returns the item. */
+function declaredUnder<T extends object>(item: T, parent: EntryData | null): T {
+  (item as DeclaredUseItem)[DECLARED_UNDER] = parent;
+  return item;
+}
+
+/**
+ * Reject a use item nested under an entry it was not created in. The callback's
+ * own entry is the item's declaring entry or an ancestor of it: cache() without
+ * children moves ctx.parent down to its own entry, so the siblings after it are
+ * declared one level deeper and still belong to the callback. An orphan is
+ * walked through orphanOwner (attachOrphanSibling), the entry it was declared
+ * in.
+ */
+function assertDeclaredIn(entry: EntryData, items: AllUseItems[]): void {
+  for (const item of items) {
+    if (!item || !(DECLARED_UNDER in item)) continue;
+    let node = (item as DeclaredUseItem)[DECLARED_UNDER] ?? null;
+    while (node && node !== entry) {
+      node = node.parent ?? node.orphanOwner ?? null;
+    }
+    invariant(
+      node === entry,
+      `${item.type}() declared outside the ${entry.type}() it is nested in [${item.name}]: ` +
+        "a definition registers under the entry whose callback creates it, so create it inside that callback",
+    );
+  }
+}
+
+/**
  * Run a children/use callback as a nested scope, flatten the result, and assert
  * every item is a valid use item. `kind` preserves the existing error wording
  * ("use()" vs "children" callback).
@@ -120,7 +164,7 @@ function runAndValidateUseItems(
   kind: "use" | "children",
 ): AllUseItems[] {
   const result = store.run(namespace, entry, cb)?.flat(3);
-  return validateUseItems(result, namespace, label, kind);
+  return validateUseItems(result, namespace, label, kind, entry);
 }
 
 /** Assert an already-invoked, flattened callback result is a use-item array. */
@@ -129,11 +173,13 @@ function validateUseItems(
   namespace: string,
   label: string,
   kind: "use" | "children",
+  entry: EntryData,
 ): AllUseItems[] {
   invariant(
     Array.isArray(result) && result.every((item) => isValidUseItem(item)),
     `${label}() ${kind === "use" ? "use()" : "children"} callback must return an array of use items [${namespace}]`,
   );
+  assertDeclaredIn(entry, result as AllUseItems[]);
   return result as AllUseItems[];
 }
 
@@ -210,7 +256,7 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   }
   const name = `$${store.getNextIndex("revalidate")}`;
   parent.revalidate.push(toShouldRevalidateFn(fn));
-  return { name, type: "revalidate" } as RevalidateItem;
+  return declaredUnder({ name, type: "revalidate" } as RevalidateItem, parent);
 };
 
 /**
@@ -257,7 +303,10 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
   }
   const name = `$${store.getNextIndex("errorBoundary")}`;
   parent.errorBoundary.push(fallback);
-  return { name, type: "errorBoundary" } as ErrorBoundaryItem;
+  return declaredUnder(
+    { name, type: "errorBoundary" } as ErrorBoundaryItem,
+    parent,
+  );
 };
 
 /**
@@ -305,7 +354,10 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   }
   const name = `$${store.getNextIndex("notFoundBoundary")}`;
   parent.notFoundBoundary.push(fallback);
-  return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
+  return declaredUnder(
+    { name, type: "notFoundBoundary" } as NotFoundBoundaryItem,
+    parent,
+  );
 };
 
 /**
@@ -369,7 +421,9 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const route = enclosingRoute(ctx.parent);
   if (route && ctx.parent) {
     route.cache = cacheConfig;
-    if (!children) return { name, type: "cache" } as CacheItem;
+    if (!children) {
+      return declaredUnder({ name, type: "cache" } as CacheItem, ctx.parent);
+    }
     const uses = runAndValidateUseItems(
       store,
       `${ctx.namespace}.${cacheIndex}`,
@@ -378,7 +432,10 @@ const cache: RouteHelpers<any, any>["cache"] = (
       "cache",
       "children",
     );
-    return { name, type: "cache", uses } as CacheItem;
+    return declaredUnder(
+      { name, type: "cache", uses } as CacheItem,
+      ctx.parent,
+    );
   }
 
   // If no children, create an orphan cache entry (like orphan layouts)
@@ -390,7 +447,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     if (parent && parent.type === "loader") {
       // Direct assignment to loader entry's cache field
       parent.cache = cacheConfig;
-      return { name, type: "cache" } as CacheItem;
+      return declaredUnder({ name, type: "cache" } as CacheItem, parent);
     }
 
     // Create orphan cache entry (like orphan layout)
@@ -419,7 +476,10 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // This makes cache() act as sugar for cache(() => [...])
     ctx.parent = entry;
 
-    return { name: namespace, type: "cache" } as CacheItem;
+    return declaredUnder(
+      { name: namespace, type: "cache" } as CacheItem,
+      parent,
+    );
   }
 
   // Inside a loader() use() callback, only the direct form — cache()/cache(opts)
@@ -464,7 +524,10 @@ const cache: RouteHelpers<any, any>["cache"] = (
   // as an orphan sibling.
   if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
-  return { name: namespace, type: "cache", uses: result } as CacheItem;
+  return declaredUnder(
+    { name: namespace, type: "cache", uses: result } as CacheItem,
+    ctx.parent,
+  );
 };
 
 const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
@@ -520,7 +583,10 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     }
     const name = `$${store.getNextIndex("middleware")}`;
     parent.middleware.push(...fns);
-    return { name, type: "middleware" } as MiddlewareItem;
+    return declaredUnder(
+      { name, type: "middleware" } as MiddlewareItem,
+      parent,
+    );
   }
 
   // Wrapping mode: create a transparent layout that carries the middleware
@@ -556,6 +622,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     namespace,
     "middleware",
     "children",
+    entry,
   );
 
   if (isOrphan(result)) {
@@ -572,11 +639,14 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...args: any[]) => {
     attachOrphanSibling(ctx.parent, entry);
   }
 
-  return {
-    name: namespace,
-    type: "middleware",
-    uses: result,
-  } as MiddlewareItem;
+  return declaredUnder(
+    {
+      name: namespace,
+      type: "middleware",
+      uses: result,
+    } as MiddlewareItem,
+    ctx.parent,
+  );
 };
 
 // Slot names become part of segment ids: a parallel/intercept slot is encoded
@@ -725,7 +795,10 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
     ctx.parent.parallel[slotName] = slotEntry;
   }
-  return { name: namespace, type: "parallel" } as ParallelItem;
+  return declaredUnder(
+    { name: namespace, type: "parallel" } as ParallelItem,
+    ctx.parent,
+  );
 };
 
 function isSlotDescriptor(
@@ -759,7 +832,7 @@ const intercept = (
   handler: any,
   configOrUse?: InterceptConfig | (() => any[]),
   use?: () => any[],
-) => {
+): InterceptItem => {
   // arg4 discrimination: a function is the use() callback (no config); an object
   // is the config carrying `when`. With config given, the use() callback is
   // arg5. Keeps the no-config form intercept(slot, route, handler, () => [...])
@@ -868,6 +941,7 @@ const intercept = (
       namespace,
       "intercept",
       "use",
+      tempParent as EntryData,
     );
     validateInterceptUseItems(
       result,
@@ -889,7 +963,10 @@ const intercept = (
   }
 
   ctx.parent.intercept.push(entry);
-  return { name: namespace, type: "intercept" } as InterceptItem;
+  return declaredUnder(
+    { name: namespace, type: "intercept" } as InterceptItem,
+    ctx.parent,
+  );
 };
 
 /**
@@ -977,13 +1054,13 @@ const loader: RouteHelpers<any, any>["loader"] = (
       (loaderEntry as any).cache = (tempParent as any).cache;
     }
 
-    validateUseItems(result, name, "loader", "use");
+    validateUseItems(result, name, "loader", "use", tempParent as EntryData);
   }
 
   ctx.parent.loader.push(
     ctx.isSSR ? documentModeLoader(loaderEntry) : loaderEntry,
   );
-  return { name, type: "loader" } as LoaderItem;
+  return declaredUnder({ name, type: "loader" } as LoaderItem, ctx.parent);
 };
 
 /**
@@ -1026,7 +1103,7 @@ const loading: RouteHelpers<any, any>["loading"] = (component, options) => {
       : undefined;
 
   const name = `$${store.getNextIndex("loading")}`;
-  return { name, type: "loading" } as LoadingItem;
+  return declaredUnder({ name, type: "loading" } as LoadingItem, parent);
 };
 
 /**
@@ -1068,7 +1145,10 @@ const transition = (
       invariant(false, "No parent entry available for transition()");
     }
     parent.transition = config;
-    return { name, type: "transition" } as TransitionItem;
+    return declaredUnder(
+      { name, type: "transition" } as TransitionItem,
+      parent,
+    );
   }
 
   // Position 2: wrapper — create a transparent layout with transition config
@@ -1094,11 +1174,14 @@ const transition = (
 
   if (isOrphan(result)) attachOrphanSibling(ctx.parent, entry);
 
-  return {
-    name: namespace,
-    type: "transition",
-    uses: result,
-  } as TransitionItem;
+  return declaredUnder(
+    {
+      name: namespace,
+      type: "transition",
+      uses: result,
+    } as TransitionItem,
+    ctx.parent,
+  );
 };
 
 const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
@@ -1143,11 +1226,17 @@ const route: RouteHelpers<any, any>["route"] = (name, handler, use) => {
       "route",
       "use",
     );
-    return { name: namespace, type: "route", uses: result } as RouteItem;
+    return declaredUnder(
+      { name: namespace, type: "route", uses: result } as RouteItem,
+      ctx.parent,
+    );
   }
 
   /* typesafe item */
-  return { name: namespace, type: "route" } as RouteItem;
+  return declaredUnder(
+    { name: namespace, type: "route" } as RouteItem,
+    ctx.parent,
+  );
 };
 
 const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
@@ -1255,12 +1344,18 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   }
 
   if (result) {
-    return { name: namespace, type: "layout", uses: result } as LayoutItem;
+    return declaredUnder(
+      { name: namespace, type: "layout", uses: result } as LayoutItem,
+      ctx.parent,
+    );
   }
-  return {
-    name: namespace,
-    type: "layout",
-  } as LayoutItem;
+  return declaredUnder(
+    {
+      name: namespace,
+      type: "layout",
+    } as LayoutItem,
+    ctx.parent,
+  );
 };
 
 const isValidUseItem = (item: any): item is AllUseItems | undefined | null =>
@@ -1288,4 +1383,5 @@ export {
   isValidUseItem,
   emptySegmentBase,
   runAndValidateUseItems,
+  declaredUnder,
 };

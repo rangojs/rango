@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a definition declared outside the layout that nests it throws instead of rendering without it
+
+**Before.** Every helper registers its entry (parent pointer, segment short
+code, namespace) when it runs. A definition created above the `layout()`,
+`cache()` or `include()` that nested it therefore stayed registered where it
+was created: `const a = path("/a", Page); return [layout(Shell, () => [a])]`
+put the route at the root, `Shell` never rendered, and the request answered 200. The inline form `layout(Shell, () => [path("/a", Page)])` rendered
+`Shell`, so the two shapes read the same and behaved differently.
+
+**Now.** Nesting a definition under an entry it was not created in throws
+where it is written: `route() declared outside the layout() it is nested in
+[<id>]: a definition registers under the entry whose callback creates it, so
+create it inside that callback`. It holds for every helper (`path`, `route`,
+`layout`, `cache`, `middleware`, `transition`, `parallel`, `intercept`,
+`loader`, `loading`, `revalidate`, `errorBoundary`, `notFoundBoundary`,
+`include()`). The inline form is unchanged, and so is the `cache()` form whose
+following siblings attach under its own entry
+(`urls(({ cache, path }) => [cache({ ttl: 60 }), path("/a", A), path("/b", B)])`).
+
+```ts
+// Before: the route renders at the root, Shell never renders, 200
+const a = path("/a", Page, { name: "a" });
+return [layout(Shell, () => [a])];
+
+// Now: throws at definition time
+
+// Create the definition inside the callback it is nested in
+return [layout(Shell, () => [path("/a", Page, { name: "a" })])];
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

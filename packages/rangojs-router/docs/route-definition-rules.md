@@ -13,6 +13,25 @@ Guard locations below are relative to `src/`: `path()` guards live in
 
 ## Nesting Rules
 
+### every helper
+
+| Rule                                                           | Example                                                        | Guard location                                         |
+| -------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------ |
+| A definition must be created in the callback that nests it     | `const a = path("/a", A); return [layout(L, () => [a])]`       | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same for a loader, boundary, `middleware()` or `include()` | `const data = loader(L); return [layout(Shell, () => [data])]` | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+| The same through `cache()`'s children                          | `const a = path("/a", A); return [cache(c, () => [a])]`        | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
+
+Each helper records the entry its item was declared under (the symbol key on
+the returned item), and a `use()`/children callback rejects an item declared
+outside it. A helper fixes its entry's parent pointer, short code and namespace
+when it runs, so nesting the item elsewhere does not move it: before this guard
+the definition stayed registered where it was created and the layout it was
+nested in silently disappeared from the tree (the route still answered 200).
+The guard accepts an item declared under the callback's own entry or any
+descendant of it, because `cache()` without children moves the current parent
+down to its own entry: the siblings after it are declared one level below the
+callback's entry and stay valid.
+
 ### path()
 
 | Rule                                        | Example                                                   | Guard location                        |
