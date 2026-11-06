@@ -21,9 +21,13 @@ Guard locations below are relative to `src/`: `path()` guards live in
 | The same for a loader, boundary, `middleware()` or `include()` | `const data = loader(L); return [layout(Shell, () => [data])]` | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
 | The same through `cache()`'s children                          | `const a = path("/a", A); return [cache(c, () => [a])]`        | `route-definition/dsl-helpers.ts` (`assertDeclaredIn`) |
 
-Each helper records the entry its item was declared under (the symbol key on
-the returned item), and a `use()`/children callback rejects an item declared
-outside it. A helper fixes its entry's parent pointer, short code and namespace
+Each helper records where its item was declared — the entry and the helper's
+own name, under a symbol key on the returned item — and a `use()`/children
+callback rejects an item declared outside it. The error names the helper you
+called and the callback it belongs in, so it reads as the call you wrote even
+where the callback's entry has another type (`middleware(fn, children)` and
+`transition(config, children)` build layout entries, and `path()` items are
+routes). A helper fixes its entry's parent pointer, short code and namespace
 when it runs, so nesting the item elsewhere does not move it: before this guard
 the definition stayed registered where it was created and the layout it was
 nested in silently disappeared from the tree (the route still answered 200).

@@ -54,25 +54,28 @@ function testLoaderDef(): LoaderDefinition<any> {
   } as unknown as LoaderDefinition<any>;
 }
 
-const NESTED_IN_LAYOUT = /declared outside the layout\(\) it is nested in/;
-
-/** One item per helper, each declared under the callback's own entry. */
+/**
+ * One item per helper, each declared under the callback's own entry. The helper
+ * name is the one the error must report for that item: a helper whose mark
+ * carries another name (or none) fails its row, which is also what catches a
+ * helper added without recording where it was created.
+ */
 const DECLARATIONS: Array<[string, () => AllUseItems]> = [
-  ["route()", () => route("a", Page)],
-  ["path()", () => createPathHelper<any>()("/b", Page, { name: "b" })],
-  ["layout()", () => layout(Shell)],
-  ["cache()", () => cache({ ttl: 60 }, () => [])],
-  ["middleware()", () => middleware(() => undefined)],
-  ["transition()", () => transition({})],
-  ["parallel()", () => parallel({ "@side": Page })],
-  ["intercept()", () => intercept("@modal", "a", Page)],
-  ["loader()", () => loader(testLoaderDef())],
-  ["loading()", () => loading(null as never)],
-  ["revalidate()", () => revalidate(() => true)],
-  ["errorBoundary()", () => errorBoundary(null as never)],
-  ["notFoundBoundary()", () => notFoundBoundary(null as never)],
+  ["route", () => route("a", Page)],
+  ["path", () => createPathHelper<any>()("/b", Page, { name: "b" })],
+  ["layout", () => layout(Shell)],
+  ["cache", () => cache({ ttl: 60 }, () => [])],
+  ["middleware", () => middleware(() => undefined)],
+  ["transition", () => transition({})],
+  ["parallel", () => parallel({ "@side": Page })],
+  ["intercept", () => intercept("@modal", "a", Page)],
+  ["loader", () => loader(testLoaderDef())],
+  ["loading", () => loading(null as never)],
+  ["revalidate", () => revalidate(() => true)],
+  ["errorBoundary", () => errorBoundary(null as never)],
+  ["notFoundBoundary", () => notFoundBoundary(null as never)],
   [
-    "include()",
+    "include",
     () =>
       createIncludeHelper<any>()(
         "/block",
@@ -83,14 +86,18 @@ const DECLARATIONS: Array<[string, () => AllUseItems]> = [
 
 describe("a definition nested under an entry it was not created in", () => {
   for (const [helper, declare] of DECLARATIONS) {
-    it(`throws for a ${helper} item created above the layout that nests it`, () => {
+    it(`throws for a ${helper}() item created above the layout that nests it`, () => {
       const parent = parentEntry();
       expect(() =>
         withDslStore(parent, () => {
           const item = declare();
           layout(Shell, () => [item]);
         }),
-      ).toThrow(NESTED_IN_LAYOUT);
+      ).toThrow(
+        new RegExp(
+          `^Invariant: ${helper}\\(\\) declared outside the layout\\(\\) it is nested in \\[`,
+        ),
+      );
     });
   }
 
