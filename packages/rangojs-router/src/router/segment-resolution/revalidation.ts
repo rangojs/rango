@@ -1361,13 +1361,24 @@ export async function resolveSegment<TEnv>(
     // Route entry: handler already executed above; resolve parallels
     // (handler data visible) then push handler segment last for tree order.
     if (slotted) {
-      const parallelResult = await resolveParallelSegments(
-        pass,
-        entry,
-        belongsToRoute,
-      );
-      segments.push(...parallelResult.segments);
-      matchedIds.push(...parallelResult.matchedIds);
+      // Each slot's handler pins the shared _currentSegmentId to the slot
+      // (resolveParallelSlotComponent). Put the route's back when the slots
+      // are done: unlike a layout's, the route handler's ctx IS the request's
+      // one ctx, so a push made through it after the handler returned (an
+      // async component it handed the ctx to) reads this pin, and without the
+      // restore it names the last slot instead of the route (segmentPinOf).
+      const internal = pass.context as InternalHandlerContext<any, TEnv>;
+      try {
+        const parallelResult = await resolveParallelSegments(
+          pass,
+          entry,
+          belongsToRoute,
+        );
+        segments.push(...parallelResult.segments);
+        matchedIds.push(...parallelResult.matchedIds);
+      } finally {
+        internal._currentSegmentId = entry.shortCode;
+      }
     }
 
     segments.push(routeHandlerResult.segment);

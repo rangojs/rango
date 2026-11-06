@@ -5,9 +5,10 @@
  *
  * The push is rejected by design (the `.defer()` path is the mitigation), so
  * the message is all a consumer sees of it: it must name the segment whose
- * ctx made the push, not whichever segment the walker pinned last. A layout
- * handler's ctx carries its own segment, so the message names the layout; a
- * route handler's ctx reads the request's pin, which is still the route's.
+ * ctx made the push, not whichever segment the walker pinned last. A layout's
+ * or slot's ctx carries its own segment, so the message names it; a route
+ * handler's ctx is the request's one ctx, and reads the request's pin, which
+ * the walker puts back on the route once the route's parallel slots resolved.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -84,6 +85,12 @@ function makeRouter() {
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          path(
+            "/component-route-slot",
+            (ctx) => <LatePush ctx={ctx} label="route slot" />,
+            { name: "componentRouteSlot" },
+            () => [parallel({ "@panel": () => <aside>panel</aside> })],
+          ),
         ],
       ),
     ]),
@@ -134,6 +141,14 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
   it("the route's, for a component the route handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the route's, not the slot's, after the route's own parallel slot resolved", async () => {
+    const { errors: reported, matched } = await serve("/component-route-slot");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    // The slot handler pins the request's shared segment id while it resolves
+    // (resolveParallelSlotComponent); the route's push reads it after that.
     expect(latePushSegment(reported)).toBe(route);
   });
 });

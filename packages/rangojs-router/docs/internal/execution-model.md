@@ -2617,13 +2617,17 @@ split them.
 
 Not changed: an awaited route handler (a route without `loading()`, an
 action's route) has no scope and reads the shared pin, which is its own while
-the walker waits on it. An orphan layout pins its own segment for that wait
-and puts the previous pin back after it (`resolveOrphanLayout`); its
-handler's ctx carries the orphan's segment either way. A push function bound
-before the await (`const push = ctx.use(Handle)`) was always filed right.
+the walker waits on it and again once the route's own parallel slots resolved
+(`resolveSegment` puts the route's segment back, because a slot's handler pins
+the shared ctx while it runs and nothing else would). An orphan layout pins
+its own segment for that wait and puts the previous pin back after it
+(`resolveOrphanLayout`); its handler's ctx carries the orphan's segment either
+way. A push function bound before the await (`const push = ctx.use(Handle)`)
+was always filed right.
 
-An intercept's handler still gets the shared ctx (its `loading()` case is
-covered by its `runAsSegment` scope, a component it hands the ctx to is not).
+An intercept's handler still gets the shared ctx: a component it hands the
+ctx to names the slot because the pin is still the slot's when that push
+lands, not because the ctx carries it. Nothing enforces that order.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
@@ -2631,7 +2635,8 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to, and for a route whose own parallel slot resolved) and
+`server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 
