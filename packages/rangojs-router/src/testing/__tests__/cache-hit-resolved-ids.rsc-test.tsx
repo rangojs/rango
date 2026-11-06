@@ -387,3 +387,61 @@ describe("a PPR shell replay HIT reports the resolvedIds of the live partial", (
     );
   });
 });
+
+const interceptRouter = createRouter({}).routes(
+  urls(({ path, cache, layout, intercept, revalidate }) => [
+    cache({ ttl: 600 }, () => [
+      layout(
+        (ctx: HandlerContext) => {
+          ctx.use(Crumbs)("root");
+          return <main>root</main>;
+        },
+        () => [
+          revalidate(() => true),
+          path("/list", page("list"), { name: "list" }),
+          path(
+            "/item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)(`item-${ctx.params.id}`);
+              return <p>item {ctx.params.id}</p>;
+            },
+            { name: "item" },
+          ),
+          intercept("@modal", ".item", (ctx: HandlerContext) => {
+            ctx.use(Crumbs)("modal");
+            return <dialog>modal</dialog>;
+          }),
+        ],
+      ),
+    ]),
+  ]),
+);
+
+describe("an intercept navigation lists its slot on the MISS and on the HIT", () => {
+  it("reports the same resolvedIds on both", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const doc = await documentOf(interceptRouter, "/list", cacheStore);
+    const partial = { from: "/list", segments: doc.matched };
+
+    const miss = await serve(interceptRouter, "/item/1", {
+      cacheStore,
+      partial,
+    });
+    const missAnswer = await readAnswer(miss);
+    const slot = missAnswer.answer.matched.find((id) => id.includes(".@"));
+    expect(slot).toBeDefined();
+    // The slot's handler ran for this response, so the browser replaces the
+    // run's values even when it pushed none.
+    expect(missAnswer.answer.resolvedIds).toContain(slot);
+
+    const hit = await serve(interceptRouter, "/item/1", {
+      cacheStore,
+      partial,
+    });
+    const hitAnswer = await readAnswer(hit);
+    expect(hitAnswer.answer.resolvedIds).toEqual(missAnswer.answer.resolvedIds);
+    expect(await crumbsAfter(doc.handles, hit)).toEqual(
+      await crumbsAfter(doc.handles, miss),
+    );
+  });
+});

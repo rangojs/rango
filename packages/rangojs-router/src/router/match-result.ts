@@ -206,18 +206,17 @@ export function buildMatchResult<TEnv>(
   }
 
   // One pass over segmentsToRender: strip the internal _handlerRan marker and
-  // collect the diff ids (id is unchanged by the strip) together. (A stored
-  // segment's "sent" is kept off the object, in state.handleValuesSent, so
-  // the copies MatchResult.slots hands to the client carry no marker.)
+  // collect the diff ids (id is unchanged by the strip) together. Deleted from
+  // the object, not from a copy: MatchResult.slots hands the SAME segment
+  // objects to the client (an intercept's slot), so a copy here would both
+  // leave the marker on the wire and serialize the segment twice. A stored
+  // segment's "sent" is not a marker at all — it rides in
+  // state.handleValuesSent (cache-lookup.ts serveStoredSegments).
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    delete s._handlerRan;
+    cleanedSegments.push(s);
     diff.push(s.id);
   }
 
