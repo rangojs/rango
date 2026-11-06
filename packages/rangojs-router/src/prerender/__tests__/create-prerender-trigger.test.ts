@@ -1458,6 +1458,170 @@ describe("createPrerenderTrigger", () => {
       });
     });
 
+    /**
+     * A render that answers redirect() instead of a page. The page stored
+     * before it must stop serving: the redirect is stored in its place, so a
+     * visitor is redirected rather than served a URL the app moved away from.
+     */
+    describe("a render that redirects", () => {
+      const moved = {
+        ok: true,
+        path: "on-demand",
+        status: "redirected",
+        target: "/products/42",
+        routeName: "products.detail",
+        key: serializePrerenderKey(productKey()),
+        tags: [],
+      };
+      const redirect = { status: 302, location: "/products/43" };
+
+      it("stores the redirect over the page and reports redirected", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockResolvedValueOnce(output({ redirect }));
+        expect(await trigger("/products/42")).toEqual(moved);
+
+        const stored = store.peek(productKey());
+        expect(stored).toMatchObject({ v: 1, redirect });
+        // Never a page and never a marker: the overlay answers with the
+        // redirect, so the build-time entry below stays masked.
+        expect(stored).not.toHaveProperty("entry");
+        expect(stored).not.toHaveProperty("removed");
+        expect(stored?.meta).not.toHaveProperty("staleAt");
+      });
+
+      it("stamps it like a page: the route's ttl and tags, and the off-host opt-in", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const external = {
+            status: 308,
+            location: "https://accounts.example/oauth",
+            external: true as const,
+          };
+          const { trigger, store } = harness({
+            runProducer: async () =>
+              output({
+                redirect: external,
+                onDemandConfig: {
+                  ttl: 60,
+                  tags: ({ params }) => [`product:${params.id}`],
+                },
+              }),
+          });
+
+          expect(await trigger("/products/42")).toEqual({
+            ...moved,
+            tags: ["product:42"],
+            ttl: 60,
+          });
+          expect(store.peek(productKey())).toEqual({
+            v: 1,
+            redirect: external,
+            meta: {
+              storedAt: 1000,
+              staleAt: 61_000,
+              ttl: 60,
+              tags: ["product:42"],
+              version: "b1",
+              params: { id: "42" },
+            },
+          });
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it("onlyIfStale leaves a fresh redirect and reports redirected", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output({ redirect }),
+        );
+        const { trigger } = harness({ runProducer });
+        await trigger("/products/42");
+
+        expect(await trigger("/products/42", { onlyIfStale: true })).toEqual(
+          moved,
+        );
+        expect(runProducer).toHaveBeenCalledTimes(1);
+      });
+
+      it("markStale() reaches it through the route's tags, like a page", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () =>
+            output({ redirect, onDemandConfig: { tags: ["product:42"] } }),
+        );
+        const { trigger } = harness({ runProducer });
+        // No ttl: nothing but markStale() can make it stale.
+        await trigger("/products/42");
+        runProducer.mockResolvedValueOnce(output());
+
+        await trigger.markStale(["product:42"]);
+
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "rendered" });
+      });
+
+      it("a remove() during the render wins over it", async () => {
+        const h = harness({
+          runProducer: async () => {
+            // The page is removed while this render runs.
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await h.trigger.remove("/products/42");
+            return output({ redirect });
+          },
+        });
+
+        expect(await h.trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "removed",
+        });
+        expect(h.store.peek(productKey())).toMatchObject(tombstone);
+        expect(h.store.peek(productKey())).not.toHaveProperty("redirect");
+      });
+
+      it("a warm is not run after it", async () => {
+        // A store shared beyond this process, so the warm gate is open: the
+        // only reason no warm runs is the redirect itself.
+        class SharedStore extends MemorySegmentCacheStore {
+          readonly scope = "global" as const;
+        }
+        const fetch = vi.fn(async () => new Response("ok"));
+        const { trigger } = harness({
+          runProducer: async () => output({ redirect }),
+          resolveCacheConfig: () => ({ store: new SharedStore() }),
+          fetch,
+          ambientOrigin: () => "https://shop.example",
+        });
+
+        const result = await trigger("/products/42");
+
+        expect(result).toEqual(moved);
+        expect(fetch).not.toHaveBeenCalled();
+      });
+
+      it("a malformed stored redirect is a miss, so the refresh renders", async () => {
+        const { trigger, store } = harness();
+        await trigger("/products/42");
+        const key = productKey();
+        // A store answering with a redirect that lost its target: the router
+        // verifies every read, so this reads as a miss, never as a response.
+        await store.set(key, {
+          v: 1,
+          redirect: { status: 302 },
+          meta: { ...store.peek(key)!.meta },
+        } as never);
+
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "rendered" });
+      });
+    });
+
     describe("PrerenderError names the call that failed", () => {
       it("prerender.remove() and remove.many()", async () => {
         const { trigger } = harness({ config: undefined });

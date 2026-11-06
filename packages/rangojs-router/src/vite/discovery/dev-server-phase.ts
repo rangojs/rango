@@ -879,8 +879,13 @@ export function devServerPhase(s: DiscoveryState, server: ViteDevServer): void {
         // we fall through (404 -> live handler). A `throw new Skip()` is the
         // expected "skip this URL" signal, not a failure, so it stays quiet.
         if (err?.name !== "Skip") {
+          // A Response (redirect()) has no `message`: name what it is.
+          const message =
+            err instanceof Response
+              ? `the render answered with a ${err.status} Response instead of a page`
+              : err?.message;
           console.warn(
-            `[rango] Dev prerender error for ${pathname} (serving live instead): ${err.message}`,
+            `[rango] Dev prerender error for ${pathname} (serving live instead): ${message}`,
           );
         }
       }

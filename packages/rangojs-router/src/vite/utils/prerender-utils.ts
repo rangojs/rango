@@ -202,18 +202,24 @@ export function resolvePrerenderError(
   pathname?: string,
 ): void {
   const isSkip = error?.name === "Skip";
+  // A render that answers with a Response (redirect() and friends) has no page
+  // to bake: say so, instead of printing `undefined` for a Response's message.
+  const message =
+    error instanceof Response
+      ? `the render answered with a ${error.status} Response instead of a page (a build-time prerender has nothing to bake for a redirect; use Passthrough() for a live answer)`
+      : error?.message;
   if (isSkip || onError === "warn") {
     if (isSkip) {
-      console.log(`[rango]   SKIP ${label} (${elapsed}ms) - ${error.message}`);
+      console.log(`[rango]   SKIP ${label} (${elapsed}ms) - ${message}`);
     } else {
       console.warn(
-        `[rango]   WARN ${label} (${elapsed}ms) - render error, not pre-rendered (prerender.onError: "warn"): ${error.message}`,
+        `[rango]   WARN ${label} (${elapsed}ms) - render error, not pre-rendered (prerender.onError: "warn"): ${message}`,
       );
     }
     notifyOnError(registry, error, phase, routeKey, pathname, true);
     return;
   }
-  console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${error.message}`);
+  console.error(`[rango]   FAIL ${label} (${elapsed}ms) - ${message}`);
   notifyOnError(registry, error, phase, routeKey, pathname);
   throw error;
 }

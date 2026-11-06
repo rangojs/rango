@@ -341,8 +341,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -364,8 +365,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;

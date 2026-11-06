@@ -378,7 +378,9 @@ type PrerenderResult =
       // "removed": the "removed" marker is stored in place of the page, by
       // remove(), by a render that hit notFound(), or found fresh by
       // onlyIfStale. ok: true, so a sweep counts it.
-      status: "rendered" | "already-fresh" | "removed";
+      // "redirected": the render answered redirect(), and the redirect is
+      // stored in place of the page (see "A Render That Redirects").
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       // opaque, for debugging and logs only -- not a stable format
@@ -602,10 +604,13 @@ interface StoredEnvelope {
 
 type PrerenderStoredEntry =
   | (StoredEnvelope & { entry: PrerenderEntry }) // a refreshed page
-  | (StoredEnvelope & { removed: true }); // the page was removed: no entry
+  | (StoredEnvelope & { removed: true }) // the page was removed: no entry
+  | (StoredEnvelope & { redirect: StoredRedirectTarget }); // the render redirected
 ```
 
 The second variant is the "removed" marker; "Removing A Page" has its rules.
+The third is a redirect the render answered with; "A Render That Redirects"
+has its rules.
 
 Two rules follow from the envelope:
 
@@ -926,6 +931,82 @@ even if there was a successfully generated page before. This is meant to
 support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
+
+## A Render That Redirects
+
+A product is merged into another one, or a slug changes. The page's handler now
+calls `redirect()`, and the refresh that fires for it has to stop the old page
+from serving. Until this rule existed, it did not: `redirect()` returns a
+`Response`, the resolution pass throws it like any handler short-circuit, and
+`matchForPrerender` rethrew it as a render failure. The trigger mapped that to
+`render-failed` and kept the previous entry — which is right for an outage and
+wrong here. The URL the app had moved away from kept answering 200 with the old
+page, and no refresh could replace it, because every refresh failed the same
+way.
+
+`notFound()` and a `ctx.passthrough()` decline already had an answer: the
+"removed" marker. A redirect is not that answer, and the difference decides the
+visitor's outcome on the route kind the feature exists for. A plain
+`Prerender(..., { onDemand })` route has no live handler at runtime — the
+gate in `gateOnDemandProducer` refuses to run the retained producer — so a
+marker there is a 404. The visitor of a moved URL would get "gone" where the
+app said "moved", and only a `Passthrough` route, whose live handler answers,
+would keep the redirect. So the render's answer is stored instead of a marker.
+
+```ts
+// a refresh whose render answered redirect(): stamped like the page it replaces
+{
+  v: 1,
+  redirect: { status: 302, location: "/products/43", external?: true },
+  meta: { storedAt, staleAt, ttl, tags, version, params },
+}
+```
+
+What the visitor sees, on both route kinds, a document request and a client
+navigation:
+
+| Outcome                      | document request        | client navigation        |
+| ---------------------------- | ----------------------- | ------------------------ |
+| the render redirected        | `302` + `Location`      | `204` + `X-RSC-Redirect` |
+| a `Passthrough` live handler | the same, byte for byte | the same                 |
+| the build handler declined   | the live handler's page | the same                 |
+| the render hit `notFound()`  | `404`                   | the router's 404 payload |
+| the render failed otherwise  | the page stored before  | the same                 |
+
+The two channels are not re-implemented. The stored entry holds what the
+render chose and nothing else — the status, the target exactly as the app
+wrote it, and the `{ external: true }` opt-in — and the serve path rebuilds the
+Response through `redirect()` (`buildStoredRedirect` in
+`router/match-middleware/cache-lookup.ts`). So a root-relative target takes the
+**serving** request's basename, not the requestless render's (there is none),
+the off-host opt-in is re-branded on the Response (it is a `WeakSet` membership
+and cannot cross the wire), and the soft marker rides the headers. The throw
+happens before the first segment is yielded, so the match pipeline turns it
+into the request's answer exactly as it turns a live handler's redirect into
+one (`match-handlers.ts`), and `interceptRedirectForPartial` converts it for a
+client navigation. That is why the stored answer and the live handler's answer
+are the same two shapes, pinned by
+`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`.
+
+What a later on-demand refresh does:
+
+| Call                                 | On a stored redirect                                                                      |
+| ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `prerender(target)`                  | renders, and replaces the entry with the page or the new redirect it produced             |
+| `prerender(target, { onlyIfStale })` | leaves it while fresh and reports `redirected`; renders once stale                        |
+| `prerender.remove(target)`           | replaces it with the `remove()` marker: 404, or the live handler on a `Passthrough` route |
+| `prerender.markStale(tags)`          | reaches it through the route's tags, like a page                                          |
+
+Location state is deliberately not stored. `redirect(url, { state })` is
+per-visitor data, and a requestless render has no visitor: the producer's
+`setLocationState` is already a no-op, so there is nothing to keep, and
+replaying stored state into a shared entry is the thing the personalization
+guard exists to prevent.
+
+No warm request follows a stored redirect, for the same reason none follows a
+removal: the source URL now answers with the redirect, so a warm would follow
+it and write the destination's caches under the source's route, which the
+redirect did not ask for.
 
 ## Build-time Durable Seeding
 

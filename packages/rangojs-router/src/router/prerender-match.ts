@@ -13,6 +13,9 @@ import {
   createReverseFunction,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
+import type { StoredRedirectTarget } from "../prerender/writable-store.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { findInOrphans } from "./error-handling.js";
@@ -110,6 +113,13 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered `redirect()` (a handler's Response,
+   * thrown through the resolution pass) instead of a page. The trigger stores
+   * it in place of the page the previous refresh stored, so a visitor is
+   * redirected rather than served that page.
+   */
+  redirect?: StoredRedirectTarget;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -641,6 +651,20 @@ export async function matchForPrerender<TEnv = any>(
   try {
     return await rendered;
   } catch (error) {
+    // A redirect is an outcome too, and the one the visitor must keep getting:
+    // the trigger stores it in place of the page, which would otherwise keep
+    // serving a URL the app has moved away from. `redirect()` returns a
+    // Response; the resolution pass throws it like a handler short-circuit.
+    if (error instanceof Response && isRedirectResponse(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: describeRedirect(error),
+        onDemandConfig,
+      };
+    }
     if (!isDataNotFoundError(error)) throw error;
     return {
       segments: [],
@@ -651,6 +675,20 @@ export async function matchForPrerender<TEnv = any>(
       onDemandConfig,
     };
   }
+}
+
+/**
+ * The parts of a render's redirect a stored entry keeps: the status, the target
+ * as the app wrote it (a root-relative target takes the serving request's
+ * basename, not the requestless render's), and the off-host opt-in, which is a
+ * WeakSet brand on the Response and has to be re-applied on serve.
+ */
+function describeRedirect(response: Response): StoredRedirectTarget {
+  return {
+    status: response.status,
+    location: response.headers.get("Location") ?? "",
+    ...(isExternalRedirect(response) ? { external: true as const } : {}),
+  };
 }
 
 /**

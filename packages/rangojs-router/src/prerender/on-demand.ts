@@ -159,8 +159,17 @@ export type PrerenderResult =
        * rechecked like a page. `onlyIfStale` finding a fresh marker reports
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
+       *
+       * `redirected`: the render answered `redirect()` instead of a page, and
+       * the redirect is stored in place of the page (the status, the target as
+       * the app wrote it, and an `{ external: true }` opt-in). Every request
+       * for the URL gets that redirect, on a document request and on a client
+       * navigation alike, until a later refresh replaces the entry; a stale
+       * one is rechecked like a page, through its `ttl`, `tags` and
+       * `markStale`. `onlyIfStale` finding a fresh redirect reports
+       * `redirected` too.
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */

@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a render that answers `redirect()` stops serving the page stored before it
+
+**Before.** `router.prerender()` on an on-demand page whose render now calls
+`redirect()` (the slug moved, two products were merged) came back
+`render-failed`, and the page the previous refresh stored kept serving: the URL
+the app had moved away from answered `200` with the old page, and no refresh
+could replace it, because every refresh failed the same way. A sweep only
+ever re-failed it.
+
+**Now.** The redirect is an answer, and it is stored in place of the page,
+stamped with the route's `ttl` and `tags` like a page: a request gets the
+redirect (`302` + `Location` on a document request, the soft `204` +
+`X-RSC-Redirect` on a client navigation), exactly as a `Passthrough` route's
+live handler answers it. The refresh reports the new status `redirected`
+(`ok: true`, so a sweep counts it), `onlyIfStale` leaves a fresh redirect and
+re-reports `redirected`, `markStale()` reaches it through the route's tags, and
+`prerender.remove()` still replaces it. A later refresh that renders replaces
+the redirect with the page.
+
+A plain `Prerender(..., { onDemand })` route has no live handler at runtime, so
+this is the only outcome a redirect can reach the visitor as there: a "removed"
+marker, which is what `notFound()` stores, would answer `404`.
+
+```ts
+// Before: the old page kept serving, and the refresh reported a failure
+{ ok: false, status: "render-failed" }   // + the stored page still at the URL
+
+// Now
+{ ok: true, status: "redirected", tags: ["product:42"], ttl: 3600 }
+// GET /products/42 -> 302 Location: /products/43
+```
+
+`redirect(url, { state })` carries no location state into the store: a
+requestless render has no visitor to carry it for.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

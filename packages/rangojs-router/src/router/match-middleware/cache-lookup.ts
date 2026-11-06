@@ -67,7 +67,9 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type StoredRedirectTarget,
 } from "../../prerender/writable-store.js";
+import { redirect as redirectResponse } from "../../route-definition/redirect.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
   PrerenderTargetObject,
@@ -158,7 +160,12 @@ type StoredSegmentSource =
       restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
   | { kind: "prerender-build"; entry: PrerenderEntry }
-  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean };
+  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean }
+  | {
+      kind: "prerender-redirect";
+      redirect: StoredRedirectTarget;
+      stale: boolean;
+    };
 
 /**
  * Decode a prerender entry's segments and replay its handle data into the
@@ -517,6 +524,13 @@ async function* serveStoredSegments<TEnv>(
   }
   const source: StoredSegmentSource = stored;
 
+  if (source.kind === "prerender-redirect") {
+    // Thrown like a handler's redirect, and before the first segment is
+    // yielded, so nothing has streamed: the match pipeline's caller turns it
+    // into the request's answer (match-handlers.ts).
+    throw buildStoredRedirect(source.redirect);
+  }
+
   const fromCache = source.kind === "segment-cache";
   const storedSends = fromCache
     ? undefined
@@ -792,6 +806,19 @@ export function scheduleOverlayRevalidation<TEnv>(
 }
 
 /**
+ * The Response a stored redirect serves: `redirect()` is the one place the
+ * redirect rules live (basename prefixing for a root-relative target, the
+ * out-of-band `external` brand the origin guard reads, the soft marker), and
+ * the entry only holds what the render chose.
+ */
+function buildStoredRedirect(redirect: StoredRedirectTarget): Response {
+  return redirectResponse(redirect.location, {
+    status: redirect.status,
+    ...(redirect.external ? { external: true } : {}),
+  });
+}
+
+/**
  * The prerendered (build-time cached) entry for the current route, or null on
  * a miss. Intercept navigations consult only the intercept-specific entry
  * (`paramHash + "/i"`); a miss there falls through to the normal pipeline so
@@ -838,6 +865,14 @@ async function readPrerenderSource<TEnv>(
           } as PrerenderTargetObject,
           reqCtx,
         );
+      }
+      if (stored.redirect) {
+        // The render answered redirect() instead of a page: the visitor gets
+        // that redirect, never the page stored before it, and the build-time
+        // entry below stays masked (the overlay answered). The Response is
+        // built on serve so it takes THIS request's basename and re-applies
+        // the off-host opt-in brand.
+        return { kind: "prerender-redirect", redirect: stored.redirect, stale };
       }
       if (stored.removed === true) {
         // The page was removed. Not served, and step 2 is skipped: the

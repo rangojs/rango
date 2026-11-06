@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageAnswers302,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -378,6 +379,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, guideFixture(f));
+  });
+
+  test("a render that redirects stores the redirect: the visitor gets it, not the page stored before it", async ({
+    page,
+  }) => {
+    await expectRedirectedPageAnswers302(page, guideFixture(f));
   });
 }
 

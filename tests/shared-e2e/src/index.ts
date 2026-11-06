@@ -3583,6 +3583,8 @@ export async function expectDevWarmOfLocalMemoryStoreRuns(
  *   `?markStale=<tag>` is `prerender.markStale([tag])`. `?gone=1` deletes the
  *   slug from the fixture's data source, so the page's handler calls
  *   `notFound()` on its next refresh, and `?gone=0` restores it.
+ *   `?moved=<path>` makes the page's handler answer `redirect(<path>)` on its
+ *   next refresh, and `?moved=0` restores it.
  * - `tag(slug)`: the tag the route's `onDemand.tags` stamps for the slug. The
  *   route's `ttl` is long, so an entry goes stale only through `markStale`.
  * - `bakedSlug`: a slug `getParams()` lists, which a production build bakes.
@@ -3791,6 +3793,53 @@ export async function expectRemovedBakedPageAnswers404(
   await removeThroughRunner(page, fixture, fixture.bakedSlug);
   await removeThroughNotFound(page, fixture, fixture.bakedSlug);
   await actionOnRemovedPage(page, fixture, fixture.bakedSlug);
+}
+
+/**
+ * A render that answers `redirect()` instead of rendering a page. The redirect
+ * is stored in place of the page, so a request for the URL gets the redirect
+ * rather than the page stored before it — and a plain on-demand route, which
+ * has no live handler, gets it too (a "removed" marker there would be a 404).
+ * A later refresh that renders replaces it.
+ */
+export async function expectRedirectedPageAnswers302(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const trigger = fixture.triggerUrl(slug);
+  const target = `/moved-to/${slug}`;
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await removeTrigger(page, trigger, `?moved=${encodeURIComponent(target)}`);
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      tags: [fixture.tag(slug)],
+    });
+
+    // A document request: the stored redirect, not the page it replaced. Not
+    // followed, so the 302 and its Location are what the browser is handed.
+    const document = await page.request.get(fixture.pageUrl(slug), {
+      maxRedirects: 0,
+    });
+    expect(document.status()).toBe(302);
+    expect(document.headers()["location"]).toBe(target);
+    expect(document.headers()["x-rsc-redirect"]).toBe("soft");
+
+    // A refresh that renders again replaces the redirect.
+    await removeTrigger(page, trigger, "?moved=0");
+    await refreshPage(page, trigger);
+    await expectPageServed(page, fixture, slug);
+  } finally {
+    await removeTrigger(page, trigger, "?moved=0");
+  }
 }
 
 /** The same for a param only a refresh ever produced. */
