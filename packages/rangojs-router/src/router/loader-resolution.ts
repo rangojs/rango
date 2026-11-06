@@ -103,20 +103,29 @@ export type LoaderErrorCallback = (
 /**
  * The segment a handle push through `ctx.use` files under.
  *
- * The receiver decides when it carries a segment: a layout's or a parallel
- * slot's ctx does (withSegmentScope), and the segment holds however long after
- * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
- * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
- * the walker pins — a handler that built a smaller ctx with `use` copied onto
- * it (a Prerender handler forwarding to a shared page handler) included.
+ * The receiver decides when it carries a segment: a layout's, a parallel
+ * slot's, an intercept's or a route handler's ctx does (withSegmentScope;
+ * the route's is stamped on the shared ctx by resolveRouteComponent), and the
+ * segment holds however long after the handler returned, so an async
+ * component the handler handed the ctx to still files under it after the
+ * walker moved the shared pin on. A scoped ctx's own `use` passes that
+ * segment down even for a detached call (withSegmentScope). Any other
+ * receiver reads the ctx `use` was installed on: its stamped route segment,
+ * else the `_currentSegmentId` the walker pins — a handler that built a
+ * smaller ctx with `use` copied onto it (a Prerender handler forwarding to a
+ * shared page handler) included.
  */
 function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried = (receiver as { _handleSegmentId?: string } | undefined)
-    ?._handleSegmentId;
+  const internal = installed as {
+    _currentSegmentId?: string;
+    _routeSegmentId?: string;
+  };
+  const carried =
+    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
+    internal._routeSegmentId;
   return segmentPinOf(
     carried === undefined
       ? (installed as { _currentSegmentId?: string })
@@ -514,6 +523,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  callerSegmentId?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -532,6 +542,14 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    /**
+     * The segment the calling ctx belongs to, when it carries one (a layout's,
+     * a slot's, a route's): the run files its pushes there even if the walker
+     * has pinned another segment since. A handler's call passes its own
+     * segment, which is also the pin while it runs; a component the handler
+     * handed the ctx to passes the handler's.
+     */
+    callerSegmentId?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -629,7 +647,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, callerSegmentId);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1074,7 +1092,15 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // Only a scoped ctx hands its segment down. The shared ctx receives the
+    // walkers own ctx.use (a DSL kickoff, executeLoaderData), whose loader is
+    // owned by the pin or by its deferred registration, not by the route that
+    // ctx stamps for handle pushes.
+    return useLoader(
+      loader,
+      null,
+      (this as { _handleSegmentId?: string } | undefined)?._handleSegmentId,
+    );
   } as typeof ctx.use;
 }
 

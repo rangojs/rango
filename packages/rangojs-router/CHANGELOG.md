@@ -2,27 +2,27 @@
 
 ## Unreleased
 
-### Fixed: a layout's or a slot's handle push files under its own segment
+### Fixed: a handler's handle push files under its own segment
 
 **Before.** `ctx.use(Handle)` read the request's shared segment id when it was
-called, so a push through a layout's or a parallel slot's `ctx` filed under
-whatever segment the walker had pinned by then: a component the handler
-handed that `ctx` to landed its crumb in the child route's bucket, and the dev
-`LateHandlePushError` that rejected its late push named the route too (the
-push is rejected by design; the `.defer()` path is the mitigation).
+called, so a push made after the walker had moved on filed under whatever
+segment was pinned by then. A component a layout's, a parallel slot's or an
+intercept's handler handed its `ctx` to landed its crumb in the child route's
+bucket, and the dev `LateHandlePushError` that rejected its late push named
+the route too (the push is rejected by design; the `.defer()` path is the
+mitigation). A route handler's late push named a parallel slot the walker
+resolved after it, and a detached call (`const { use } = ctx`, `{ ...ctx }.use`)
+named the pin even for a layout. A loader a component started through a
+layout's or a slot's `ctx` filed its pushes under the route that rendered it.
 
-**Now.** A layout's and a slot's ctx carries its own segment
-(`withSegmentScope`), and `ctx.use` reads it off the receiver it was called
-on: a push through that ctx files under the layout's or the slot's segment,
-before or after an `await`, and the dev message names it:
+**Now.** A layout's, a slot's and an intercept's ctx carries its own segment
+(`withSegmentScope`) and the route handler's ctx carries the route's
+(`_routeSegmentId`): a push through any of them files under that segment,
+before or after an `await` and in every call shape, and the dev message names
+it:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The late push is still rejected, at the same moment, and production still
-shows no message.
-
-Unchanged: a route handler's `ctx` is the request's one, so a component it
-hands the ctx to reads the shared segment id. On a route that declares
-parallel slots that is the last slot's, which the walker resolves after the
-handler.
+A loader started through that ctx files under the same segment. The late push
+is still rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

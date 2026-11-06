@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withSegmentScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -535,11 +536,19 @@ export async function matchForPrerender<TEnv = any>(
             const interceptSegmentId = interceptSlotId(parentEntry, intercept);
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
+            // The same ctx the runtime intercept path gets: the build ctx may
+            // already stamp the route segment (_routeSegmentId), and a push
+            // through the shared ctx would name the route, not this slot.
+            const slotContext = withSegmentScope(
+              buildCtx,
+              interceptSegmentId,
+              undefined,
+            );
 
             // Resolve handler
             const handlerRaw =
               typeof intercept.handler === "function"
-                ? intercept.handler(buildCtx)
+                ? intercept.handler(slotContext)
                 : intercept.handler;
             const handlerResolved =
               handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
@@ -553,7 +562,7 @@ export async function matchForPrerender<TEnv = any>(
             let layoutElement: ReactNode | undefined;
             if (intercept.layout) {
               if (typeof intercept.layout === "function") {
-                const layoutResult = await intercept.layout(buildCtx);
+                const layoutResult = await intercept.layout(slotContext);
                 if (layoutResult instanceof Response) {
                   live(intercept, "layout-response");
                   continue;

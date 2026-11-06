@@ -459,11 +459,18 @@ export type InternalHandlerContext<
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
   /**
-   * The segment a layout's or parallel slot's ctx belongs to
-   * (withSegmentScope): a handle push made through it files under that
-   * segment, before or after an `await`.
+   * The segment a handler's ctx belongs to (withSegmentScope): a handle push
+   * made through it files under that segment, before or after an `await`.
    */
   _handleSegmentId?: string;
+  /**
+   * The route's segment on the request's one handler ctx, stamped when the
+   * route handler resolves (resolveRouteComponent). A component the route
+   * handler handed that ctx to renders after the walker moved the pin on (a
+   * parallel slot resolved after the handler), so a push through it would
+   * otherwise file under the last slot.
+   */
+  _routeSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */

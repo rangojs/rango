@@ -1197,6 +1197,14 @@ async function resolveRouteComponent<TEnv>(
   // use the build handler from entry.handler.
   const handler =
     !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+  // The route handler's ctx is the request's one (a child would stop
+  // `{ ...ctx }` there from copying its fields), so stamp the route's segment
+  // on it: a component the handler hands it to renders after the walker moved
+  // the pin on — a parallel slot resolved after this handler pins its own id —
+  // and its push, and the dev LateHandlePushError it throws, must name the
+  // route (handlePushSegment, router/loader-resolution.ts).
+  (context as InternalHandlerContext<any, TEnv>)._routeSegmentId =
+    entry.shortCode;
   if (!entry.loading) {
     const result = handleHandlerResult(
       await observeSegmentHandler(entry.shortCode, entry.id, handler, context),

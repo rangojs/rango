@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -393,6 +394,13 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The intercept's handler and layout get their own ctx carrying the slot's
+  // segment: the shared ctx the walk is on now stamps the route's
+  // (_routeSegmentId, resolveRouteComponent), so a push made through it — and
+  // the dev LateHandlePushError a component the handler handed it to throws —
+  // would otherwise name the route, not the slot it was opened for.
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
+
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +408,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +433,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;
