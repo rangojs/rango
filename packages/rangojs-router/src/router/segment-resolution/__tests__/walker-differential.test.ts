@@ -303,7 +303,18 @@ type Projected = Record<string, unknown>;
  * function by its name.
  */
 async function settled(value: unknown): Promise<unknown> {
-  if (value instanceof Promise) return { promise: await settled(await value) };
+  if (value instanceof Promise) {
+    // A streamed handler's Response rejects its component (handleHandlerResult).
+    const outcome = await value.then(
+      (resolved) => ({ resolved }),
+      (error: unknown) => {
+        if (error instanceof Response) return { response: error.status };
+        throw error;
+      },
+    );
+    if ("response" in outcome) return { rejectsResponse: outcome.response };
+    return { promise: await settled(outcome.resolved) };
+  }
   if (isValidElement(value)) {
     const type = value.type as string | { name?: string };
     return {
@@ -551,7 +562,11 @@ async function textOf(node: unknown): Promise<string> {
 
 /** `id type`, then the component's text and the loader data, when present. */
 async function line(segment: ResolvedSegment): Promise<string> {
-  const text = await textOf(segment.component);
+  // A streamed handler's Response rejects its component, as in settled().
+  const text = await textOf(segment.component).catch((error: unknown) => {
+    if (error instanceof Response) return `rejects Response ${error.status}`;
+    throw error;
+  });
   const data = await segment.loaderData;
   return [
     `${segment.id} ${segment.type}`,
@@ -1284,7 +1299,7 @@ const CASES: Case[] = [
       "M0L0 layout",
       'M0L0L0 layout "root"',
       'M0L0L0L4 layout "response slot"',
-      "M0L0L0L4.@response parallel",
+      'M0L0L0L4.@response parallel "rejects Response 204"',
       'M0L0L0L4R0 route "slot response"',
     ],
     expected: {},

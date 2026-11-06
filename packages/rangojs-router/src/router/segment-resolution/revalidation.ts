@@ -821,14 +821,20 @@ async function resolveParallelSlotComponent<TEnv>(
       handlerRan = true;
       const slotContext = withReverseScope(context, parallelEntry.reverseScope);
       const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
+      // handleHandlerResult turns a returned Response (redirect()) into a
+      // throw, as for route and layout handlers: awaited, it short-circuits
+      // the request; streamed under loading(), it rejects like a route
+      // handler's. Outside the span, as there: control flow, not an error.
       const run = () =>
         typeof handler !== "function"
           ? handler
-          : observeSegmentHandler(
-              parallelId,
-              `${parallelEntry.id}.${slot}`,
-              handler,
-              slotContext,
+          : handleHandlerResult(
+              observeSegmentHandler(
+                parallelId,
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                slotContext,
+              ),
             );
       // A throw before the slot streams reaches the owning entry's boundary.
       try {

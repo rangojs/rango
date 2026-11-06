@@ -1008,7 +1008,11 @@ Any change to handler loading shapes must update:
 On a route **without** `loading()`, a handler that returns or throws a `Response`
 (e.g. `redirect()`) short-circuits to an HTTP redirect: the handler is awaited at
 the resolution boundary, so the thrown `Response` propagates out to `match()`
-and becomes a 302/308.
+and becomes a 302/308. A layout's and a parallel slot's handler do the same:
+each result goes through `handleHandlerResult` (`segment-resolution/helpers.ts`),
+which throws a returned `Response`. The route path does it in
+`resolveRouteComponent`, layouts in `resolveLayoutComponent`, slots in
+`resolveParallelSlotComponent` (`segment-resolution/revalidation.ts`).
 
 On a route that declares `loading()`, the handler result is **streamed** — it is
 not awaited at the resolution boundary (`resolveEntryHandler` in

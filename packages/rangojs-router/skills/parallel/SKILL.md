@@ -378,6 +378,19 @@ parallel({
 })
 ```
 
+A slot handler can also return or throw `redirect()`. That works as it does
+from a route or layout handler: the document answers the 3xx and a client
+navigation follows it. On an on-demand prerender refresh the redirect is
+`render-failed`, and the page stored before keeps serving. A slot with
+`loading()` streams an `async` handler, so there only a synchronous return
+redirects (see `/route`, "Redirecting from a route with `loading()`").
+
+```typescript
+parallel({
+  "@account": (ctx) => (ctx.get("user") ? <AccountPanel /> : redirect("/login")),
+})
+```
+
 ## Parallel Routes with Revalidation
 
 Control when parallel routes revalidate:

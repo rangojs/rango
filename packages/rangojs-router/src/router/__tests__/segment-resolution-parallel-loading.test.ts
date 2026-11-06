@@ -206,10 +206,12 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
-    expect(result.segments[0]?.component).toBe(deferred.promise);
+    // Streamed unawaited: the handler's promise, through handleHandlerResult.
+    const component = result.segments[0]?.component;
+    expect(component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(component).resolves.toBe("done");
   });
 
   it("does not await orphan parallel handler promise in revalidation path when loading is set", async () => {
@@ -264,10 +266,10 @@ describe("segment-resolution parallel loading", () => {
     const parallelSegment = result.segments.find((s) => s.type === "parallel");
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(parallelSegment).toBeDefined();
-    expect(parallelSegment?.component).toBe(deferred.promise);
+    expect(parallelSegment?.component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(parallelSegment?.component).resolves.toBe("done");
   });
 
   it("awaits parallel handler when loading is explicitly false", async () => {
@@ -389,6 +391,76 @@ describe("segment-resolution parallel loading", () => {
       );
       expect(result.segments).toHaveLength(1);
       expect(result.segments[0]?.component).toBe(value);
+    });
+  });
+
+  describe("a slot handler that returns a Response", () => {
+    // As a route or layout handler's: thrown, so the request short-circuits
+    // (redirect()), never handed to render as the slot's content.
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+    function slotLayout(handler: unknown, loading: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [{ ...createParallelEntry(handler), loading }],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+    const response = new Response(null, {
+      status: 302,
+      headers: { location: "/target" },
+    });
+
+    for (const [name, handler] of [
+      ["returned", () => response],
+      ["resolved", async () => response],
+    ] as const) {
+      it(`throws the ${name} Response without loading()`, async () => {
+        await expect(
+          resolveParallelSegments(
+            makeFreshPass(createContext(), deps, {
+              routeKey: "/blog",
+              params: {},
+            }),
+            slotLayout(handler, false),
+            false,
+          ),
+        ).rejects.toBe(response);
+      });
+    }
+
+    it("throws a returned Response under loading(), as a route does", async () => {
+      await expect(
+        resolveParallelSegments(
+          makeFreshPass(createContext(), deps, {
+            routeKey: "/blog",
+            params: {},
+          }),
+          slotLayout(() => response, "sidebar-loading"),
+          false,
+        ),
+      ).rejects.toBe(response);
+    });
+
+    it("streams a resolved Response under loading() as a rejection, as a route does", async () => {
+      const result = await resolveParallelSegments(
+        makeFreshPass(createContext(), deps, { routeKey: "/blog", params: {} }),
+        slotLayout(async () => response, "sidebar-loading"),
+        false,
+      );
+      await expect(result.segments[0]?.component).rejects.toBe(response);
     });
   });
 

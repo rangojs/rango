@@ -584,7 +584,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
-Return it from a handler or middleware, or throw it from a loader.
+Return it from a handler (a route's, a layout's or a parallel slot's) or from
+middleware, or throw it from a loader.
 
 ### Basic redirect
 

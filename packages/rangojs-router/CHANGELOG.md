@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a parallel slot handler that returns `redirect()` redirects
+
+**Before.** A slot handler that returned a `Response`, such as
+`parallel({ "@aside": () => redirect("/login") })`, did not redirect. The
+document answered `200` with no `Location`, and the `Response` reached the
+RSC stream, where Flight failed with `Only plain objects, and a few
+built-ins, can be passed to Client Components from Server Components`. A
+client navigation stayed on the page the same way. An on-demand prerender
+refresh of a page whose slot redirected came back `render-failed` with that
+Flight error rather than the redirect. A slot that declared `loading()` and
+returned the redirect synchronously did the same. A thrown `redirect()`
+already redirected.
+
+**Now.** A slot handler's returned redirect works like a route or layout
+handler's. The document answers the 3xx with its `Location` (with the
+router's `basename`), and a client navigation follows the redirect. This
+holds for a layout's slot, for a route's own slot, and under `cache()`, and
+a redirect is never stored. An on-demand refresh is `render-failed` with the
+redirect `Response` as its `error`, and the page stored before keeps
+serving. A slot with `loading()` whose handler is async streams its
+redirect, as a route with `loading()` does: only a synchronous return
+short-circuits the response.
+
+```tsx
+layout(AccountLayout, () => [
+  // Before: a 200 and a Flight error. Now: a 302 to /login.
+  parallel({
+    "@aside": async (ctx) =>
+      (await getSession(ctx)) ? <AccountAside /> : redirect("/login"),
+  }),
+  path("/account", AccountPage, { name: "account" }),
+]);
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

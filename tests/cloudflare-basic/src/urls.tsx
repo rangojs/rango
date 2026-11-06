@@ -316,6 +316,7 @@ import {
   guidePlainGoneKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
+import { slotRedirectPatterns } from "./pages/slot-redirect.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
@@ -3165,6 +3166,11 @@ export const urlpatterns = urls(
         // SWR on-demand fixture (ttl 1): a stale overlay hit serves and
         // schedules the router-level onRevalidate via waitUntil.
         path("/guide-swr/:slug", GuideSwrDef, { name: "guideSwr" }),
+
+        // redirect() from a parallel slot handler, as from a route's.
+        include("/slot-redirect", slotRedirectPatterns, {
+          name: "slotRedirect",
+        }),
 
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),
