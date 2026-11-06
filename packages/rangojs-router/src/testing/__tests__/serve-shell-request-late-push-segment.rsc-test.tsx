@@ -12,7 +12,8 @@
  *
  * The segment has to hold however the consumer calls the method: a detached
  * `const { use } = ctx`, a `{ ...ctx }` copy, and either after an `await`
- * included (call-shapes.ts).
+ * included (call-shapes.ts). An intercept's handler ctx carries its slot the
+ * same way.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -96,7 +97,7 @@ function makeRouter() {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, intercept }) => [
       layout(
         () => <main>shell</main>,
         () => [
@@ -134,6 +135,20 @@ function makeRouter() {
           path("/component", (ctx) => <LatePush ctx={ctx} label="route" />, {
             name: "component",
           }),
+          path("/component-intercept-source", () => <p>source</p>, {
+            name: "interceptSource",
+          }),
+          path("/component-intercepted/:shape", () => <p>page</p>, {
+            name: "intercepted",
+          }),
+          intercept(
+            "@modal",
+            ".intercepted",
+            (ctx) => (
+              <LatePush ctx={ctx} label="intercept" shape={shapeOf(ctx)} />
+            ),
+            { when: (ctx: any) => ctx.from.routeName === "interceptSource" },
+          ),
           layout(
             (ctx) => <LateLoaderPush ctx={ctx} />,
             () => [
@@ -231,6 +246,34 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
         segment: slot,
       });
     }
+  });
+
+  it("the intercept's, for a component the intercept handler handed its ctx to", async () => {
+    const router = makeRouter();
+    const store = new MemorySegmentCacheStore();
+    const source = await serveShellRequest(
+      router,
+      "/component-intercept-source",
+      {
+        cacheStore: store,
+      },
+    );
+    errors.length = 0;
+    const opened = await serveShellRequest(
+      router,
+      "/component-intercepted/method",
+      {
+        cacheStore: store,
+        partial: {
+          from: "/component-intercept-source",
+          segments: await matchedOf(source.flight),
+        },
+      },
+    );
+    const matched = await matchedOf(opened.flight);
+    const slot = matched.find((id) => id.endsWith(".@modal"))!;
+    expect(slot).toBeDefined();
+    expect(latePushSegment(errors)).toBe(slot);
   });
 
   it("the layout's, for a loader the component starts through that ctx", async () => {

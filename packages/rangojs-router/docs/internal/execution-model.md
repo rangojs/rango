@@ -2607,8 +2607,9 @@ has no receiver to read the segment from, and a `{ ...ctx }` copy has no `use`
 at all (it is own on the request's ctx, so the child only inherits it, and a
 copy does not inherit). The child's `use` reads the parent's at call time, so
 an interceptor installed on the request's ctx later (`loader-cache.ts`) stays
-in the path. `withSegmentScope` is the one funnel: a layout, a parallel slot
-and a prerender build ctx all get the child here.
+in the path. `withSegmentScope` is the one funnel: a layout, a parallel slot,
+an intercept's handler and layout, and a prerender build ctx all get the child
+here.
 
 The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
 else the ctx's carried one else its pin: a handle push's segment
@@ -2639,8 +2640,9 @@ and puts the previous pin back after it (`resolveOrphanLayout`); its
 handler's ctx carries the orphan's segment either way. A push function bound
 before the await (`const push = ctx.use(Handle)`) was always filed right.
 
-An intercept's handler still gets the shared ctx (its `loading()` case is
-covered by its `runAsSegment` scope, a component it hands the ctx to is not).
+An intercept's handler and layout get the child too (`resolveInterceptEntry`,
+intercept-resolution.ts), carrying the intercept slot: a component they hand
+it to names the intercept, not the target route's segment.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
@@ -2648,8 +2650,8 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to; every call shape of `ctx.use` from `call-shapes.ts`;
-a loader the component starts through the layout's ctx) and
+slot and an intercept handed the ctx to; every call shape of `ctx.use` from
+`call-shapes.ts`; a loader the component starts through the layout's ctx) and
 `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
