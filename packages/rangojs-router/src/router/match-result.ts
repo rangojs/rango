@@ -249,10 +249,10 @@ function withoutInternalFields(s: ResolvedSegment): ResolvedSegment {
 /**
  * The named slots with the internal marker stripped from their segments, or
  * undefined when there are none. A slot holds the very segment objects the
- * pipeline yielded (intercept-resolution.ts, cache-lookup.ts), not the copies
- * the strip pass above makes, so a marker set after that pass rides into the
- * payload through here: a cache() HIT of an open intercept listed its slot's
- * `_handlerRan` on the wire until this mapped it too.
+ * pipeline yielded (intercept-resolution.ts, cache-lookup.ts), while the pass
+ * above only makes unmarked copies for the segment list, so the marked
+ * originals reached the payload through here: a cache() HIT of an open
+ * intercept shipped its slot's `_handlerRan` until this mapped them too.
  */
 function clientSlots(
   slots: Record<string, SlotState>,
