@@ -155,23 +155,17 @@ function slotsForPayload(
 ): MatchPipelineState["slots"] | undefined {
   const names = Object.keys(slots);
   if (names.length === 0) return undefined;
-  let marked = false;
-  for (const name of names) {
-    if (slots[name].segments.some((s) => s._handlerRan !== undefined)) {
-      marked = true;
-      break;
-    }
-  }
-  if (!marked) return slots;
-  const stripped: MatchPipelineState["slots"] = {};
+  let stripped: MatchPipelineState["slots"] | undefined;
   for (const name of names) {
     const slot = slots[name];
+    if (!slot.segments.some((s) => s._handlerRan !== undefined)) continue;
+    stripped ??= { ...slots };
     stripped[name] = {
       ...slot,
       segments: slot.segments.map(withoutHandlerRan),
     };
   }
-  return stripped;
+  return stripped ?? slots;
 }
 
 export function buildMatchResult<TEnv>(

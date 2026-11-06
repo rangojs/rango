@@ -419,10 +419,11 @@ describe("an intercept slot a HIT serves", () => {
       new MemorySegmentCacheStore(),
     );
     const cacheStore = new MemorySegmentCacheStore();
-    await serveShellRequest(interceptRouter, "/item/1", {
+    const opened = await serveShellRequest(interceptRouter, "/item/1", {
       cacheStore,
       partial: { from: "/list", segments: list.matched },
     });
+    const slotId = idPushing((await readAnswer(opened)).handles, "modal");
     const hit = await serveShellRequest(interceptRouter, "/item/1", {
       cacheStore,
       partial: { from: "/list", segments: list.matched },
@@ -430,7 +431,7 @@ describe("an intercept slot a HIT serves", () => {
     const { answer, payload } = await readAnswer(hit);
     // The stored slot is listed, and the same object rides in the payload's
     // `slots`: the marker must be stripped from both.
-    expect(answer.resolvedIds).toContain("M0L0C0L0.@modal");
+    expect(answer.resolvedIds).toContain(slotId);
     expect(payload).not.toContain("_handlerRan");
   });
 
