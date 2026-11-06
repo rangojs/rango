@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a stored HIT lists the segments it serves, so their handle values are replaced as on the MISS
+
+**Before.** A partial response's `resolvedIds` tells the browser which runs'
+handle values to replace. A segment decoded from a stored record carried no
+marker of its own (`segment-codec.ts` copies named fields only), so a `cache()`
+HIT and a `Prerender()` bake listed only their live segments. A segment served
+from a record that pushed nothing kept the value the page already showed: a
+chain layout's breadcrumb cleared on the MISS that wrote the record and came
+back on the HIT of the same navigation.
+
+**Now.** A stored HIT lists every segment its record sends, as the MISS that
+wrote the record listed the segments that ran. The breadcrumb clears on the
+HIT too. Nothing else on the wire changes: the marker is stripped from
+`segments` and from `slots`, so only `resolvedIds` differs.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

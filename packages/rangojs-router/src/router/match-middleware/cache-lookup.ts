@@ -612,8 +612,20 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // The record's run stands in for the handler's: what it pushed is the
+      // bucket this response carries (restored below, or empty), so the
+      // browser replaces the one it holds (handles/pushed-by.ts). A stored
+      // segment carries no `_handlerRan` (segment-codec.ts copies named
+      // fields), and without it buildMatchResult listed only the live
+      // segments: a segment sent from a record that pushed nothing kept its
+      // previous handle values on the page, where the MISS that wrote the
+      // record cleared them.
+      if (!ctx.isFullMatch) segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
