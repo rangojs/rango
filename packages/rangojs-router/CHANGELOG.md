@@ -2,20 +2,27 @@
 
 ## Unreleased
 
-### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
+### Fixed: a layout's or a slot's handle push files under its own segment
 
-**Before.** An async server component a layout's (or a parallel slot's)
-handler handed its `ctx` to that pushed a handle after an `await` was rejected
-— by design, the `.defer()` path is the mitigation — and the dev
-`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
-the request's shared segment id when it was called, and by then the route
-handler had run and moved it on.
+**Before.** `ctx.use(Handle)` read the request's shared segment id when it was
+called, so a push through a layout's or a parallel slot's `ctx` filed under
+whatever segment the walker had pinned by then: a component the handler
+handed that `ctx` to landed its crumb in the child route's bucket, and the dev
+`LateHandlePushError` that rejected its late push named the route too (the
+push is rejected by design; the `.defer()` path is the mitigation).
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** A layout's and a slot's ctx carries its own segment
+(`withSegmentScope`), and `ctx.use` reads it off the receiver it was called
+on: a push through that ctx files under the layout's or the slot's segment,
+before or after an `await`, and the dev message names it:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+The late push is still rejected, at the same moment, and production still
+shows no message.
+
+Unchanged: a route handler's `ctx` is the request's one, so a component it
+hands the ctx to reads the shared segment id. On a route that declares
+parallel slots that is the last slot's, which the walker resolves after the
+handler.
 
 ## 0.35.0 (2026-11-04)
 
