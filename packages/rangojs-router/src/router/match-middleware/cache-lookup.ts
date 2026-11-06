@@ -21,6 +21,9 @@
  *
  *   - state.cacheHit = true signals downstream middleware to skip
  *   - A segment the client already holds and keeps has its component nullified
+ *   - A segment the response sends is marked re-resolved (`_handlerRan`), as
+ *     the live walk marks it, so a partial response's `resolvedIds` names it
+ *     and the browser replaces its handle values with the record's
  *   - Loaders are always re-resolved fresh: never cached or pre-rendered.
  *     Segment cache staleness does NOT propagate to loader revalidation;
  *     loaders use their own revalidation rules (actionId, user-defined)

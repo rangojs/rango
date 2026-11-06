@@ -133,6 +133,8 @@ async function readAnswer(
 ): Promise<{ answer: Answer; handles: HandleData }> {
   // The live marker is internal: a response never carries it, stored or not.
   expect(result.flight).not.toContain("_handlerRan");
+  expect(result.body).not.toContain("_handlerRan");
+  expect(result.prelude ?? "").not.toContain("_handlerRan");
   const { metadata } = await deserializeResult<{ metadata: Answer }>(
     result.flight!,
   );
