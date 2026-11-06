@@ -34,6 +34,7 @@ import {
   expectNoInternalFields,
   serveEveryShape,
 } from "./helpers/response-shapes.js";
+import type { InterceptSelectorContext } from "../../server/context.js";
 import { getCacheVersions } from "../../cache/index.js";
 import type {
   MemoryPrerenderStore,
@@ -674,9 +675,44 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
   }
 
   it("every response shape serves the stored page, with no internal field", async () => {
-    const router = makeRouter({ store });
+    // The intercept is declared here, not in makeRouter: an intercept open from
+    // /home changes what a partial navigation to the route renders, which the
+    // per-kind cases above assert against the page itself.
+    const router = createRouter({ prerender: { store } }).routes(
+      urls(({ path, layout, intercept }) => [
+        path("/home", () => <p>home</p>, { name: "home" }),
+        layout(
+          () => <main>intercepted</main>,
+          () => [
+            intercept(
+              "@modal",
+              ".redirectRoute",
+              () => <dialog>modal</dialog>,
+              {
+                when: (ctx: InterceptSelectorContext) =>
+                  ctx.from.url.pathname === "/home",
+              },
+            ),
+            path("/redir-route/:slug", RedirectRouteDef, {
+              name: "redirectRoute",
+            }),
+          ],
+        ),
+        layout(
+          () => <main>slots</main>,
+          () => [
+            path("/redir-slot/:slug", RedirectSlotPageDef, {
+              name: "redirectSlot",
+            }),
+          ],
+        ),
+      ]),
+    );
     const prerender = router.prerender({ env: {} });
     await prerender("/redir-route/a");
+    // The intercept's move target needs its own page, or the harness answers
+    // 404 (a plain on-demand route with no entry, as in production).
+    await prerender("/redir-slot/a");
     redirecting.route = true;
     expect(await prerender("/redir-route/a")).toMatchObject({
       status: "skipped-redirect",
@@ -685,12 +721,25 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
     const shapes = await serveEveryShape(router, {
       from: "/home",
       to: "/redir-route/a",
+      intercept: { next: "/redir-slot/a" },
     });
     for (const { name, result } of shapes) {
       expect(result.response.status, name).toBe(200);
-      expect(result.flight, name).toContain(
-        name.startsWith("document from") ? "home" : "route:a:r1",
-      );
+    }
+    // The document is the stored page, on its MISS and on its HIT.
+    for (const name of ["document to MISS", "document to HIT"]) {
+      const shape = shapes.find((s) => s.name === name);
+      expect(shape?.result.flight, name).toContain("route:a:r1");
+    }
+    // A navigation from /home opens the intercept, and the moved intercept
+    // serves its own page: neither is a redirect, and neither loses the answer.
+    for (const name of ["partial MISS", "intercept opened MISS"]) {
+      const shape = shapes.find((s) => s.name === name);
+      expect(shape?.result.flight, name).toContain("modal");
+    }
+    for (const name of ["intercept moved MISS", "intercept moved HIT"]) {
+      const shape = shapes.find((s) => s.name === name);
+      expect(shape?.result.flight, name).toContain("slot:a:r1");
     }
     expectNoInternalFields(shapes);
   });
