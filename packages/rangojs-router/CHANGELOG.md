@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` or `Prerender()` HIT names in `resolvedIds` the segments it re-renders, so a re-run handler's handle values clear as on a MISS
+
+**Before.** A partial response names in `resolvedIds` every segment whose
+handler layer it replaced, and the browser replaces those runs' handle values
+(`mergePartialHandleData`). A stored record carries no such marker, so a HIT
+named only the loaders it ran. A chain layout whose `revalidate()` re-ran it
+and pushed nothing — a breadcrumb the new page no longer has — cleared on a
+live navigation and came back whenever the same navigation was served from a
+`cache()` record or a `Prerender()` bake.
+
+**Now.** A HIT names every segment it sends in place of a re-run handler, so
+it reports the ids the MISS that wrote the record reported, and the
+breadcrumb clears on both. Nothing else on the wire changes.
+
+```tsx
+layout(
+  (ctx) => {
+    // Pushes a crumb on the page that has one, nothing on the others.
+    if (ctx.params.id) ctx.use(Crumbs)(ctx.params.id);
+    return <Section>{ctx.children}</Section>;
+  },
+  () => [
+    revalidate(() => true),
+    path("/item/:id", ItemPage),
+    path("/list", ListPage),
+  ],
+);
+```
+
+Navigating from `/item/1` to `/list` cleared the crumb; the same navigation
+served from `/list`'s record kept it on screen.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

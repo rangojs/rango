@@ -612,8 +612,19 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // A sent stored segment stands in for the handler a live walk re-runs
+      // for it, so it is marked as run: `resolvedIds` (match-result.ts) must
+      // name what the MISS that wrote the record named, or the browser keeps
+      // the handle values of a segment the response replaced
+      // (handles/pushed-by.ts). The record cannot carry the flag: a record is
+      // written by another render (a proactive re-render runs every handler),
+      // so a persisted one would name every segment on every HIT.
+      segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
