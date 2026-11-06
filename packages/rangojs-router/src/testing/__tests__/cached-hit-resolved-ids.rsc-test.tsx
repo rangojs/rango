@@ -254,8 +254,8 @@ describe("a cache() HIT lists the segments its record serves", () => {
   });
 });
 
-describe("a stored intercept slot", () => {
-  it("is listed on the HIT, and the marker stays off the wire", async () => {
+describe("an intercept slot that re-runs", () => {
+  it("is listed on the MISS and on the HIT, and the marker stays off the wire", async () => {
     const router = makeInterceptRouter();
     const cacheStore = new MemorySegmentCacheStore();
     const page = await documentOf(router, "/a");
@@ -269,18 +269,19 @@ describe("a stored intercept slot", () => {
         },
       });
 
-    const miss = await open();
-    const hit = await open();
-    const slotId = (await readAnswer(hit)).answer.matched.find((id) =>
-      id.includes(".@modal"),
-    );
+    const missResult = await open();
+    const hitResult = await open();
+    const miss = await readAnswer(missResult);
+    const hit = await readAnswer(hitResult);
+    const slotId = miss.answer.matched.find((id) => id.includes(".@modal"));
     expect(slotId).toBeDefined();
-    expect((await readAnswer(hit)).answer.resolvedIds).toContain(slotId);
+    expect(miss.answer.resolvedIds).toContain(slotId);
+    expect(hit.answer.resolvedIds).toEqual(miss.answer.resolvedIds);
     // The slot's segments are the pipeline's own objects, so the marker that
     // lists them must be stripped there too (match-result.ts
     // withoutHandlerRanInSlots).
-    expect(wireText(miss)).not.toContain("_handlerRan");
-    expect(wireText(hit)).not.toContain("_handlerRan");
+    expect(wireText(missResult)).not.toContain("_handlerRan");
+    expect(wireText(hitResult)).not.toContain("_handlerRan");
   });
 });
 
