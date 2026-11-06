@@ -278,6 +278,14 @@ keeps its segment".
 
 `urls()`, `path()`, `layout()`, `include()`, `parallel()`, `intercept()`, `middleware()`, `cache()`, `loader()`, `loading()`, `errorBoundary()`, `notFoundBoundary()`, `transition()`, `map()`, `route()`, `revalidate()`
 
+The helpers share one definition-time rule: an item may be returned only from
+the callback that was running when it was created. Each helper records that
+entry on the item (`declaredUnder`) and `assertDeclaredIn`
+(`route-definition/dsl-helpers.ts`) rejects a list where the item's entry is not
+the one the list has reached; an orphan `cache()` marker counts as the entry it
+opens for the siblings after it. `urls()` checks the list it returns the same
+way (`urls/urls-function.ts`). Rules: [route-definition-rules.md](../route-definition-rules.md).
+
 `clientUrls()` is a separate, narrowed client DSL exported from `./client`. Its
 helpers are `path()`, `layout()`, `loader()`, `loading()`, a restricted
 `intercept()` (dot-local named target, `loader()`/`loading()` use only, no

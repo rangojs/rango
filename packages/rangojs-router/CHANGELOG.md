@@ -13,13 +13,43 @@ put the route at the root, `Shell` never rendered, and the request answered 200.
 
 **Now.** Nesting a definition under an entry it was not created in throws
 where it is written: `route() declared outside the layout() it is nested in
-[<id>]: a definition registers under the entry whose callback creates it, so
-create it inside that callback`. It holds for every helper (`path`, `route`,
-`layout`, `cache`, `middleware`, `transition`, `parallel`, `intercept`,
-`loader`, `loading`, `revalidate`, `errorBoundary`, `notFoundBoundary`,
-`include()`). The inline form is unchanged, and so is the `cache()` form whose
-following siblings attach under its own entry
-(`urls(({ cache, path }) => [cache({ ttl: 60 }), path("/a", A), path("/b", B)])`).
+[<id>]: a definition registers under the entry that is current when it is
+created, so create it in the entry this list nests it under`. It holds for
+every helper (`path`, `route`, `layout`, `cache`, `middleware`, `transition`,
+`parallel`, `intercept`, `loader`, `loading`, `revalidate`, `errorBoundary`,
+`notFoundBoundary`, `include()`) and for the list `urls()` returns. The match
+is exact, not by ancestry: a definition created inside a nested callback and
+returned to an ancestor's list throws too.
+
+The check reads each list in order, so it also catches the same split through
+an orphan `cache()` marker, which moves the current entry down to the one it
+opens:
+
+- `const a = path("/a", Page); return [cache({ ttl: 60 }), a]` writes the
+  route inside the cache and registers it outside it, and throws
+  `route() declared outside the cache() it is nested in`.
+- `const c = cache({ ttl: 60 }); const a = path("/a", Page); return [a, c]`
+  is the reverse, and throws
+  `route() is created inside the cache() marker listed after it`.
+
+The message points at the factory form for a subtree that is reused: a
+factory (`const payouts = () => [layout(L, () => [path("/p", P)])]`) is valid
+when it is called inside the callback whose result holds its items, and calling
+it in another callback throws like a constant does.
+
+An app whose route tree had one of these shapes now fails to build; before
+this change it booted and served the wrong tree. The inline form is unchanged,
+and so is the `cache()` form whose following siblings attach under its own
+entry, including a marker called without returning it:
+
+```ts
+urls(({ cache, path }) => [cache({ ttl: 60 }), path("/a", A), path("/b", B)]);
+
+urls(({ cache, path }) => {
+  cache({ ttl: 60 });
+  return [path("/a", A)];
+});
+```
 
 ```ts
 // Before: the route renders at the root, Shell never renders, 200
@@ -30,6 +60,15 @@ return [layout(Shell, () => [a])];
 
 // Create the definition inside the callback it is nested in
 return [layout(Shell, () => [path("/a", Page, { name: "a" })])];
+
+// Before: the route renders outside the cache, 200
+const a = path("/a", Page, { name: "a" });
+return [cache({ ttl: 60 }), a];
+
+// Now: throws at definition time
+
+// Nest the definition in the cache() it belongs to
+return [cache({ ttl: 60 }, () => [path("/a", Page, { name: "a" })])];
 ```
 
 ## 0.35.0 (2026-11-04)

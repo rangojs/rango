@@ -119,35 +119,112 @@ const emptySegmentBase = (): EntryPropDatas &
  */
 const DECLARED_UNDER: unique symbol = Symbol("rango.declaredUnder");
 
-type DeclaredUseItem = { [DECLARED_UNDER]?: EntryData | null };
+/** The entry an orphan cache() marker opened for the siblings after it. */
+const OPENS_ENTRY: unique symbol = Symbol("rango.opensEntry");
 
-/** Record `parent` on a helper's use item; returns the item. */
-function declaredUnder<T extends object>(item: T, parent: EntryData | null): T {
+/** Set on an entry an orphan cache() marker opened (the reverse of OPENS_ENTRY). */
+const OPENED_BY_MARKER: unique symbol = Symbol("rango.openedByMarker");
+
+type DeclaredUseItem = { [DECLARED_UNDER]?: EntryData | null };
+type OpensEntry = { [OPENS_ENTRY]?: EntryData };
+type MarkerOpenedEntry = { [OPENED_BY_MARKER]?: true };
+
+/**
+ * Record `parent` on a helper's use item; returns the item. `opens` is the
+ * entry an orphan cache() marker opened: the siblings after it are declared
+ * under that entry, not under `parent`.
+ */
+function declaredUnder<T extends object>(
+  item: T,
+  parent: EntryData | null,
+  opens?: EntryData,
+): T {
   (item as DeclaredUseItem)[DECLARED_UNDER] = parent;
+  if (opens) {
+    (item as OpensEntry)[OPENS_ENTRY] = opens;
+    (opens as MarkerOpenedEntry)[OPENED_BY_MARKER] = true;
+  }
   return item;
 }
 
 /**
- * Reject a use item nested under an entry it was not created in. The callback's
- * own entry is the item's declaring entry or an ancestor of it: cache() without
- * children moves ctx.parent down to its own entry, so the siblings after it are
- * declared one level deeper and still belong to the callback. An orphan is
- * walked through orphanOwner (attachOrphanSibling), the entry it was declared
- * in.
+ * Reject a use item nested under an entry it was not created in, comparing in
+ * list order against the entry the list has reached.
+ *
+ * Order matters because cache() without children moves ctx.parent down to the
+ * entry it opens: in `[cache({ ttl: 60 }), a]` the marker opens an entry and
+ * the items after it are declared under that entry. An item declared at the
+ * callback's own entry and listed after the marker is written inside the cache
+ * but registered outside it, which is the same silent tree/code split as the
+ * layout case — `matched` loses the cache segment and the route still answers
+ * 200. A marker called for its effect and not returned opens its entry too, so
+ * `cache({ ttl: 60 }); return [path(...)]` stays valid: the walk from the
+ * item's entry back to the list's entry passes only entries opened by markers
+ * that are not in this list.
  */
-function assertDeclaredIn(entry: EntryData, items: AllUseItems[]): void {
+function assertDeclaredIn(entry: EntryData | null, items: AllUseItems[]): void {
+  let current: EntryData | null = entry;
   for (const item of items) {
-    if (!item || !(DECLARED_UNDER in item)) continue;
-    let node = (item as DeclaredUseItem)[DECLARED_UNDER] ?? null;
-    while (node && node !== entry) {
-      node = node.parent ?? node.orphanOwner ?? null;
+    if (!item || typeof item !== "object") continue;
+    if (DECLARED_UNDER in item) {
+      const declared = (item as DeclaredUseItem)[DECLARED_UNDER] ?? null;
+      if (declared !== current) {
+        // Every step from the item's entry up to the list's current entry must
+        // be an orphan cache() marker's region. A marker called for its effect
+        // and not returned still opens its entry, so the siblings after it stay
+        // valid; a marker that is in this list has already moved `current`, so
+        // an item declared at the old entry is listed after its region.
+        const regions = markerRegions(current, declared);
+        const listedBeforeItsMarker =
+          regions !== null &&
+          regions.every((region) => markerListed(region, items));
+        const unlistedMarker =
+          regions !== null &&
+          regions.every((region) => !markerListed(region, items));
+        invariant(
+          unlistedMarker,
+          listedBeforeItsMarker
+            ? `${item.type}() is created inside the ${declared?.type}() marker listed after it [${item.name}]: ` +
+                "a definition registers under the entry that is current when it is created, so list that marker first"
+            : `${item.type}() declared outside the ${current?.type ?? "urls"}() it is nested in [${item.name}]: ` +
+                "a definition registers under the entry that is current when it is created, so create it in the entry this list nests it under, or return it from a factory called there",
+        );
+      }
     }
-    invariant(
-      node === entry,
-      `${item.type}() declared outside the ${entry.type}() it is nested in [${item.name}]: ` +
-        "a definition registers under the entry whose callback creates it, so create it inside that callback",
-    );
+    const opens = (item as OpensEntry)[OPENS_ENTRY];
+    if (opens) current = opens;
   }
+}
+
+/**
+ * The entries an orphan cache() marker opened between `declared` and `current`,
+ * or null when the walk leaves the entries that markers opened: an entry
+ * created by a nested layout()/use() callback has no marker, so an item
+ * declared inside it and returned here does not pass.
+ */
+function markerRegions(
+  current: EntryData | null,
+  declared: EntryData | null,
+): EntryData[] | null {
+  const regions: EntryData[] = [];
+  let node = declared;
+  while (node !== current) {
+    if (!node || !(node as MarkerOpenedEntry)[OPENED_BY_MARKER]) return null;
+    regions.push(node);
+    node = node.parent ?? node.orphanOwner ?? null;
+  }
+  return regions;
+}
+
+/**
+ * True when `items` lists the marker that opened `region`. Matched by the
+ * region it carries, not by identity: a spread copy of a marker is still the
+ * marker in this list.
+ */
+function markerListed(region: EntryData, items: AllUseItems[]): boolean {
+  return items.some(
+    (item) => item != null && (item as OpensEntry)[OPENS_ENTRY] === region,
+  );
 }
 
 /**
@@ -476,9 +553,12 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // This makes cache() act as sugar for cache(() => [...])
     ctx.parent = entry;
 
+    // The marker carries the entry it opened so a use()/children list can tell
+    // which items belong to its region (assertDeclaredIn).
     return declaredUnder(
       { name: namespace, type: "cache" } as CacheItem,
       parent,
+      entry,
     );
   }
 
@@ -1384,4 +1464,5 @@ export {
   emptySegmentBase,
   runAndValidateUseItems,
   declaredUnder,
+  assertDeclaredIn,
 };

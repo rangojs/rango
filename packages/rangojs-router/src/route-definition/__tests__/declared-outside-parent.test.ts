@@ -103,6 +103,104 @@ describe("a definition nested under an entry it was not created in", () => {
     ).toThrow(/route\(\) declared outside the cache\(\) it is nested in \[/);
   });
 
+  it("throws for an item created above the orphan cache() marker that lists it", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () =>
+        layout(Shell, () => {
+          const a = route("a", Page);
+          return [cache({ ttl: 60 }), a];
+        }),
+      ),
+    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in \[/);
+  });
+
+  it("throws for an item created inside a cache() marker listed after it", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () =>
+        layout(Shell, () => {
+          const marker = cache({ ttl: 60 });
+          const a = route("a", Page);
+          return [a, marker];
+        }),
+      ),
+    ).toThrow(
+      /route\(\) is created inside the cache\(\) marker listed after it \[/,
+    );
+  });
+
+  it("keeps a cache() marker called without returning it", () => {
+    const parent = parentEntry();
+    const item = withDslStore(parent, () =>
+      layout(Shell, () => {
+        cache({ ttl: 60 });
+        return [route("a", Page)];
+      }),
+    );
+    expect(item.uses?.map((use) => use?.type)).toEqual(["route"]);
+  });
+
+  it("checks the top-level urls() list against its own entry", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () =>
+        urls(({ cache, path }) => {
+          const a = path("/a", Page, { name: "a" });
+          return [cache({ ttl: 60 }), a];
+        }).handler(),
+      ),
+    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in \[/);
+  });
+
+  it("keeps a top-level list whose items are created where they are listed", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () =>
+        urls(({ cache, path }) => [
+          cache({ ttl: 60 }),
+          path("/a", Page, { name: "a" }),
+        ]).handler(),
+      ),
+    ).not.toThrow();
+  });
+
+  it("throws for a definition created in a nested callback and returned above", () => {
+    const parent = parentEntry();
+    expect(() =>
+      withDslStore(parent, () =>
+        urls(({ path, layout }) => {
+          let inner!: AllUseItems;
+          return [
+            layout(Shell, () => {
+              inner = path("/a", Page, { name: "a" });
+              return [];
+            }),
+            inner,
+          ];
+        }).handler(),
+      ),
+    ).toThrow(NESTED_IN_LAYOUT);
+  });
+
+  it("keeps a factory called inside the callback whose list holds its items", () => {
+    const parent = parentEntry();
+    const factory = () => [layout(Shell, () => [route("a", Page)])];
+    const item = withDslStore(parent, () => layout(Shell, () => factory()));
+    expect(item.uses?.map((use) => use?.type)).toEqual(["layout"]);
+  });
+
+  it("throws for a factory called in another callback", () => {
+    const parent = parentEntry();
+    const factory = () => [route("a", Page)];
+    expect(() =>
+      withDslStore(parent, () => {
+        const items = factory();
+        return layout(Shell, () => items);
+      }),
+    ).toThrow(NESTED_IN_LAYOUT);
+  });
+
   it("keeps a route created inside the layout's own callback", () => {
     const parent = parentEntry();
     const item = withDslStore(parent, () =>

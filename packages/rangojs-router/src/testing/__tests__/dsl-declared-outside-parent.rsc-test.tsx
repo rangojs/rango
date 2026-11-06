@@ -88,7 +88,74 @@ describe("a definition nested under an entry it was not created in", () => {
     ).toThrow(/route\(\) declared outside the layout\(\) it is nested in/);
   });
 
-  it("keeps the orphan cache() form: its following siblings serve", async () => {
+  it("rejects a route created above the orphan cache() marker that lists it", () => {
+    expect(() =>
+      createRouter({}).routes(
+        urls(({ path, cache }) => {
+          const a = path("/a", Page, { name: "a" });
+          return [cache({ ttl: 60 }), a];
+        }),
+      ),
+    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in/);
+  });
+
+  it("rejects the same shape inside a layout's children", () => {
+    expect(() =>
+      createRouter({}).routes(
+        urls(({ path, cache, layout }) => [
+          layout(Shell, () => {
+            const a = path("/a", Page, { name: "a" });
+            return [cache({ ttl: 60 }), a];
+          }),
+        ]),
+      ),
+    ).toThrow(/route\(\) declared outside the cache\(\) it is nested in/);
+  });
+
+  it("rejects a route created in a nested callback and returned above", () => {
+    expect(() =>
+      createRouter({}).routes(
+        urls(({ path, layout }) => {
+          let inner: any;
+          return [
+            layout(Shell, () => {
+              inner = path("/a", Page, { name: "a" });
+              return [];
+            }),
+            inner,
+          ];
+        }),
+      ),
+    ).toThrow(/route\(\) declared outside the layout\(\) it is nested in/);
+  });
+
+  it("keeps a factory called inside the callback whose list holds its items", async () => {
+    const payouts = (helpers: any) => [
+      helpers.layout(Shell, () => [helpers.path("/a", Page, { name: "a" })]),
+    ];
+    const router = createRouter({}).routes(
+      urls((helpers) => [payouts(helpers)]),
+    );
+    expect(await matchedOf(router, "/a")).toEqual([
+      "M0L0",
+      "M0L0L0",
+      "M0L0L0R0",
+    ]);
+  });
+
+  it("rejects a factory called in another callback", () => {
+    const payouts = (helpers: any) => [helpers.path("/a", Page, { name: "a" })];
+    expect(() =>
+      createRouter({}).routes(
+        urls((helpers) => {
+          const items = payouts(helpers);
+          return [helpers.layout(Shell, () => items)];
+        }),
+      ),
+    ).toThrow(/route\(\) declared outside the layout\(\) it is nested in/);
+  });
+
+  it("keeps the orphan cache() form: its following siblings serve inside it", async () => {
     const router = createRouter({}).routes(
       urls(({ path, cache }) => [
         cache({ ttl: 60 }),
@@ -96,7 +163,29 @@ describe("a definition nested under an entry it was not created in", () => {
         path("/b", Page, { name: "b" }),
       ]),
     );
-    expect((await serveShellRequest(router, "/a")).response.status).toBe(200);
-    expect((await serveShellRequest(router, "/b")).response.status).toBe(200);
+    expect(await matchedOf(router, "/a")).toEqual([
+      "M0L0",
+      "M0L0C0",
+      "M0L0C0R0",
+    ]);
+    expect(await matchedOf(router, "/b")).toEqual([
+      "M0L0",
+      "M0L0C0",
+      "M0L0C0R1",
+    ]);
+  });
+
+  it("keeps a cache() marker called without returning it", async () => {
+    const router = createRouter({}).routes(
+      urls(({ path, cache }) => {
+        cache({ ttl: 60 });
+        return [path("/a", Page, { name: "a" })];
+      }),
+    );
+    expect(await matchedOf(router, "/a")).toEqual([
+      "M0L0",
+      "M0L0C0",
+      "M0L0C0R0",
+    ]);
   });
 });
