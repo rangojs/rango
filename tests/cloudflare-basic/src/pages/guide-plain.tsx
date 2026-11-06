@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,13 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug the data source moved: holds the URL its render redirects
+ * to, so a refresh stores the redirect in place of the page.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -22,10 +29,20 @@ export const guidePlainFailKey = (slug: string): string =>
 // retains this producer body for router.prerender().
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
-// marker. Read only on a refresh, where ctx.env is the live env.
+// marker. A slug it moved (guidePlainMovedKey, ?moved=<path>) throws
+// redirect(): a refresh stores the redirect in place of the page.
+// "moved-baked" is baked at build time and belongs to the redirect e2e alone,
+// so the build-time entry below the overlay is what that test proves is not
+// served. Read only on a refresh, where ctx.env is the live env.
 export const GuidePlainDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "intro" }],
+  async () => [{ slug: "intro" }, { slug: "moved-baked" }],
   async (ctx) => {
+    if (ctx.onDemand) {
+      const movedTo = await ctx.env.PRERENDER_KV.get(
+        guidePlainMovedKey(ctx.params.slug),
+      );
+      if (movedTo) throw redirect(movedTo, 302);
+    }
     if (
       ctx.onDemand &&
       (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))

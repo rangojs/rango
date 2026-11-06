@@ -6,10 +6,11 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageAnswersRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
-  type PrerenderOutcomesFixture,
+  type PrerenderRedirectFixture,
 } from "@shared/e2e";
 
 // On-demand (ISR-style) prerender: a Passthrough + `{ onDemand }` route serves
@@ -295,7 +296,7 @@ async function exerciseRefreshInsideAction(f: Fixture, page: Page) {
 // route's "removable" (its "baked" is exerciseKnownPrerender's), and
 // "decline-baked" for the decline case. The bodies are shared with
 // tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
-const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+const removeFixture = (f: Fixture): PrerenderRedirectFixture => ({
   path: (slug) => `/on-demand-plain/${slug}`,
   stampTestId: "od-plain-stamp",
   onDemandTestId: "od-plain-ondemand",
@@ -305,6 +306,10 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "od-plain-slug",
   actionTestId: "od-action-noop",
   bakedSlug: "baked",
+  // The Passthrough route's baked slug: a page that serves in dev and
+  // production, for a moved page to land on.
+  redirectTo: "/on-demand/baked",
+  redirectBakedSlug: "moved-baked",
   passthrough: {
     pageUrl: (slug) => f.url(`/on-demand/${slug}`),
     triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
@@ -363,10 +368,23 @@ function defineOutcomeTests(f: Fixture) {
   });
 }
 
+// A refresh whose render answers redirect(): the redirect is stored in place
+// of the page, so a moved page stops serving instead of answering the page it
+// replaced. The body is shared with
+// tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+function defineRedirectTests(f: Fixture) {
+  test("a refresh whose render redirects stores the redirect: a moved page stops serving, and a later refresh brings it back", async ({
+    page,
+  }) => {
+    await expectRedirectedPageAnswersRedirect(page, removeFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (dev mode)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   defineRemoveTests(f);
   defineOutcomeTests(f);
+  defineRedirectTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,
@@ -436,6 +454,7 @@ test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   defineRemoveTests(f);
   defineOutcomeTests(f);
+  defineRedirectTests(f);
 
   test("live handler until triggered, then durable overlay serves prerender", async ({
     page,

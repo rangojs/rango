@@ -4029,6 +4029,88 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+
+/**
+ * A refresh whose render answers `redirect()`: the page moved, so the redirect
+ * is stored in place of the page and requests get it — a document request the
+ * 3xx, a visitor in the browser the target page — never the page it replaced
+ * and never the build-time entry below the overlay. A refresh once the move is
+ * undone replaces the redirect with the page.
+ *
+ * `redirectBakedSlug` is a param the build bakes and no other test touches, so
+ * "the build-time entry does not come back" is what the 3xx proves. The move
+ * is undone in `finally`: a failure must not leave the slug redirecting for
+ * the tests after this one.
+ *
+ * The fixture redirects with 302 on purpose: a browser caches a 301 without
+ * asking again, so the last step (the page comes back) would be answered by
+ * Chromium's cache instead of the server. The status is the app's choice, as
+ * it is for a live redirect.
+ */
+export interface PrerenderRedirectFixture extends PrerenderOutcomesFixture {
+  /** A path that serves, for the redirect to land on in the browser. */
+  redirectTo: string;
+  /** A slug the build bakes, owned by this case alone. */
+  redirectBakedSlug: string;
+}
+
+export async function expectRedirectedPageAnswersRedirect(
+  page: Page,
+  fixture: PrerenderRedirectFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = fixture.redirectBakedSlug;
+  const trigger = fixture.triggerUrl(slug);
+
+  const setMoved = async (target: string | null): Promise<void> => {
+    const answer = await removeTrigger(
+      page,
+      trigger,
+      `?moved=${target === null ? "off" : encodeURIComponent(target)}`,
+    );
+    expect(answer, JSON.stringify(answer)).toMatchObject({ moved: target });
+  };
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await setMoved(fixture.redirectTo);
+    const moved = await removeTrigger(page, trigger);
+    expect(moved, JSON.stringify(moved)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      target: fixture.path(slug),
+      redirect: { status: 302, location: fixture.redirectTo },
+    });
+
+    // A document request is the 3xx, and its body is not the page the
+    // redirect replaced (which is also the build-time entry under the overlay).
+    const response = await page.request.get(fixture.pageUrl(slug), {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    expect(response.headers()["location"]).toBe(fixture.redirectTo);
+    expect(await response.text()).not.toContain(
+      `data-testid="${fixture.slugTestId}"`,
+    );
+
+    // In the browser the visitor lands on the target, not on the old page.
+    await page.goto(fixture.pageUrl(slug));
+    expect(new URL(page.url()).pathname).toBe(
+      new URL(fixture.redirectTo, fixture.pageUrl(slug)).pathname,
+    );
+    await expect(byTestId(page, fixture.slugTestId)).toHaveCount(0);
+  } finally {
+    await setMoved(null);
+  }
+
+  // The page is back: a refresh replaces the stored redirect.
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
+
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";

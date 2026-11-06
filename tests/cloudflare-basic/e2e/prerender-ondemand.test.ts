@@ -6,10 +6,11 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageAnswersRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
-  type PrerenderOutcomesFixture,
+  type PrerenderRedirectFixture,
 } from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
@@ -313,7 +314,7 @@ function definePlainOnDemandFlow(f: Fixture) {
 // file is serial); the Passthrough route's baked "removable" belongs to these
 // tests alone, as is "decline-baked" for the decline case. The bodies are
 // shared with packages/rangojs-router/e2e/on-demand-prerender.test.ts.
-const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+const guideFixture = (f: Fixture): PrerenderRedirectFixture => ({
   path: (slug) => `/guide-plain/${slug}`,
   stampTestId: "gp-stamp",
   onDemandTestId: "gp-ondemand",
@@ -323,6 +324,9 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "gp-slug",
   actionTestId: "gp-action-noop",
   bakedSlug: "intro",
+  // A guide the build bakes, for a moved page to land on.
+  redirectTo: "/guides/routing",
+  redirectBakedSlug: "moved-baked",
   passthrough: {
     pageUrl: (slug) => f.url(`/guides/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
@@ -381,12 +385,25 @@ function defineOutcomesFlow(f: Fixture) {
   });
 }
 
+// A refresh whose render answers redirect(): the redirect is stored in place
+// of the page, so a moved page stops serving instead of answering the page it
+// replaced. The body is shared with
+// packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+function defineRedirectFlow(f: Fixture) {
+  test("a refresh whose render redirects stores the redirect: a moved page stops serving, and a later refresh brings it back", async ({
+    page,
+  }) => {
+    await expectRedirectedPageAnswersRedirect(page, guideFixture(f));
+  });
+}
+
 test.describe("on-demand prerender (production)", () => {
   const f = useFixture({ root: ".", mode: "build" });
   defineOnDemandFlow(f);
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
   defineOutcomesFlow(f);
+  defineRedirectFlow(f);
 
   test("plain onDemand route: unbaked param 404s until refreshed", async ({
     page,
@@ -419,6 +436,7 @@ test.describe("on-demand prerender (dev)", () => {
   definePlainOnDemandFlow(f);
   defineRemoveFlow(f);
   defineOutcomesFlow(f);
+  defineRedirectFlow(f);
 
   test("plain onDemand route: unbaked param renders live (dev fall-through)", async ({
     page,

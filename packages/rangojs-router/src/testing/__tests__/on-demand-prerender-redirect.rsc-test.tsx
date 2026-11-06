@@ -36,6 +36,7 @@ import type {
   MemoryPrerenderStore,
   PrerenderConfig,
   PrerenderResult,
+  PrerenderStoredEntry,
 } from "../../prerender/index.js";
 
 /** The origin serveShellRequest resolves paths against. */
@@ -99,21 +100,47 @@ const LiveDef = Prerender<{ slug: string }>(
   },
   { onDemand: true },
 );
+// The live handler renders whatever it can, always: a lagging data source
+// that still has the page is exactly the case where the stored answer must
+// win over running the handler.
 const Live = Passthrough(
   LiveDef,
-  async (ctx: HandlerContext<{ slug: string }>) => {
-    const target = movedTo.get(ctx.params.slug);
-    if (target !== undefined) throw redirect(target);
-    return <h1>{`live:${ctx.params.slug}`}</h1>;
-  },
+  async (ctx: HandlerContext<{ slug: string }>) => (
+    <h1>{`live:${ctx.params.slug}`}</h1>
+  ),
 );
+
+// A layout handler that redirects: a different throw site in the walk, under
+// a route of its own.
+function MovedLayout(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+  const target = movedTo.get(`layout:${ctx.params.slug}`);
+  if (target !== undefined) throw redirect(target);
+  return <header>chrome</header>;
+}
+
+const InLayoutDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => <h1>{`in-layout:${ctx.params.slug}`}</h1>,
+  { onDemand: true },
+);
+
+// A no-op server action, so a test can send the call the page's own button
+// sends: the re-render that follows it is what a stored redirect answers.
+const NOP = "a1b2c3#nop";
+async function nop(): Promise<string> {
+  return "nop";
+}
+Object.assign(nop, { $id: "src/actions.ts#nop" });
 
 function makeRouter(prerender: PrerenderConfig) {
   return createRouter({ prerender }).routes(
-    urls(({ path }) => [
+    urls(({ path, layout }) => [
       path("/products/:slug", ProductDef, { name: "product" }),
       path("/hot/:slug", HotDef, { name: "hot" }),
       path("/live/:slug", Live, { name: "live" }),
+      layout(MovedLayout, () => [
+        path("/in-layout/:slug", InLayoutDef, { name: "inLayout" }),
+      ]),
     ]),
   );
 }
@@ -168,12 +195,27 @@ describe("on-demand prerender: a page that redirects", () => {
     expect(document.response.headers.get("Location")).toBe("/products/b");
     expect(document.flight).toBeUndefined();
 
-    // A client navigation is the soft redirect the router's lanes expect.
-    const navigation = await serveShellRequest(router, "/products/a", {
-      partial: { from: "/" },
+    // A client navigation is the soft redirect the router's lanes expect, and
+    // a prefetch is the same answer (the client drops it and navigates).
+    for (const partial of [{ from: "/" }, { from: "/", prefetch: true }]) {
+      const navigation = await serveShellRequest(router, "/products/a", {
+        partial,
+      });
+      expect(navigation.response.status).toBe(204);
+      expect(navigation.response.headers.get("X-RSC-Redirect")).toBe(
+        `${ORIGIN}/products/b`,
+      );
+      expect(navigation.flight).toBeUndefined();
+    }
+
+    // An action's re-render is the redirect too, not a re-render of the page
+    // it replaced: the action ran already, and the answer is where the page
+    // went (browser/server-action-bridge.ts reads X-RSC-Redirect).
+    const action = await serveShellRequest(router, "/products/a", {
+      action: { ref: nop, id: NOP },
     });
-    expect(navigation.response.status).toBe(204);
-    expect(navigation.response.headers.get("X-RSC-Redirect")).toBe(
+    expect(action.response.status).toBe(204);
+    expect(action.response.headers.get("X-RSC-Redirect")).toBe(
       `${ORIGIN}/products/b`,
     );
 
@@ -234,6 +276,13 @@ describe("on-demand prerender: a page that redirects", () => {
     expect(await prerender("/hot/a", { onlyIfStale: true })).toMatchObject({
       status: "redirected",
     });
+
+    // A tag mark reaches the redirect through the route's tags: the sweep
+    // renders instead of reporting the entry fresh.
+    await prerender.markStale(["product:a"]);
+    expect(await prerender("/hot/a", { onlyIfStale: true })).toMatchObject({
+      status: "redirected",
+    });
   });
 
   it("an off-host redirect is answered as the app asked, and only with the opt-in", async () => {
@@ -272,6 +321,49 @@ describe("on-demand prerender: a page that redirects", () => {
     );
   });
 
+  it("a redirect thrown from a layout handler is stored the same way", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    expect(await prerender("/in-layout/a")).toMatchObject({
+      status: "rendered",
+    });
+
+    movedTo.set("layout:a", "/moved");
+    expect(await prerender("/in-layout/a")).toMatchObject({
+      status: "redirected",
+      redirect: { status: 302, location: "/moved" },
+    });
+    const document = await serveShellRequest(router, "/in-layout/a");
+    expect(document.response.status).toBe(302);
+    expect(document.response.headers.get("Location")).toBe("/moved");
+  });
+
+  it("a stored redirect the router cannot verify is a miss, not a crash", async () => {
+    // A third-party store hands back a 200 "redirect": the router verifies
+    // every answer, so it is a miss (the route's gate answers 404), never a
+    // `new Response(null, { status: 200 })` served as a redirect and never a
+    // RangeError from a status the constructor rejects.
+    const inner = createMemoryPrerenderStore();
+    let corrupt: unknown;
+    const router = makeRouter({
+      store: {
+        get: async (key) =>
+          corrupt === undefined
+            ? inner.get(key)
+            : (corrupt as PrerenderStoredEntry),
+        set: (key, stored) => inner.set(key, stored),
+      },
+    });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/products/a");
+    const meta = inner.entries()[0]![1].meta;
+
+    corrupt = { v: 1, redirect: { status: 200, location: "/x" }, meta };
+    expect(
+      (await serveShellRequest(router, "/products/a")).response.status,
+    ).toBe(404);
+  });
+
   it("a Passthrough route's stored redirect answers, not its live handler", async () => {
     const router = makeRouter({ store });
     const prerender = router.prerender({ env: {} });
@@ -289,8 +381,12 @@ describe("on-demand prerender: a page that redirects", () => {
       redirect: { status: 302, location: "/products/b" },
     });
 
+    // The live handler would answer 200 with "live:a" (its data source still
+    // has the page): the stored redirect answers instead, as a stored page
+    // does. A design that lets the handler run would serve that page.
     const document = await serveShellRequest(router, "/live/a");
     expect(document.response.status).toBe(302);
     expect(document.response.headers.get("Location")).toBe("/products/b");
+    expect(document.flight).toBeUndefined();
   });
 });

@@ -1038,6 +1038,10 @@ The rules it inherits, unchanged:
   `s-maxage` and `stale-while-revalidate` run out. Pair the refresh with
   `updateTag(tag)`, in the same order as a removal: store the redirect first,
   then invalidate.
+- **The status is the app's, with its browser semantics.** A 301 is cached by
+  the browser without asking again, so a page that may move back should answer
+  302 (or 307); the same holds for a live `redirect()`. Nothing in the store
+  changes that, and the e2e fixtures use 302 for exactly this reason.
 - **Intercepted navigations do not see it**, for the same reason they do not
   see a marker: they do not read the overlay.
 - **A store that cannot be read is a miss**, and the page below serves while
