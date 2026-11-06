@@ -67,7 +67,9 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type PrerenderRedirect,
 } from "../../prerender/writable-store.js";
+import { markExternalRedirect } from "../../redirect-origin.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
   PrerenderTargetObject,
@@ -811,6 +813,9 @@ async function readPrerenderSource<TEnv>(
   //    handler, so skipping the overlay would 404 an overlay-only param
   //    (gateOnDemandProducer). A store error degrades to a miss
   //    (readVerifiedStoredEntry); a stale hit serves and may schedule onRevalidate.
+  //    The overlay answers three things: a page, a "removed" marker (the
+  //    route's handler answers) and a stored redirect (this request is the
+  //    redirect).
   if (overlay && ctx.matched.od && !ctx.isIntercept) {
     const key: PrerenderKey = {
       routerId: overlay.routerId,
@@ -824,9 +829,10 @@ async function readPrerenderSource<TEnv>(
       ctx.matched.params,
     );
     if (stored) {
-      // A stale "removed" marker is rechecked like a stale page: only a
-      // refresh that hit notFound() (or declined) stamps one with a ttl or
-      // tags. A prerender.remove() marker has neither and never gets here.
+      // A stale "removed" marker or stored redirect is rechecked like a stale
+      // page: only a refresh that hit notFound() (or declined) stamps one with
+      // a ttl or tags. A prerender.remove() marker has neither and never gets
+      // here.
       const stale = isStoredEntryStale(stored, Date.now());
       if (overlay.config.onRevalidate && reqCtx && stale) {
         scheduleOverlayRevalidation(
@@ -849,6 +855,15 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if (stored.redirect) {
+        // The page moved: answer the redirect the refresh stored, not the page
+        // it replaced and not the build-time entry below. Thrown here, which
+        // the match pipeline treats like any middleware short-circuit: a
+        // document request gets the 3xx (guarded at the handler's exit), a
+        // client navigation and an action re-render get X-RSC-Redirect
+        // (interceptRedirectForPartial).
+        throw storedRedirectResponse(stored.redirect);
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }
@@ -880,6 +895,21 @@ async function readPrerenderSource<TEnv>(
   }
 
   return null;
+}
+
+/**
+ * The Response a stored redirect answers with: the status and target the
+ * render's `redirect()` carried. `external` is re-branded rather than carried
+ * as a header, because the opt-in is out-of-band (redirect-origin.ts): a stored
+ * off-host redirect must pass the outgoing 3xx guard exactly like a live one.
+ */
+function storedRedirectResponse(redirect: PrerenderRedirect): Response {
+  const response = new Response(null, {
+    status: redirect.status,
+    headers: { Location: redirect.location },
+  });
+  if (redirect.external === true) markExternalRedirect(response);
+  return response;
 }
 
 /**

@@ -35,6 +35,9 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
+import type { PrerenderRedirect } from "../prerender/writable-store.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +113,12 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered `redirect()` (a handler returned or
+   * threw one). No page, but a target: the trigger stores the redirect in
+   * place of the page, so a moved page keeps redirecting its visitors.
+   */
+  redirect?: PrerenderRedirect;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -637,20 +646,55 @@ export async function matchForPrerender<TEnv = any>(
   // An on-demand refresh reports a notFound() anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) as an
   // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // "removed" marker stamped like a page (create-prerender-trigger.ts). A
+  // redirect() is an outcome for the same reason: the page is not there, but
+  // the render said where it is, and the trigger needs the route's ttl and tags
+  // to store that redirect stamped like a page. It is reported as the Response
+  // the handler threw (handleHandlerResult), which nothing unwraps on the
+  // throwOnError path a producer run takes.
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    const redirect = redirectOutcome(error);
+    if (!redirect) throw error;
     return {
       segments: [],
       handles: "",
       routeName: matched.routeKey,
       params: matchedParams,
-      notFound: true,
+      redirect,
       onDemandConfig,
     };
   }
+}
+
+/**
+ * The redirect a thrown render error carries, or undefined when the throw is
+ * anything else. The external opt-in rides the Response as an out-of-band
+ * brand (redirect-origin.ts), which cannot be persisted: it is copied into the
+ * outcome so the serve path can re-brand what it answers with.
+ */
+function redirectOutcome(error: unknown): PrerenderRedirect | undefined {
+  if (!(error instanceof Response) || !isRedirectResponse(error)) {
+    return undefined;
+  }
+  const location = error.headers.get("Location");
+  if (!location) return undefined;
+  return {
+    status: error.status,
+    location,
+    ...(isExternalRedirect(error) ? { external: true as const } : {}),
+  };
 }
 
 /**

@@ -9,7 +9,10 @@
 
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
-import type { WritablePrerenderStore } from "./writable-store.js";
+import type {
+  PrerenderRedirect,
+  WritablePrerenderStore,
+} from "./writable-store.js";
 import type { ShellCaptureRefusal } from "../rsc/shell-capture-constants.js";
 
 declare const prerenderTargetBrand: unique symbol;
@@ -148,6 +151,13 @@ export type PrerenderResult =
       /**
        * `already-fresh` only occurs with `onlyIfStale: true`.
        *
+       * `redirected`: the render answered `redirect()`, so a stored redirect
+       * took the page's place: requests get that redirect (a document request
+       * a 3xx, a client navigation `X-RSC-Redirect`), not the page it
+       * replaced and not a 404. `redirect` carries it. A later refresh
+       * replaces it, with a page or another redirect. `onlyIfStale` finding a
+       * fresh redirect reports `already-fresh`.
+       *
        * `removed`: a "removed" marker is stored in place of the page, and
        * requests no longer get the page or its build-time entry. It is
        * `ok: true`, so count it in sweep results. Written by
@@ -160,7 +170,7 @@ export type PrerenderResult =
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
@@ -168,6 +178,8 @@ export type PrerenderResult =
       tags: string[];
       /** Absent = never stale. */
       ttl?: number;
+      /** The redirect a `redirected` result stored. */
+      redirect?: PrerenderRedirect;
       /**
        * The warm request that followed the store write. Absent when the app
        * store is not shared, no origin resolved, or nothing was rendered.
