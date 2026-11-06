@@ -643,6 +643,36 @@ test.describe("reverse() in Prerender/Static handlers", () => {
       page.locator('[data-testid="static-reverse-href"]'),
     ).toHaveText("/href");
   });
+
+  // One Static() layout and one Static() slot, each mounted in two named
+  // include scopes: every mount's `.settings` link resolves in its own scope.
+  // Dev runs the handler per mount, so it is the reference the build must
+  // match (one artifact per mount scope, not one per definition).
+  test("a Static def mounted in two include scopes links into each scope", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shared-mount-a/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="shared-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-a/settings");
+    await expect(
+      page.locator('[data-testid="shared-mount-aside-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-a/settings");
+
+    await page.goto(f.url("/shared-mount-b/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="shared-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-b/settings");
+    await expect(
+      page.locator('[data-testid="shared-mount-aside-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-b/settings");
+  });
 });
 
 test.describe("reverse() in Prerender/Static handlers (production build)", () => {
@@ -679,6 +709,34 @@ test.describe("reverse() in Prerender/Static handlers (production build)", () =>
     await expect(
       page.locator('[data-testid="static-reverse-href"]'),
     ).toHaveText("/href");
+  });
+
+  // The build bakes one artifact per (definition, mount scope); a definition
+  // mounted in two include scopes must not serve the LAST mount's links on both.
+  test("a Static def mounted in two include scopes links into each scope", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shared-mount-a/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="shared-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-a/settings");
+    await expect(
+      page.locator('[data-testid="shared-mount-aside-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-a/settings");
+
+    await page.goto(f.url("/shared-mount-b/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="shared-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-b/settings");
+    await expect(
+      page.locator('[data-testid="shared-mount-aside-link"]'),
+    ).toHaveAttribute("href", "/shared-mount-b/settings");
   });
 });
 

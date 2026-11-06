@@ -7,6 +7,7 @@
  */
 
 import { contextSet, hasContextVars } from "../../context-var.js";
+import { staticArtifactKey, type StaticMount } from "../../static-handler.js";
 import { prerenderManifestEntries } from "../../prerender/store.js";
 import { sha256 } from "./build-versions.js";
 import {
@@ -374,9 +375,30 @@ export async function expandPrerenderRoutes(
 }
 
 /**
+ * The bakes one Static() definition needs: one per DSL mount it recorded
+ * (stampStaticDefScope), so each mount's artifact resolves `.name` in that
+ * mount's own include scope. A definition the collector finds in a scanned
+ * module that no DSL position mounted keeps the historical single bake, from
+ * the last-mount stamps it carries (nothing can reference a per-mount key
+ * without a recorded mount).
+ */
+function staticBakeMounts(def: any): StaticMount[] {
+  const recorded = def.$$staticMounts as StaticMount[] | undefined;
+  if (recorded && recorded.length > 0) return recorded;
+  const mount = {
+    // Full route name when stamped; the historical $$routePrefix is a name
+    // PREFIX (never in the root-scope registry) kept as fallback.
+    routeName: (def.$$routeName ?? def.$$routePrefix) as string | undefined,
+    rootScoped: def.$$rootScoped as boolean | undefined,
+    routerId: def.$$routerId as string | undefined,
+  };
+  return [{ key: staticArtifactKey(def.$$id, mount), ...mount }];
+}
+
+/**
  * Render Static handlers at build time. Each Static handler is called
  * with a synthetic BuildContext and its output is RSC-serialized.
- * Stages asset modules and stores handlerId-to-file entries in
+ * Stages asset modules and stores artifactKey-to-file entries in
  * state.staticManifestEntries.
  */
 export async function renderStaticHandlers(
@@ -428,67 +450,77 @@ export async function renderStaticHandlers(
       // Passthrough handlers stay live in the bundle
       if (def.options?.passthrough) continue;
 
-      const startHandler = performance.now();
-      let handled = false;
-      // Owner-first: path() stamped the mounting router's id on the def
-      // ($$routerId). Sweeping the whole registry hands the FIRST router's
-      // id and route map to every static handler — wrong scoping in
-      // multi-router apps. The full sweep remains only as the fallback for
-      // an unstamped def (evaluated outside a router scope).
-      const owner = (def as any).$$routerId as string | undefined;
-      const owned = owner !== undefined ? registry.get(owner) : undefined;
-      const candidates = owned ? [owned] : [...registry.values()];
-      for (const routerInstance of candidates) {
-        if (!routerInstance.renderStaticSegment) continue;
-        try {
-          const result = await routerInstance.renderStaticSegment(
-            def.handler,
-            def.$$id,
-            // Full route name when stamped; the historical $$routePrefix is a
-            // name PREFIX (never in the root-scope registry) kept as fallback.
-            (def as any).$$routeName ?? (def as any).$$routePrefix,
-            state.resolvedBuildEnv,
-            !state.isBuildMode,
-            (def as any).$$rootScoped,
-          );
-          if (result) {
-            // result.handles is the pre-encoded handle string ("" when none).
-            const hasHandles = result.handles !== "";
-            const exportValue = hasHandles
-              ? JSON.stringify(result)
-              : JSON.stringify(result.encoded);
-            manifestEntries[def.$$id] = stageBuildAssetModule(
-              state.projectRoot,
-              "__st",
-              exportValue,
+      // One artifact per (definition, mount scope): each mount's links resolve
+      // in that mount's include scope, so a definition mounted twice needs two
+      // bakes. The mount's key is the entry's staticHandlerId at runtime.
+      const mounts = staticBakeMounts(def);
+      for (const mount of mounts) {
+        const startHandler = performance.now();
+        // Owner-first: path() recorded the mounting router's id on the mount
+        // (stampStaticDefScope). Sweeping the whole registry hands the FIRST
+        // router's id and route map to every static handler — wrong scoping in
+        // multi-router apps. The full sweep remains only as the fallback for
+        // an unstamped def (evaluated outside a router scope).
+        const owner = mount.routerId;
+        const owned = owner !== undefined ? registry.get(owner) : undefined;
+        const candidates = owned ? [owned] : [...registry.values()];
+        // Only a definition baked for several mounts needs the scope in its log
+        // line; a single-mount def keeps the historical one-name-per-line log.
+        const label =
+          mounts.length > 1 ? `${name} [${mount.routeName ?? "root"}]` : name;
+        let handled = false;
+        for (const routerInstance of candidates) {
+          if (!routerInstance.renderStaticSegment) continue;
+          try {
+            const result = await routerInstance.renderStaticSegment(
+              def.handler,
+              mount.key,
+              mount.routeName,
+              state.resolvedBuildEnv,
+              !state.isBuildMode,
+              mount.rootScoped,
             );
-            recordBuildData(state, "static", def.$$id, exportValue, {
-              moduleId,
-            });
+            if (result) {
+              // result.handles is the pre-encoded handle string ("" when none).
+              const hasHandles = result.handles !== "";
+              const exportValue = hasHandles
+                ? JSON.stringify(result)
+                : JSON.stringify(result.encoded);
+              manifestEntries[mount.key] = stageBuildAssetModule(
+                state.projectRoot,
+                "__st",
+                exportValue,
+              );
+              recordBuildData(state, "static", mount.key, exportValue, {
+                moduleId,
+              });
+              const elapsed = (performance.now() - startHandler).toFixed(0);
+              console.log(`[rango]   OK   ${label.padEnd(40)} (${elapsed}ms)`);
+              staticDone++;
+              handled = true;
+              break;
+            }
+          } catch (err: any) {
+            // Same Skip/warn/fail policy as the prerender loop (shared helper).
             const elapsed = (performance.now() - startHandler).toFixed(0);
-            console.log(`[rango]   OK   ${name.padEnd(40)} (${elapsed}ms)`);
-            staticDone++;
+            resolvePrerenderError(
+              registry,
+              err,
+              prerenderOnError,
+              label.padEnd(40),
+              elapsed,
+              "static",
+            );
+            staticSkip++;
             handled = true;
             break;
           }
-        } catch (err: any) {
-          // Same Skip/warn/fail policy as the prerender loop (shared helper).
-          const elapsed = (performance.now() - startHandler).toFixed(0);
-          resolvePrerenderError(
-            registry,
-            err,
-            prerenderOnError,
-            name.padEnd(40),
-            elapsed,
-            "static",
-          );
-          staticSkip++;
-          handled = true;
-          break;
         }
-      }
-      if (!handled) {
-        console.warn(`[rango] No router could render static handler "${name}"`);
+        if (!handled) {
+          console.warn(
+            `[rango] No router could render static handler "${name}"`,
+          );
+        }
       }
     }
   }

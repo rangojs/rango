@@ -26,6 +26,10 @@ import {
   isInsideCacheExecScope,
   isInsideIdentityExempt,
 } from "../cache/cache-exec-scope.js";
+// The Static mount record and its artifact key live with the definition
+// (static-handler.ts): the build collector reads them without loading this
+// module, which owns the async-local evaluation scope.
+import { staticArtifactKey, type StaticMount } from "../static-handler.js";
 
 // ============================================================================
 //  Performance Metrics Types
@@ -853,25 +857,43 @@ export function scopeReverse(
 }
 
 /**
- * Stamp build-time scope identity onto a Static() definition at mount time.
+ * Record one mount of a Static() definition and return its artifact key.
+ *
  * The bake collector (prerender-collection.ts) renders defs OUTSIDE any
- * evaluation scope and used to iterate the registry first-non-null, so these
- * are the ONLY reliable carriers of the def's owning router, root-scope, and
- * full route name — a name-keyed registry lookup at bake time reproduces the
- * cross-router collision #757/#762 fixed (and the collector's historical
- * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
- * never contains, silently degrading to the dot-heuristic).
- * A definition mounted more than once is stamped each time; the last mount wins.
+ * evaluation scope and used to iterate the registry first-non-null, so the
+ * per-mount values recorded here are the ONLY reliable carriers of the def's
+ * owning router, root-scope, and route name — a name-keyed registry lookup at
+ * bake time reproduces the cross-router collision #757/#762 fixed (and the
+ * collector's historical `$$routePrefix` argument is a name PREFIX, which the
+ * root-scope registry never contains, silently degrading to the dot-heuristic).
+ *
+ * The single `$$routeName`/`$$rootScoped`/`$$routerId` stamps stay as the last
+ * mount's identity: the collector still bakes a def it finds in a scanned
+ * module that no DSL position mounted, and it has only those to go on.
  */
 export function stampStaticDefScope(
   handler: unknown,
   routeName?: string,
-): void {
+): string {
   const store = RangoContext.getStore();
   const def = handler as Record<string, unknown>;
+  const rootScoped = getRootScoped();
+  const routerId = store?.routerId;
+  const bakeRouteName = routeName ?? getNamePrefix();
   if (routeName !== undefined) def.$$routeName = routeName;
-  def.$$rootScoped = getRootScoped();
-  if (store?.routerId !== undefined) def.$$routerId = store.routerId;
+  def.$$rootScoped = rootScoped;
+  if (routerId !== undefined) def.$$routerId = routerId;
+
+  const key = staticArtifactKey(def.$$id as string, {
+    routeName: bakeRouteName,
+    rootScoped,
+    routerId,
+  });
+  const mounts = (def.$$staticMounts ??= [] as StaticMount[]) as StaticMount[];
+  if (!mounts.some((mount) => mount.key === key)) {
+    mounts.push({ key, routeName: bakeRouteName, rootScoped, routerId });
+  }
+  return key;
 }
 
 // Export HelperContext type for use in other modules

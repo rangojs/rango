@@ -288,7 +288,9 @@ a process-stable runtime fallback `$$id` **only under a test runner**
 `$$id`" throw. Outside a test runner (a real build) a missing id still throws, so
 an unsupported handler shape the plugin skipped (e.g. `export let X = Static(...)`)
 fails loud rather than getting a silent synthetic id — the plugin always injects
-for supported `export const` shapes, and the static manifest keys on that id.
+for supported `export const` shapes, and the static manifest keys on that id
+plus the mount's scope (one artifact per DSL mount of the definition:
+`staticArtifactKey`).
 
 **The remaining caveat is the whole router _file_.** Importing your real
 `router.tsx` can still fail on app-specific page-module imports (a page pulling

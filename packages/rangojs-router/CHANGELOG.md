@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or slot mounted in two `include()` scopes links into its own module
+
+**Before.** One `Static()` definition mounted in two `include(..., { name })`
+scopes baked a single artifact, in the LAST mount's scope, and both mounts
+served it: `ctx.reverse(".settings")` in the first mount pointed at the second
+mount's route. Dev was correct (each mount runs the handler with its own
+scope); only a build served the wrong links.
+
+**Now.** The build stores one artifact per (definition, mount scope), keyed at
+the DSL position, so every mount serves the artifact baked in its own scope,
+the links dev produces. A definition mounted twice in the SAME scope still
+bakes once, and those mounts share that artifact.
+
+```ts
+// One definition, two named include() scopes.
+export const Nav = Static((ctx) => <Link to={ctx.reverse(".settings")} />);
+
+const moduleA = urls(({ path, layout }) => [
+  layout(Nav, () => [path("/settings", Page, { name: "settings" })]),
+]);
+const moduleB = urls(({ path, layout }) => [
+  layout(Nav, () => [path("/settings", Page, { name: "settings" })]),
+]);
+
+// Before: /a/settings rendered a link to /b/settings (both mounts served the
+// last mount's artifact). Now: /a/settings links to /a/settings, and
+// /b/settings to /b/settings.
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

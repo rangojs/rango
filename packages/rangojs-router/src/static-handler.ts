@@ -76,6 +76,59 @@ export interface StaticHandlerDefinition<
   options?: StaticHandlerOptions;
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
+  /**
+   * Every DSL position this definition is mounted at, recorded by
+   * stampStaticDefScope (server/context.ts) as the mount is evaluated.
+   * The build collector bakes one artifact per entry here.
+   */
+  $$staticMounts?: StaticMount[];
+}
+
+/**
+ * One DSL mount of a Static() definition: the inputs the bake collector
+ * (vite/discovery/prerender-collection.ts) renders that mount with, plus the
+ * key its artifact is stored under.
+ */
+export interface StaticMount {
+  /** Static-manifest key of this mount's artifact (staticArtifactKey). */
+  key: string;
+  /**
+   * The collector's bake route name: a path() mount's full route name, else the
+   * include name prefix (a layout's or slot's `ctx.routeName` at bake).
+   * undefined only for a definition no DSL position mounted.
+   */
+  routeName: string | undefined;
+  /** getRootScoped() where the mount sits: the bake's bare-name fallback. */
+  rootScoped: boolean | undefined;
+  /** The mounting router, whose route map the bake resolves against. */
+  routerId: string | undefined;
+}
+
+/**
+ * Static-manifest key for one mount of a Static() definition.
+ *
+ * A definition mounted twice renders differently per mount: its `.name` links
+ * resolve in the mount's include scope, exactly as the live handler's do. The
+ * store used to be keyed by the definition's `$$id` alone, so both mounts read
+ * the ONE artifact the last mount baked and the other mount's links pointed
+ * into the last mount's module. Keying by (definition, mount scope) gives each
+ * mount its own artifact: `entry.staticHandlerId` carries this key at runtime
+ * and the collector writes the manifest entry under it.
+ *
+ * Every scope value is percent-encoded, so a route name or router id containing
+ * "::" cannot compose another mount's key (a collision would serve the wrong
+ * artifact silently).
+ */
+export function staticArtifactKey(
+  handlerId: string,
+  mount: Pick<StaticMount, "routeName" | "rootScoped" | "routerId">,
+): string {
+  return [
+    handlerId,
+    encodeURIComponent(mount.routerId ?? ""),
+    encodeURIComponent(mount.routeName ?? ""),
+    mount.rootScoped === false ? "scoped" : "root",
+  ].join("::");
 }
 
 // Process-stable fallback id counter (mirrors createHandle/createLoader/Prerender).

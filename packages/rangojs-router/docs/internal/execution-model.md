@@ -2558,6 +2558,14 @@ Limits:
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
   nested module the last name segment is dropped.
+- A `Static()` def mounted more than once bakes once per mount scope: the DSL
+  position records a `StaticMount` (`stampStaticDefScope`) and
+  `staticArtifactKey` composes the manifest key from it, so the entry's
+  `staticHandlerId` names the artifact baked in ITS scope and a shared layout's
+  `.name` links resolve per mount, as they do live. Mounts in the same scope
+  compose one key and share one artifact. The bake inputs are still the def's
+  route name/prefix and root scope, so the nested-include limit above holds per
+  mount.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
