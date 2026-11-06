@@ -622,6 +622,46 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: `use` handed on detached or copied resolves through this ctx", () => {
+      // A handler may pass the function on instead of the object
+      // (`const { use } = ctx`, `<Push push={ctx.use} />`, a `{ ...ctx }`
+      // copy). Each of those calls it with no receiver, so the segment must
+      // come from the bound ctx, not from the call's receiver.
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: unknown, item: unknown) {
+          receivers.push(this);
+          return item;
+        },
+      } as unknown as { reverse: unknown; use: (item: unknown) => unknown };
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const { use } = scoped;
+      use("detached");
+      const copy = { ...scoped };
+      copy.use("spread");
+      (copy.use as (item: unknown) => unknown)("spread detached");
+      expect(receivers).toEqual([scoped, scoped, scoped]);
+    });
+
+    it("withSegmentScope: the bound `use` reads the ctx's current one", () => {
+      // loader-cache.ts swaps ctx.use for an override interceptor while a
+      // loader runs; the child must reach it, not a stale capture.
+      const calls: string[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use: (item: unknown) => {
+          calls.push(`before:${String(item)}`);
+        },
+      } as unknown as { reverse: unknown; use: (item: unknown) => void };
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      ctx.use = (item: unknown) => {
+        calls.push(`after:${String(item)}`);
+      };
+      scoped.use("x");
+      expect(calls).toEqual(["after:x"]);
+    });
   });
 
   describe("optional params", () => {

@@ -2595,10 +2595,16 @@ case the scope cannot reach: React renders the components that ctx was
 handed to after the handler returned, outside every scope, so the object is
 the only thing left to ask. That ctx carries its segment
 (`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the push
-segment off the receiver it was called on (`handlePushSegment`,
+segment off the ctx it was called on (`handlePushSegment`,
 `loader-resolution.ts`) — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
-segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
+segment the walker pinned since. The child owns `use` for that reason, bound
+to itself (`withSegmentScope`): a handler that hands the function on instead
+of the object (`const { use } = ctx`, `<Push push={ctx.use} />`, a `{ ...ctx }`
+copy) calls it with no receiver, and reading the segment off the receiver
+would fall back to the walker's pin — the bug this carries the segment to
+avoid — or, for a copy that carries no `use`, throw. The other readers take
+`segmentPinOf(ctx)`,
 the innermost scope's segment else the ctx's carried one else its pin: a
 handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the build
 pass, which runs the same walker), a started loader's owning segment
@@ -2615,15 +2621,21 @@ reused for this: `cache-tag.ts` and `cache-scope.ts` key WeakMaps by the
 request context's identity, so a derived request context per segment would
 split them.
 
-Not changed: an awaited route handler (a route without `loading()`, an
-action's route) has no scope and reads the shared pin, which is its own while
-the walker waits on it. An orphan layout pins its own segment for that wait
-and puts the previous pin back after it (`resolveOrphanLayout`); its
-handler's ctx carries the orphan's segment either way. A push function bound
-before the await (`const push = ctx.use(Handle)`) was always filed right.
+Not changed: a route handler's ctx is still the request's one ctx — `{ ...ctx }`
+there copies what it copies in any route, which a derived per-route object
+would break — so a component it handed the ctx to reads the shared pin, not
+a carried segment. The pin is the route's only while nothing pins after it: a
+route with a parallel slot names the slot (`M0L0L0R1.@side` for route
+`M0L0L0R1`), the same wrong name for the same reason, one handler kind over.
+An orphan layout pins its own segment for its handler's wait and puts the
+previous pin back after it (`resolveOrphanLayout`); its handler's ctx carries
+the orphan's segment either way. A push function bound before the await
+(`const push = ctx.use(Handle)`) was always filed right.
 
-An intercept's handler still gets the shared ctx (its `loading()` case is
-covered by its `runAsSegment` scope, a component it hands the ctx to is not).
+An intercept's handler still gets the shared ctx. Its `loading()` case is
+covered by its `runAsSegment` scope, and a component it hands the ctx to
+names the slot because intercept resolution runs after the main walk and
+nothing pins after it — ordering, not carriage.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
@@ -2631,7 +2643,8 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to) and `server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to, every call shape of `use` among them, and every
+served shape) and `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 

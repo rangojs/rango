@@ -14,8 +14,10 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+That holds however the handler handed `use` on: the ctx itself, the function
+detached (`const { use } = ctx`, or passed as a prop) or a `{ ...ctx }` copy,
+which carries the bound `use` too. The push is still rejected, at the same
+moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

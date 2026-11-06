@@ -215,9 +215,17 @@ function createPrerenderPassthroughFn(
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
  * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
+ * `_handleSegmentId` off the ctx it was called on (handlePushSegment,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
+ *
+ * `use` is the child's own, bound to it: a handler that hands the function on
+ * rather than the object (`const { use } = ctx`, `<Push push={ctx.use} />`, a
+ * `{ ...ctx }` copy) calls it with no receiver, and reading the segment off
+ * the receiver would silently file the push under the walker's current pin
+ * again. Binding the object into the function makes every call shape resolve
+ * the same segment. The delegate is read at call time, so a later `ctx.use`
+ * replacement (loader-cache.ts's override interceptor) still runs.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -231,10 +239,13 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: C extends { use: infer U } ? U : unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  scoped.use = ((item: unknown) =>
+    (ctx as any).use.call(scoped, item)) as typeof scoped.use;
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;
