@@ -82,6 +82,18 @@ export interface RscFlightStageInput<TEnv> {
   temporaryReferences?: unknown;
   recordSerializeMetric?: boolean;
   tracking?: RscRenderStageTracking;
+  /**
+   * This render answers a redirect React caught while rendering it
+   * (RscRenderOptions.redirect): the thrown Response is control flow, not a
+   * rendering error. False: it is reported as every other render error is.
+   */
+  answersRenderRedirect?: boolean;
+  /**
+   * Set once the plan has answered a redirect and stopped reading this render.
+   * What React reports afterwards is the abandon itself (an AbortError from
+   * cancelling its stream), not something the visitor sees.
+   */
+  abandoned?: { current: boolean };
 }
 
 export interface RscFlightStage {
@@ -99,16 +111,33 @@ export interface RscPreparedHtmlRender {
 export interface RscRenderOptions {
   html?: (
     flight: RscFlightStage,
+    redirect: RscRenderRedirectStage,
   ) => RscPreparedHtmlRender | Promise<RscPreparedHtmlRender>;
   /**
    * Answer a redirect React caught while rendering it, in the shape the
    * request's channel can carry. A component's `throw redirect()` is not a
    * handler's return, so it never reaches handleHandlerResult: React reports it
    * to the Flight onError and renders the nearest boundary, which answered a
-   * 200 error page. See answerRenderControl. Absent: the thrown Response is
-   * answered as it is.
+   * 200 error page. Absent: the thrown Response is a rendering error, reported
+   * as before, and the boundary renders it.
    */
   redirect?: (thrown: Response) => Response;
+}
+
+/**
+ * What a render's HTML step needs to know about the plan's redirect answer, so
+ * the step and the plan read the same errors with the same baseline instead of
+ * each deciding for itself (`shellErrorAnsweredByRender`, ssr/index.tsx).
+ */
+export interface RscRenderRedirectStage {
+  /** This render answers a redirect React caught while rendering it. */
+  answers: boolean;
+  /**
+   * Index in `RequestContext._renderErrors` where THIS render's errors start:
+   * an earlier pass of the same request may have left its own (a prerender
+   * warm, a derived capture), and only the errors from here on are ours.
+   */
+  errorsFrom: number;
 }
 
 interface RscFlightCommand<TEnv> {
@@ -172,10 +201,19 @@ function createFlightStage<TEnv>(
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      if (input.abandoned?.current) return;
       renderErrors?.push(error);
-      // A redirect a component threw is control flow, answered before the
-      // status commits (createRscRenderPlan); it is not a rendering error.
-      if (error instanceof Response && isRedirectResponse(error)) return;
+      // A redirect a component threw is control flow the plan answers before
+      // the status commits (createRscRenderPlan); it is not a rendering error.
+      // A render that answers none leaves it the error it always was: the
+      // boundary renders it, so it is reported.
+      if (
+        input.answersRenderRedirect &&
+        error instanceof Response &&
+        isRedirectResponse(error)
+      ) {
+        return;
+      }
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
@@ -260,8 +298,14 @@ export function* createRscRenderPlan<TEnv>(
   const answerRedirect =
     options.redirect ?? ((thrown: Response): Response => thrown);
 
+  const answersRedirect = options.redirect !== undefined;
+  const abandoned = { current: false };
   const flight = yield* flightStep<TEnv>(
-    () => createFlightStage(input, input.init),
+    () =>
+      createFlightStage(
+        { ...input, answersRenderRedirect: answersRedirect, abandoned },
+        input.init,
+      ),
     input.recordSerializeMetric ?? true,
   );
 
@@ -270,11 +314,17 @@ export function* createRscRenderPlan<TEnv>(
     // No held chunk here: the HTML step decodes the payload before it can
     // answer, so everything the render threw in the shell (a synchronous
     // component's redirect and an async one's alike) is collected by now.
-    const page = yield* htmlStep<TEnv>(() => html(flight));
+    const page = yield* htmlStep<TEnv>(() =>
+      html(flight, { answers: answersRedirect, errorsFrom: errorsBefore }),
+    );
     const redirect = options.redirect
       ? renderRedirectOf(renderErrors, errorsBefore)
       : undefined;
     if (redirect) {
+      // The HTML body is the visitor's page and is abandoned. The Flight stream
+      // is left alone: nothing reads it once this response returns, so it is
+      // collected with the request.
+      abandoned.current = true;
       cancelBody(page.body);
       return answerRedirect(redirect);
     }
@@ -296,10 +346,15 @@ export function* createRscRenderPlan<TEnv>(
   // parses the body as it arrives: hold the opening chunk, which is complete
   // only once the shell's own components have rendered.
   return yield* responseStep<TEnv>(async () => {
-    const held = holdOpeningChunk(flight);
+    const held = holdOpeningChunk(flight, () =>
+      reportUnansweredRenderRedirects(renderErrors, errorsBefore, input),
+    );
     await held.opened;
     const redirect = renderRedirectOf(renderErrors, errorsBefore);
     if (redirect) {
+      // Cancelling React's stream is reported to onError as an AbortError; the
+      // render is answered and abandoned, so nothing it reports matters.
+      abandoned.current = true;
       await held.discard();
       return answerRedirect(redirect);
     }
@@ -330,6 +385,34 @@ export function renderRedirectOf(
 }
 
 /**
+ * Report every redirect this render threw that it did NOT answer, through the
+ * app's onError, as the rendering error it is: the boundary rendered it, so the
+ * visitor gets an error page. Runs when the Flight body ends, the only point a
+ * redirect that arrived after the status committed can be seen. A render that
+ * answers no redirects never suppressed the report, so this is only wired on
+ * the ones that do.
+ *
+ * printServerError is not called: it refuses a thrown Response (control flow),
+ * which is what the pre-existing path did too.
+ */
+function reportUnansweredRenderRedirects<TEnv>(
+  errors: readonly unknown[] | undefined,
+  from: number,
+  input: RscFlightStageInput<TEnv>,
+): void {
+  if (!errors) return;
+  for (let index = from; index < errors.length; index++) {
+    const error = errors[index];
+    if (!(error instanceof Response) || !isRedirectResponse(error)) continue;
+    input.ctx.callOnError(error, "rendering", {
+      request: input.request,
+      url: input.url,
+      env: input.env,
+    });
+  }
+}
+
+/**
  * A render's Flight stage with its opening chunk held back, so a redirect the
  * render threw can be answered before the status line commits: React reports
  * the error in the same pass that completes that chunk, so the render's errors
@@ -338,12 +421,15 @@ export function renderRedirectOf(
  * `stage.stream` replays the held chunk, then the rest, in order — the client
  * sees the same bytes it would without the hold.
  */
-function holdOpeningChunk(flight: RscFlightStage): {
+function holdOpeningChunk(
+  flight: RscFlightStage,
+  onClose?: () => void,
+): {
   stage: RscFlightStage;
   opened: Promise<void>;
   discard: () => Promise<void>;
 } {
-  const { opened, body } = peekOpeningChunk(flight.stream);
+  const { opened, body } = peekOpeningChunk(flight.stream, onClose);
   return {
     stage: { ...flight, stream: body },
     opened,
@@ -362,7 +448,11 @@ function cancelBody(body: BodyInit | null): void {
  * fails before its first chunk hands the same failure to the body, as it did
  * before the hold existed.
  */
-export function peekOpeningChunk(stream: ReadableStream<Uint8Array>): {
+export function peekOpeningChunk(
+  stream: ReadableStream<Uint8Array>,
+  /** Called once the body ends, before it closes: what the render reported last. */
+  onClose?: () => void,
+): {
   opened: Promise<void>;
   body: ReadableStream<Uint8Array>;
 } {
@@ -390,8 +480,10 @@ export function peekOpeningChunk(stream: ReadableStream<Uint8Array>): {
     },
     async pull(controller) {
       const { done, value } = await reader.read();
-      if (done) controller.close();
-      else controller.enqueue(value);
+      if (done) {
+        onClose?.();
+        controller.close();
+      } else controller.enqueue(value);
     },
     cancel(reason) {
       return reader.cancel(reason);
@@ -567,7 +659,7 @@ export async function driveRscRenderPlan<TEnv>(
           commandValue = { body, init: prepared.init };
         } else {
           // A response command may await its body's opening chunk
-          // (answerRenderControl); the Flight and HTML commands are synchronous.
+          // (createRscRenderPlan); the Flight and HTML commands are synchronous.
           commandValue = await command.execute();
         }
         const durationMs = measured ? performance.now() - phaseStartedAt : 0;

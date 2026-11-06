@@ -33,6 +33,7 @@ import { payloadLocation } from "./full-payload.js";
 import { publicRouteName } from "../route-name.js";
 import type { RscPayload } from "./types.js";
 import {
+  answerRenderRedirect,
   hasBodyContent,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
@@ -607,32 +608,47 @@ function renderActionResponse<TEnv>(
 
   if (!isError) attachLocationStateIfPresent(payload);
 
-  return renderRscResponse({
-    ctx,
-    request,
-    env,
-    url,
-    payload,
-    temporaryReferences,
-    init: {
-      status: actionStatus,
-      headers: {
-        "content-type": "text/x-component;charset=utf-8",
-        // Router identity for the client's pre-decode integrity check (the
-        // action apply path has no post-decode guard). See response-adapter.
-        "X-RSC-Router-Id": ctx.router.id,
+  return renderRscResponse(
+    {
+      ctx,
+      request,
+      env,
+      url,
+      payload,
+      temporaryReferences,
+      init: {
+        status: actionStatus,
+        headers: {
+          "content-type": "text/x-component;charset=utf-8",
+          // Router identity for the client's pre-decode integrity check (the
+          // action apply path has no post-decode guard). See response-adapter.
+          "X-RSC-Router-Id": ctx.router.id,
+        },
+      },
+      tracking: {
+        mode: "action-revalidation",
+        routeKey: reqCtx._routeName,
+        actionId: actionContext?.actionId,
+        span: input.renderSpan,
+        onEvent:
+          reqCtx._activeRoutine &&
+          createRenderStageTraceBridge(reqCtx._activeRoutine),
       },
     },
-    tracking: {
-      mode: "action-revalidation",
-      routeKey: reqCtx._routeName,
-      actionId: actionContext?.actionId,
-      span: input.renderSpan,
-      onEvent:
-        reqCtx._activeRoutine &&
-        createRenderStageTraceBridge(reqCtx._activeRoutine),
+    {
+      // A component that throws redirect() while the action's revalidation
+      // renders is the page saying where it goes: the call is answered with the
+      // Flight redirect the client already follows (server-action-bridge.ts),
+      // as a handler-thrown one is.
+      redirect: (thrown: Response) =>
+        answerRenderRedirect(thrown, {
+          flight: true,
+          requestOrigin: url.origin,
+          basename: ctx.router.basename,
+          createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+        }),
     },
-  });
+  );
 }
 
 /** The handle stream of matchBoundaryRevalidation's fallback. */

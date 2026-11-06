@@ -342,7 +342,7 @@ export function interceptRedirectForPartial(
 
 /**
  * Answer a redirect a render threw (a component's `throw redirect()`, not a
- * handler's return: see render-pipeline.ts answerRenderControl), in the shape
+ * handler's return: see render-pipeline.ts createRscRenderPlan), in the shape
  * the request's channel can carry.
  *
  * A document follows a real 3xx. A Flight response (a client navigation, an

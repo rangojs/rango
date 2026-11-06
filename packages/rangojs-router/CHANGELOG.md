@@ -10,15 +10,13 @@ root boundary): a document request answered `200` with the error page, and a
 client navigation rendered the boundary. Only a redirect a _handler_ returned
 or threw was answered.
 
-**Now.** The render answers it. A document request answers the redirect's own
-status with its `Location` (and `redirect(url, { state })` still carries its
-state in the one-shot cookie), and a client navigation answers the 204 +
-`X-RSC-Redirect` (or the Flight payload when it carries state or is external)
-that a handler's redirect already gets. A redirect thrown after the body has
-started streaming is unchanged, because the status line has already been sent:
-a route that declares `loading()`, a streamed handler, and — on a client
-navigation only — an **async** component, whose error row arrives after the
-response's opening chunk.
+**Now.** The render answers it, whenever the render reports it before the
+response's status is out of the router's hands. A document request (a page load,
+a pre-rendered route served live, a no-JS form post's re-render) answers the
+redirect's own status with its `Location` — `redirect(url, { state })` still
+carries its state in the one-shot cookie — and a client navigation or an
+action's revalidation answers the 204 + `X-RSC-Redirect` (or the Flight payload
+when it carries state or is external) that a handler's redirect already gets.
 
 ```tsx
 // This now redirects, on a page load and on a client navigation.
@@ -30,8 +28,20 @@ function Checkout() {
 path("/checkout", () => <Checkout />);
 ```
 
-A component that throws `notFound()` is unchanged (it still renders the error
-boundary); it has no Response to read back off the render.
+Two cases are deliberately unchanged, because the response has already started
+when the render reports the redirect:
+
+- a **client navigation** whose component suspends before throwing — an async
+  component, or any component behind `loading()`. The navigation's opening
+  chunk is sent before the segment's own render reports the error;
+- a **document** whose shell is a `loading()` fallback and whose component
+  suspends before throwing, for the same reason.
+
+Both render the error boundary as before, and the router now reports the
+redirect through the app's `onError` instead of swallowing it. A redirect a
+streamed handler throws keeps the same limitation it already had. A component
+that throws `notFound()` is unchanged: it has no Response to read back off the
+render.
 
 ## 0.35.0 (2026-11-04)
 

@@ -32,14 +32,24 @@ function componentRedirectTests(f: Fixture) {
     expect(res.headers()["location"]).toBe("/component-redirect/target");
   });
 
-  // An async component's redirect is answered on a document request (the HTML
-  // step decodes the payload before it can answer) but not on a client
-  // navigation: its error row arrives after the response's opening chunk, and
-  // the status line has committed by then (docs/internal/execution-model.md).
+  // A document's shell awaits a segment with no loading() above it, so a
+  // component that suspends before throwing is reported before the status
+  // commits. The fixture suspends on a macrotask, not a microtask.
   test("an async component's redirect answers the same 302", async ({
     request,
   }) => {
     const res = await request.get(f.url("/component-redirect/throw-async"), {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(302);
+    expect(res.headers()["location"]).toBe("/component-redirect/target");
+  });
+
+  // A synchronous throw happens in the shell's own pass, fallback or not.
+  test("a component behind loading() answers the 302 on a document", async ({
+    request,
+  }) => {
+    const res = await request.get(f.url("/component-redirect/throw-loading"), {
       maxRedirects: 0,
     });
     expect(res.status()).toBe(302);
@@ -68,6 +78,22 @@ function componentRedirectTests(f: Fixture) {
     await waitForHydration(page);
 
     await clickAndWaitFor(testId(page, "cr-link"), testId(page, "cr-target"));
+    await expect(page).toHaveURL(/\/component-redirect\/target$/);
+    await expect(testId(page, "cr-boundary")).toHaveCount(0);
+  });
+
+  test("a Link to a component behind loading() lands on the target", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/component-redirect/"));
+    await waitForHydration(page);
+
+    await clickAndWaitFor(
+      testId(page, "cr-link-loading"),
+      testId(page, "cr-target"),
+    );
     await expect(page).toHaveURL(/\/component-redirect\/target$/);
     await expect(testId(page, "cr-boundary")).toHaveCount(0);
   });

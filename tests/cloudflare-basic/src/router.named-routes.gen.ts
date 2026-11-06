@@ -74,6 +74,7 @@ export const NamedRoutes = {
   "componentRedirect.target": "/component-redirect/target",
   "componentRedirect.throw": "/component-redirect/throw",
   "componentRedirect.throwAsync": "/component-redirect/throw-async",
+  "componentRedirect.throwLoading": "/component-redirect/throw-loading",
   "composition.detail": "/composition/detail",
   "composition.index": "/composition",
   cookieOverlay: "/cookie-overlay",

@@ -748,6 +748,134 @@ describe("a redirect React caught while rendering", () => {
     expect(await response.text()).toBe("0:shell\n1:E{}\n");
   });
 
+  it("reports a redirect it could not answer once the body ends", async () => {
+    const error = thrown();
+    const { input, requestContext } = makeInput(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            setTimeout(() => {
+              options?.onError?.(error);
+              controller.enqueue(new TextEncoder().encode("1:E{}\n"));
+              controller.close();
+            }, 0);
+          },
+        }),
+    );
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        { redirect: () => new Response(null, { status: 302 }) },
+      ),
+    );
+
+    // The status committed before the render reported it: the boundary renders
+    // it, so the app's onError hears about it as the rendering error it is.
+    await response.text();
+    expect(input.ctx.callOnError).toHaveBeenCalledTimes(1);
+    expect(input.ctx.callOnError).toHaveBeenCalledWith(
+      error,
+      "rendering",
+      expect.objectContaining({ url: input.url }),
+    );
+  });
+
+  it("ignores what the abandoned render reports", async () => {
+    const error = thrown();
+    let abort!: (error: unknown) => void;
+    const { input, requestContext } = makeInput(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) => {
+        abort = options!.onError!;
+        return new ReadableStream<Uint8Array>({
+          start(controller) {
+            options?.onError?.(error);
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+          },
+          cancel() {
+            // React reports its own stream's cancel through onError.
+            abort(new DOMException("This operation was aborted", "AbortError"));
+          },
+        });
+      },
+    );
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        { redirect: () => new Response(null, { status: 302 }) },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(input.ctx.callOnError).not.toHaveBeenCalled();
+    expect(requestContext._renderErrors).toEqual([error]);
+  });
+
+  it("does not report a redirect it answered", async () => {
+    const error = thrown();
+    const { input, requestContext } = makeInput(renderThatReports(error));
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        { redirect: () => new Response(null, { status: 302 }) },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    expect(input.ctx.callOnError).not.toHaveBeenCalled();
+  });
+
+  it("reports the redirect when the caller answers none", async () => {
+    const error = thrown();
+    const { input, requestContext } = makeInput(renderThatReports(error));
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse({ ...input, init: { status: 200 } }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(input.ctx.callOnError).toHaveBeenCalledWith(
+      error,
+      "rendering",
+      expect.objectContaining({ url: input.url }),
+    );
+  });
+
+  it("hands the HTML step the plan's own redirect answer", async () => {
+    const earlier = thrown();
+    const seen: Array<{ answers: boolean; errorsFrom: number }> = [];
+    const { input, requestContext } = makeInput(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            controller.close();
+          },
+        }),
+    );
+    requestContext._renderErrors = [earlier];
+
+    await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          html: async (_flight, redirect) => {
+            seen.push(redirect);
+            return { render: () => new TextEncoder().encode("<html></html>") };
+          },
+        },
+      ),
+    );
+
+    // The step and the plan read the same list from the same baseline, so an
+    // earlier pass's redirect is not mistaken for this render's.
+    expect(seen).toEqual([{ answers: false, errorsFrom: 1 }]);
+  });
+
   it("leaves a Flight response unread when the caller answers no redirect", async () => {
     const stream = new ReadableStream<Uint8Array>();
     const { input, requestContext } = makeInput(() => stream);

@@ -1175,6 +1175,13 @@ function renderPreparedRscResponse<TEnv>(
       reqCtx._activeRoutine &&
       createRenderStageTraceBridge(reqCtx._activeRoutine),
   };
+  // A redirect thrown while React renders is not a handler result: the
+  // boundary renders it as an error page unless the render answers it. A
+  // document follows a real 3xx, a partial (a client navigation) converts it
+  // into the Flight redirect the client re-parses. Any other Flight request (an
+  // explicit Accept: text/x-component, the __rsc bootstrap) keeps the error row
+  // it had: it is not a channel the client follows a redirect on.
+  const answersRenderRedirect = !isFlightResponse || isPartial;
   const rendered = renderRscResponse(
     {
       ctx,
@@ -1186,15 +1193,7 @@ function renderPreparedRscResponse<TEnv>(
       tracking: stageTracking,
     },
     {
-      // A redirect thrown while React renders is not a handler result: the
-      // boundary renders it as an error page unless the render answers it. Only
-      // the channels a client parses as Flight (a navigation, an action) convert
-      // it; a document follows a 3xx. An explicit Accept: text/x-component
-      // document keeps the error row it had (a handler's redirect answers a raw
-      // 3xx there), so nothing is held back for it.
-      ...((!isFlightResponse ||
-        isPartial ||
-        url.searchParams.has(WIRE.action)) && {
+      ...(answersRenderRedirect && {
         redirect: (thrown: Response) =>
           answerRenderRedirect(thrown, {
             flight: isFlightResponse,

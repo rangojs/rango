@@ -4,5 +4,6 @@ export const routes = {
   target: "/target",
   throw: "/throw",
   throwAsync: "/throw-async",
+  throwLoading: "/throw-loading",
 } as const;
 export type routes = typeof routes;

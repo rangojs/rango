@@ -14,6 +14,7 @@ import type { MetricsStore } from "../server/context.js";
 import type {
   RscFlightStage,
   RscPreparedHtmlRender,
+  RscRenderRedirectStage,
 } from "./render-pipeline.js";
 import { appendMetric } from "../router/metrics.js";
 import {
@@ -108,8 +109,11 @@ export interface SsrHtmlStageOptions<TEnv> {
  */
 export function createSsrHtmlStage<TEnv>(
   options: SsrHtmlStageOptions<TEnv>,
-): (flight: RscFlightStage) => Promise<RscPreparedHtmlRender> {
-  return async (flight) => {
+): (
+  flight: RscFlightStage,
+  redirect: RscRenderRedirectStage,
+) => Promise<RscPreparedHtmlRender> {
+  return async (flight, redirect) => {
     const [ssrModule, streamMode] = await getSSRSetup(
       options.ctx,
       options.request,
@@ -147,9 +151,11 @@ export function createSsrHtmlStage<TEnv>(
           // A redirect a component threw is control flow the render answers
           // once this step returns (render-pipeline.ts createRscRenderPlan):
           // dev would otherwise rethrow the shell error to the host and answer
-          // its 500 instead.
+          // its 500 instead. Read the plan's own baseline, so an earlier
+          // pass's redirect is not mistaken for this render's.
           shellErrorAnsweredByRender: () =>
-            renderRedirectOf(renderErrors, 0) !== undefined,
+            redirect.answers &&
+            renderRedirectOf(renderErrors, redirect.errorsFrom) !== undefined,
           // Reported once, phase "rendering", only when the error started in
           // the SSR render: a copy (a loader's masked rebuild, a Flight error,
           // a payload failure) was reported with its original where it started,

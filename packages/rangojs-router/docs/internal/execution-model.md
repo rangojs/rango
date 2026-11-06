@@ -1163,7 +1163,7 @@ e2e describes in `e2e/ssr-shell-error.test.ts`,
 `e2e/ssr-shell-error-mini.test.ts` and
 `tests/cloudflare-basic/e2e/ssr-shell-error.test.ts` (dev + production).
 
-### A component that throws `redirect()` redirects, if the render says so in time
+### A component that throws `redirect()` redirects, when the render says so in time
 
 A `redirect()` thrown while React renders a component is not a handler result:
 `handleHandlerResult` never sees it, React reports it to the Flight `onError`
@@ -1172,48 +1172,85 @@ boundary and a client navigation rendered it.
 
 The render answers it instead (`render-pipeline.ts` `createRscRenderPlan`).
 The thrown `Response` is in the render's collected errors
-(`RequestContext._renderErrors`, pushed by `createFlightStage`'s `onError`), and
-the plan reads that list back before the status line commits:
+(`RequestContext._renderErrors`, pushed by `createFlightStage`'s `onError`),
+and the plan reads that list back at its own **commit point** — the last moment
+before the response's status is out of its hands:
 
-- a document: after the html step, which decodes the payload before it can
-  answer, so a redirect thrown in the shell is already collected — a
-  synchronous component's and an async one's alike. The html stage also tells
-  `renderHTML` that the render answers this shell error
+- a document (a page load, a `Prerender` route served live, a no-JS form post's
+  re-render): after the html step. That step's shell has to await a segment with
+  no `loading()` above it, so a component that suspends before throwing is
+  collected before the step returns; a synchronous throw is collected in the
+  shell's own pass, `loading()` or not. The step is told which baseline to read
+  (`RscRenderRedirectStage`, handed to `RscRenderOptions.html`) and tells
+  `renderHTML` that the render answers the shell error
   (`shellErrorAnsweredByRender`), because in dev `renderHTML` otherwise rethrows
   a shell error to the host and the host's 500 would be the answer;
-- a Flight response (a client navigation, an action's revalidation, an explicit
-  `Accept: text/x-component`): after the body's opening chunk, which the plan
-  holds back and replays (`peekOpeningChunk`) so nothing is lost. Only a caller
-  that passes `RscRenderOptions.redirect` pays that wait; every other Flight
-  response still goes out before its body is touched.
+- a Flight response the client parses as Flight (a client navigation, an
+  action's revalidation): after the body's opening chunk, which the plan holds
+  back and replays (`peekOpeningChunk`) so nothing is lost. Only a caller that
+  passes `RscRenderOptions.redirect` pays that wait; every other Flight
+  response still goes out before its body is touched. An explicit
+  `Accept: text/x-component` document (and the `__rsc` bootstrap) is not a
+  channel the client follows a redirect on, so it keeps the error row.
+
+The channels are chosen in one place per render call
+(`rsc-rendering.ts` `renderPreparedRscResponse`, `rsc/handler.ts`'s 404,
+`rsc/progressive-enhancement.ts`'s two document renders,
+`rsc/server-action.ts`'s revalidation): a render that passes `redirect`
+answers one, and only that render suppresses the report.
 
 A redirect a component throws is control flow, so `createFlightStage`'s
-`onError` records it and reports/prints nothing: it is not a rendering error.
+`onError` records it and reports nothing while the render answers redirects.
+Two consequences, both load-bearing:
+
+- the plan sets `abandoned` before it stops reading a render. Cancelling
+  React's stream is reported to `onError` as an `AbortError`; without the flag
+  every answered navigation redirect printed `Rendering error ... AbortError`
+  and called the app's `onError`;
+- a redirect the render did **not** answer is reported when the Flight body
+  ends (`reportUnansweredRenderRedirects`), because the boundary renders it:
+  the visitor gets an error page, so the app's `onError` hears about it. A
+  render that answers no redirects never suppressed the report in the first
+  place.
 
 The answer is converted for the channel (`helpers.ts` `answerRenderRedirect`):
 a document follows a real 3xx (its `redirect(url, { state })` state rides the
 one-shot cookie, `server/document-location-state.ts`), a Flight response gets
 what a handler's redirect already gets (`interceptRedirectForPartial`: 204 +
 `X-RSC-Redirect`, or the Flight payload when it carries state or is external).
-The open-redirect guard still runs once, on the final response
-(`request-stages.ts` `finalizeRequestResponse`).
+An action's revalidation render redirects the call the same way, which the
+client's action bridge already follows; the action's return value is superseded,
+as a handler-thrown redirect supersedes it. The open-redirect guard still runs
+once, on the final response (`request-stages.ts` `finalizeRequestResponse`).
 
-A redirect that arrives after the body started streaming keeps the error row it
-always had: the status line has committed. That is a route declaring
-`loading()` (the segment streams behind its fallback), a streamed handler (see
-"Limitation: a Response from an async handler under `loading()` is not a
-redirect"), and a PPR tail rendered after a shell HIT. On a client navigation it
-is also an **async** component whose redirect lands in a later Flight chunk: the
-opening chunk that the plan holds is complete only once the shell's own
-components have rendered, and an async component is a task of its own. Waiting
-for its row would mean buffering the whole render, which the streaming contract
-forbids.
+A redirect that arrives after the commit point keeps the error row it always
+had, because the status line has gone. That is:
+
+- a client navigation whose component suspends before throwing: the opening
+  chunk is complete once the shell's own components have rendered, and the
+  segment's own render is a later Flight row (`4:x` then `4:E`), so an async
+  component, or any component behind `loading()`, is reported too late;
+- a document whose shell is a `loading()` fallback and whose component suspends
+  before throwing: the shell resolves with the fallback, so nothing awaits the
+  segment;
+- a streamed handler (see "Limitation: a Response from an async handler under
+  `loading()` is not a redirect") and a PPR tail rendered after a shell HIT.
+
+Answering those would mean buffering the whole render before the status line
+commits, which the streaming contract forbids, or a client-side late-redirect
+channel in `browser/partial-update.ts` (hook-locked). The first is a streaming
+regression for every response that does not redirect; the second is a decision
+for the owner (rango-t417).
 
 Tests: `testing/__tests__/render-component-redirect.rsc-test.tsx` (userland,
-through `serveShellRequest`), `rsc/__tests__/render-pipeline.test.ts` (the
-plan's reading and replaying), and the `component redirect` e2e describes in
+through `serveShellRequest`: document, navigation, a form post, an action's
+revalidation, and the `text/x-component` channel that keeps the error row),
+`rsc/__tests__/render-pipeline.test.ts` (the plan's reading, replaying,
+abandoning and reporting), and the `component redirect` e2e describes in
 `e2e/component-redirect.test.ts` and
-`tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev + production).
+`tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev + production:
+document, async document, `loading()` document, navigation, `loading()`
+navigation).
 
 ### Server errors print once, where they originate
 

@@ -172,8 +172,10 @@ export interface SSRRenderOptions {
    * A redirect a component threw is control flow (rsc/render-pipeline.ts
    * createRscRenderPlan): in dev, rethrowing it to the host would answer the
    * host's 500 instead of the redirect, so it is answered as production does.
+   * The render's own decision: a render that answers no redirects leaves the
+   * shell error reaching the host as it always did.
    */
-  shellErrorAnsweredByRender?: (error: unknown) => boolean;
+  shellErrorAnsweredByRender?: () => boolean;
 }
 
 /**
@@ -1071,7 +1073,7 @@ function shellErrorReachesHost(
 ): boolean {
   if (process.env.NODE_ENV === "production") return false;
   if (isLoaderSignalError(error)) return false;
-  return options?.shellErrorAnsweredByRender?.(error) !== true;
+  return options?.shellErrorAnsweredByRender?.() !== true;
 }
 
 /**

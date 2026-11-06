@@ -480,6 +480,10 @@ function renderPeResponse<TEnv>(
       tracking: stageTracking,
     },
     {
+      // A PE post's re-render IS the visitor's document: a component that
+      // throws redirect() while it renders answers a real 3xx here, as it does
+      // on any other document (rsc-rendering.ts renderPreparedRscResponse).
+      redirect: (thrown: Response) => thrown,
       // metricsStore=undefined is safe: the handler already stashed the early
       // SSR setup promise, so this reuses it instead of starting setup again.
       html: createSsrHtmlStage({
@@ -624,6 +628,9 @@ function renderPeErrorResponse<TEnv>(
       tracking: stageTracking,
     },
     {
+      // The visitor's document, as the page render above: a component's
+      // redirect answers a real 3xx.
+      redirect: (thrown: Response) => thrown,
       // Reuse the early setup promise; the driver times only renderHTML.
       html: createSsrHtmlStage({
         ctx,

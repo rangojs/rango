@@ -8,10 +8,15 @@
  * channel can carry: a real 3xx for a document, the Flight redirect a
  * navigation already understands.
  *
- * A redirect that arrives AFTER the body started streaming (a route with
- * loading(), a streamed handler) keeps the error row it always had: the status
- * line has already committed, which streamed-handler-boundary.rsc-test.tsx
- * pins for the handler case.
+ * A redirect the render reports AFTER the body started streaming keeps the
+ * error row it always had: the status line has already committed by then. That
+ * is a component that suspends before throwing (an async one, or any behind
+ * loading()) on a client navigation, and the same shape on a document whose
+ * shell is a loading() fallback. It is the class
+ * streamed-handler-boundary.rsc-test.tsx pins for a handler's late Response.
+ *
+ * An explicit Accept: text/x-component document is not a channel the client
+ * follows a redirect on, so it keeps the error row and the render reports it.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -25,7 +30,11 @@ vi.mock(
   () => import("../vitest-stubs/plugin-rsc.js"),
 );
 
-import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
+import {
+  createActionForm,
+  resetShellTestState,
+  serveShellRequest,
+} from "../flight.entry.js";
 import { withLocationStateKey } from "../location-state-key.js";
 import {
   createLocationState,
@@ -84,6 +93,29 @@ const patterns = urls(({ path, layout, errorBoundary }) => [
   ),
 ]);
 
+// A page that redirects only once the action it posts has run: the PE re-render
+// and the JS action's revalidation both render it.
+let redirectAfterAction = false;
+
+async function setRedirect(_form: FormData): Promise<void> {
+  redirectAfterAction = true;
+}
+
+async function setRedirectAndAnswer(): Promise<string> {
+  redirectAfterAction = true;
+  return "answered";
+}
+
+function MaybeRedirect(): React.ReactNode {
+  if (redirectAfterAction) throw redirect("/target", 302);
+  return <p>form page</p>;
+}
+
+const patternsAction = urls(({ path }) => [
+  path("/form", () => <MaybeRedirect />, { name: "form" }),
+  path("/target", () => <p>arrived</p>, { name: "target" }),
+]);
+
 const patternsNoBoundary = urls(({ path }) => [
   path("/throw", () => <ThrowSync />, { name: "throw" }),
   path("/ok", async () => <p>fine</p>, { name: "ok" }),
@@ -104,7 +136,10 @@ function serve(
   });
 }
 
-beforeEach(() => resetShellTestState());
+beforeEach(() => {
+  redirectAfterAction = false;
+  resetShellTestState();
+});
 
 describe("a component that throws redirect()", () => {
   it("document: answers a 302 instead of the boundary page", async () => {
@@ -206,6 +241,55 @@ describe("a component that throws redirect()", () => {
     expect(res.response.status).toBe(200);
     // The boundary renders from the error row; only React knows the fallback.
     expect(res.flight).toMatch(/^\d+:E\{/m);
+  });
+
+  it("document: a form post whose re-render throws answers the 3xx", async () => {
+    redirectAfterAction = false;
+    const router = createRouter({ onError: vi.fn() }).routes(patternsAction);
+
+    const res = await serveShellRequest(router, "/form", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(setRedirect, { id: "actions/form#set" }),
+    });
+
+    expect(res.response.status).toBe(302);
+    expect(res.response.headers.get("location")).toBe("/target");
+  });
+
+  it("action: a revalidation render that throws answers the Flight redirect", async () => {
+    redirectAfterAction = false;
+    const router = createRouter({ onError: vi.fn() }).routes(patternsAction);
+
+    const res = await serveShellRequest(router, "/form", {
+      cacheStore: new MemorySegmentCacheStore(),
+      action: {
+        ref: setRedirectAndAnswer,
+        id: "actions/form#setAndAnswer",
+        segments: ["L0", "L0R0"],
+      },
+    });
+
+    // The page says where it goes: the call is answered with the redirect the
+    // client follows, as a handler-thrown one is (the answer is superseded).
+    expect(res.response.status).toBe(204);
+    expect(res.response.headers.get("x-rsc-redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
+  it("an explicit text/x-component document keeps the error row, reported", async () => {
+    const onError = vi.fn();
+    const router = createRouter({ onError }).routes(patterns);
+
+    const res = await serveShellRequest(router, "/throw", {
+      cacheStore: new MemorySegmentCacheStore(),
+      headers: { accept: "text/x-component" },
+    });
+
+    expect(res.response.status).toBe(200);
+    expect(res.response.headers.get("location")).toBeNull();
+    expect(res.flight).toMatch(/^\d+:E\{/m);
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 
   it("a healthy page renders unchanged", async () => {

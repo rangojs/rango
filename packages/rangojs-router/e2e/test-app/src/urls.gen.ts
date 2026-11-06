@@ -185,6 +185,7 @@ export const routes = {
   "componentRedirect.target": "/component-redirect/target",
   "componentRedirect.throw": "/component-redirect/throw",
   "componentRedirect.throwAsync": "/component-redirect/throw-async",
+  "componentRedirect.throwLoading": "/component-redirect/throw-loading",
   "constrainedOptionalInclude.index": "/coi/:locale(en|gb)?",
   "contentOwnership.errorJson": "/content-ownership/error-json",
   "contentOwnership.guarded": "/content-ownership/guarded",
