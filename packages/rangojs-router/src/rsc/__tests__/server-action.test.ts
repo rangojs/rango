@@ -9,6 +9,16 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 
+/** A Flight body with one opening chunk: the plan holds it (render-pipeline.ts). */
+function streamOf(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
 // D1: a JS-path action argument-decode failure (truncated/oversized/malformed
 // Flight body, or garbage posted to ?_rsc_action=...) must produce a
 // router-controlled response — a route error boundary when one matches, else an
@@ -237,7 +247,10 @@ describe("executeServerAction — action error boundary deferred under middlewar
         throw new Error("action boom");
       },
       callOnError: () => {},
-      renderToReadableStream: () => new ReadableStream(),
+      // One opening chunk: the plan holds it before it can answer a redirect
+      // (render-pipeline.ts createRscRenderPlan), and a stream that never
+      // enqueues would hold the response forever.
+      renderToReadableStream: () => streamOf("0:shell\n"),
       router: {
         id: "test",
         async matchError() {
@@ -286,7 +299,10 @@ describe("executeServerAction — action error boundary deferred under middlewar
     const ctx = {
       version: "v-test",
       callOnError: () => {},
-      renderToReadableStream: () => new ReadableStream(),
+      // One opening chunk: the plan holds it before it can answer a redirect
+      // (render-pipeline.ts createRscRenderPlan), and a stream that never
+      // enqueues would hold the response forever.
+      renderToReadableStream: () => streamOf("0:shell\n"),
       router: { id: "test" },
     } as any;
 

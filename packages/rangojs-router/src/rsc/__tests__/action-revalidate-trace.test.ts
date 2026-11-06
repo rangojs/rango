@@ -7,6 +7,16 @@ import {
 import { createMetricsStore } from "../../router/metrics.js";
 import { resolveTracing } from "../../router/tracing.js";
 
+/** A Flight body with one opening chunk: the plan holds it (render-pipeline.ts). */
+function streamOf(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
+
 // An action's revalidation render used to open NO rango.render span and recorded
 // render:total directly, so its revalidation loaders' rango.loader spans dangled
 // at the request root. revalidateAfterAction now wraps the render in
@@ -30,7 +40,10 @@ function makeCtx() {
   return {
     version: "v-test",
     callOnError: () => {},
-    renderToReadableStream: () => new ReadableStream(),
+    // One opening chunk: the plan holds it before it can answer a redirect
+    // (render-pipeline.ts createRscRenderPlan), and a stream that never
+    // enqueues would hold the response forever.
+    renderToReadableStream: () => streamOf("0:shell\n"),
     router: {
       id: "test",
       async matchPartial() {
