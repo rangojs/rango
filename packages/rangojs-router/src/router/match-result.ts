@@ -181,7 +181,14 @@ export function buildMatchResult<TEnv>(
     for (const s of allSegments) {
       // A deferred loader (prefetch: false) did not run in this response:
       // its pushes arrive with the fill, which lists it then.
-      if (s._handlerRan || (s.type === "loader" && !isPlaceholder(s))) {
+      if (
+        s._handlerRan ||
+        // A stored segment whose record values this response carries stands
+        // where a live handler's pushes stand: the browser replaces the run's
+        // old values for it too (cache-lookup.ts serveStoredSegments).
+        state.handleValuesSent?.has(s) ||
+        (s.type === "loader" && !isPlaceholder(s))
+      ) {
         resolvedIds.push(s.id);
       }
       // A deferred unit (prefetch: false) has a null component and is sent:
@@ -199,7 +206,9 @@ export function buildMatchResult<TEnv>(
   }
 
   // One pass over segmentsToRender: strip the internal _handlerRan marker and
-  // collect the diff ids (id is unchanged by the strip) together.
+  // collect the diff ids (id is unchanged by the strip) together. (A stored
+  // segment's "sent" is kept off the object, in state.handleValuesSent, so
+  // the copies MatchResult.slots hands to the client carry no marker.)
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {

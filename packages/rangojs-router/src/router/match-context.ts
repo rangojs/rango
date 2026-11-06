@@ -268,6 +268,15 @@ export interface MatchPipelineState {
   // Source of cache hit ("runtime" or "prerender")
   cacheSource?: "runtime" | "prerender";
 
+  // Stored segments whose handler values this response carries: a cache(),
+  // prerender or shell-replay HIT restored the record's values for them
+  // (cache-lookup.ts serveStoredSegments). match-result.ts lists them in
+  // resolvedIds as it lists a live walk's _handlerRan segments. By object, not
+  // by id: a segment the live walk resolved under a stored one's id carries no
+  // record values. Never written onto the segment itself: MatchResult.slots
+  // hands the same objects to the client.
+  handleValuesSent?: WeakSet<ResolvedSegment>;
+
   // Resolved segments from pipeline
   segments: ResolvedSegment[];
   matchedIds: string[];

@@ -612,15 +612,27 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // A sent segment's handler values ride this response, restored from the
+      // record or the prerender entry below, exactly where the MISS that wrote
+      // them pushed them: resolvedIds must list it so the browser replaces the
+      // run's old values (handles/pushed-by.ts mergePartialHandleData), as it
+      // does for a live walk's handler. Without it a HIT kept the values of the
+      // page it left while its MISS cleared them.
+      state.handleValuesSent ??= new WeakSet();
+      state.handleValuesSent.add(segment);
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
   // A partial cache() HIT replays handler values for the segments it sends
   // only, decided above after the live entries: a kept segment keeps the
   // client's, as on a live walk (handle-snapshot.ts restoreHandles;
-  // decodeStoredEntry for a bake).
+  // decodeStoredEntry for a bake). Those are the segments recorded above, so
+  // the record's values and resolvedIds name one set.
   if (sentIds) await restoreHandles!(sentIds);
 
   // The stored handler values stand where the MISS's handlers pushed them:

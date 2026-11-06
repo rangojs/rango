@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` or `Prerender()` HIT replaces the handle values of every segment it re-sends
+
+**Before.** A partial response's `resolvedIds` names the segments whose handle
+values it carries, and the browser replaces the values of those runs while it
+keeps the rest (`mergePartialHandleData`). A stored response listed its
+loaders only: the live walk that wrote the record marked the segments whose
+handler re-ran, and the record does not carry that mark. So the same
+navigation cleared a breadcrumb on the MISS and brought it back on the HIT —
+the HIT kept the values of the page it left.
+
+**Now.** A `cache()` record, a `Prerender()` bake and the PPR shell replay
+list in `resolvedIds` every segment they send, the same segments they replay
+the record's handle values for. A HIT reports the list of the MISS that wrote
+the record, and a handler that re-runs and pushes nothing clears its
+breadcrumb on the HIT as it does on the MISS. Nothing else on the wire
+changes, and the browser is untouched.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

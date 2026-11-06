@@ -1260,10 +1260,19 @@ which run made each one.
    `collectHandleData` reads a handle by its `$$id`, so no collect sees it.
    `resolveDeferredHandleValues` keeps it aligned when it drops a value;
    `serveShellRequest` strips it from what it returns.
-3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
-   A partial match resolves only the loaders it runs, so each loader segment
-   it returns is in `resolvedIds` next to the handlers that ran. That also
-   makes the field's documented "superset of `diff`" true.
+3. **`resolvedIds` names the runs whose values the response carries**
+   (`router/match-result.ts`). A partial match resolves only the loaders it
+   runs, so each loader segment it returns is in `resolvedIds` next to the
+   handlers that ran. A stored response (a `cache()` record, a `Prerender()`
+   bake, the PPR shell replay) lists every segment it sends, because it
+   replays that segment's recorded handler values: `serveStoredSegments`
+   (`match-middleware/cache-lookup.ts`) records the set on the pipeline state
+   (`handleValuesSent`), and the marker stays off the segment object, which
+   `MatchResult.slots` hands to the client. A record does not carry the live
+   walk's `_handlerRan`, so without that set a HIT listed its loaders only and
+   a segment that re-ran and pushed nothing kept the values of the page it
+   left — a breadcrumb the MISS cleared came back on the HIT. That also makes
+   the field's documented "superset of `diff`" true.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment
