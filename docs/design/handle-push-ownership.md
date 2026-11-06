@@ -1263,7 +1263,16 @@ which run made each one.
 3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
    A partial match resolves only the loaders it runs, so each loader segment
    it returns is in `resolvedIds` next to the handlers that ran. That also
-   makes the field's documented "superset of `diff`" true.
+   makes the field's documented "superset of `diff`" true. A partial answer
+   served from storage lists the segments it sends, the ids its MISS listed:
+   the record's values are replayed for those segments only
+   (`cache-lookup.ts` `serveStoredSegments` marks a sent stored segment as
+   run), so the browser replaces that run's values as it does for a handler
+   that ran. A segment the HIT keeps is not listed, and an intercept's slot
+   is never marked: the live walk builds it without the marker
+   (`intercept-resolution.ts` `resolveInterceptEntry`), so marking it on a
+   HIT would report an id no MISS reports and would reach the client in
+   `slots`.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

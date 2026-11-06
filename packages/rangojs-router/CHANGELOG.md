@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` HIT replaces the handle values of the segments it re-sends, as its MISS did
+
+**Before.** A partial response served from a `cache()` record re-rendered a
+segment (a layout whose `revalidate()` rule answered yes, a segment the client
+did not hold) and sent the record's handle values for it, but left it out of
+`resolvedIds`. The browser replaces a run's values only when the response
+delivers them or names the run, so the page kept the values from before the
+navigation: a breadcrumb a handler clears on a MISS came back on the HIT.
+
+**Now.** A stored segment a response sends is listed in `resolvedIds`, the
+same ids the MISS that wrote the record listed, so the browser replaces that
+run's values on the HIT too. A segment the HIT keeps is still not listed, and
+a `Prerender()` entry, an on-demand overlay entry and a `ppr` navigation
+replay list the same ids as a `cache()` record of the same page. Nothing else
+on the wire changes and no client code changed.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

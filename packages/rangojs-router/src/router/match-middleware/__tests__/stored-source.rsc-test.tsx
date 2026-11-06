@@ -114,6 +114,8 @@ function makeRouter(source: Source, boundary = false) {
 interface Served {
   segments: unknown[];
   handles: unknown;
+  /** The ids whose handle values the response replaces (match-result.ts). */
+  resolvedIds: string[] | undefined;
   /** An action's answer, as the browser reads it. */
   answer?: unknown;
 }
@@ -129,7 +131,10 @@ async function served(
 ): Promise<Served> {
   expect(result.response.status).toBe(status);
   const payload = await deserializeResult<{
-    metadata: { segments: Array<Record<string, unknown>> };
+    metadata: {
+      segments: Array<Record<string, unknown>>;
+      resolvedIds?: string[];
+    };
   }>(result.flight!);
   const segments = await Promise.all(
     payload.metadata.segments.map(async (segment) => {
@@ -147,6 +152,7 @@ async function served(
   return {
     segments,
     handles: (await result.readHandles())?.hydration,
+    resolvedIds: payload.metadata.resolvedIds,
     ...(answer && { answer }),
   };
 }
