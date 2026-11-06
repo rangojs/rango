@@ -110,10 +110,10 @@ export function warnOnStreamedResponse(
 ): void {
   if (process.env.NODE_ENV === "production") return;
   // A Response can surface either as a rejection (handleHandlerResult rethrows a
-  // resolved Response) or as a resolved value (the raw parallel-slot handler is
-  // not run through handleHandlerResult). Check both so every streamed path is
-  // covered. Each handler is an independent observer; it does not consume the
-  // rejection for the trackHandler/observeStreamedHandler chains.
+  // resolved Response) or as a resolved value, if a streamed site hands this a
+  // raw handler promise. Check both so every streamed path is covered. Each
+  // handler is an independent observer; it does not consume the rejection for
+  // the trackHandler/observeStreamedHandler chains.
   const check = (value: unknown) => {
     if (value instanceof Response) {
       console.warn(

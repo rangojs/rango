@@ -268,11 +268,13 @@ path("/account", AccountPage, { name: "account" }, () => [
 ])
 ```
 
-The one exception is a slot that declares `loading()` with an `async` handler:
-that handler streams, so its `Response` is rendered into the stream instead of
-becoming an HTTP redirect — the same limit a route with `loading()` has (dev
-logs a warning). Issue that redirect from `middleware` or from a synchronous
-slot handler return.
+The one exception is a slot that declares `loading()` with an `async` handler
+on a document request or a client navigation: that handler streams, so its
+`Response` is rendered into the stream instead of becoming an HTTP redirect —
+the same limit a route with `loading()` has (dev logs a warning). Issue that
+redirect from `middleware`, or return it synchronously. An action's
+revalidation awaits the handler (as it awaits a route handler's), so a
+returned `redirect()` answers the client-navigation redirect there.
 
 ## Composable Slots via `handler.use`
 

@@ -447,12 +447,9 @@ describe("a parallel slot handler's redirect", () => {
             slotAnswer = answer;
           },
         );
-        const viaRoute = await runAction(
-          makeRouteRouter("page", true),
-          () => {
-            routeAnswer = answer;
-          },
-        );
+        const viaRoute = await runAction(makeRouteRouter("page", true), () => {
+          routeAnswer = answer;
+        });
 
         expectFlightRedirect(viaRoute);
         expectFlightRedirect(viaSlot);

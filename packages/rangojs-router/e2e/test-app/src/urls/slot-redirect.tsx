@@ -61,13 +61,16 @@ const SlotRedirectTrigger: Handler<{ slug: string }> = async (ctx) => {
   );
 };
 
-export const slotRedirectPatterns = urls(({ path, parallel }) => [
+export const slotRedirectPatterns = urls(({ path, loading, parallel }) => [
   path(
     "/",
     () => (
       <div data-testid="sr-index">
         <Link to="/slot-redirect/page" data-testid="sr-link">
           go to the slot page
+        </Link>
+        <Link to="/slot-redirect/loading" data-testid="sr-loading-link">
+          go to the loading slot page
         </Link>
       </div>
     ),
@@ -84,6 +87,24 @@ export const slotRedirectPatterns = urls(({ path, parallel }) => [
     ),
     { name: "page" },
     () => [parallel({ "@aside": () => redirect(TARGET, 302) })],
+  ),
+  // The slot declares loading(): its handler streams, but a synchronously
+  // returned redirect() still short-circuits before the stream takes over, as
+  // a route handler's does on a loading() route.
+  path(
+    "/loading",
+    () => (
+      <div data-testid="sr-loading-page">
+        <p>page body</p>
+        <ParallelOutlet name="@aside" />
+      </div>
+    ),
+    { name: "loading" },
+    () => [
+      parallel({ "@aside": () => redirect(TARGET, 302) }, () => [
+        loading(<p data-testid="sr-loading">slot loading</p>),
+      ]),
+    ],
   ),
   path("/stored/:slug", StoredSlotDef, { name: "stored" }, () => [
     parallel({

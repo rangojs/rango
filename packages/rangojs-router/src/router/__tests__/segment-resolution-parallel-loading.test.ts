@@ -206,10 +206,12 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
-    expect(result.segments[0]?.component).toBe(deferred.promise);
+    // Streamed, not awaited: handleHandlerResult hands on a promise of the
+    // handler's value, as a route handler's loading() branch does.
+    expect(result.segments[0]?.component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(result.segments[0]?.component).resolves.toBe("done");
   });
 
   it("does not await orphan parallel handler promise in revalidation path when loading is set", async () => {
@@ -264,10 +266,10 @@ describe("segment-resolution parallel loading", () => {
     const parallelSegment = result.segments.find((s) => s.type === "parallel");
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(parallelSegment).toBeDefined();
-    expect(parallelSegment?.component).toBe(deferred.promise);
+    expect(parallelSegment?.component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(parallelSegment?.component).resolves.toBe("done");
   });
 
   it("awaits parallel handler when loading is explicitly false", async () => {

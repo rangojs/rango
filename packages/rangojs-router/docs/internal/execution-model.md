@@ -1018,7 +1018,13 @@ during RSC serialization, where it is rendered into the stream via React's
 error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
 return on a `loading()` route still throws synchronously and redirects correctly;
 only the async/Promise sub-branch is affected. Parallel slots with `loading()`
-share this behavior.
+share this behavior: `resolveParallelSlotComponent` runs the slot's result
+through `handleHandlerResult` and streams only when no action awaits it, exactly
+as `resolveRouteComponent` does.
+
+An action's revalidation is the exception on both: the handler is awaited there
+so the revalidation payload is built after it settles, and a returned `Response`
+short-circuits to the client-navigation redirect instead of streaming.
 
 To redirect from a `loading()` route, issue the redirect from middleware, a
 loader, or a synchronous handler return. In development, `warnOnStreamedResponse`

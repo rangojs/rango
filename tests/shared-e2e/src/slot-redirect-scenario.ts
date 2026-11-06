@@ -15,7 +15,9 @@ import { waitForShellHydration } from "./shell-request.js";
 // and a refresh failed with a Flight serialization error.
 //
 // Fixture (both apps): the `/slot-redirect` include. `/page` declares a
-// route-scoped `@aside` slot whose handler returns the redirect, `/stored/:slug`
+// route-scoped `@aside` slot whose handler returns the redirect, `/loading`
+// declares the same slot behind a `loading()` boundary (a synchronous return
+// still short-circuits there, as a route handler's does), `/stored/:slug`
 // is a plain `Prerender(..., { onDemand })` route whose slot redirects only for
 // a slug the trigger armed, `/trigger/:slug` runs the refresh
 // (`?redirect=1` / `?redirect=0` arm and disarm the slot) and answers it as
@@ -59,6 +61,30 @@ export function defineSlotRedirectTests(fixture: SlotRedirectFixture): void {
     await waitForShellHydration(page);
 
     await byTestId(page, "sr-link").click();
+    await expect(byTestId(page, "sr-target")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${TARGET}$`));
+  });
+
+  test("hard navigation to a route whose loading() slot redirects lands on the target", async ({
+    page,
+  }) => {
+    using _ = guardHydrationErrors(page);
+
+    await page.goto(fixture.url("/slot-redirect/loading"));
+
+    await expect(byTestId(page, "sr-target")).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`${TARGET}$`));
+  });
+
+  test("soft navigation (Link click) to a route whose loading() slot redirects lands on the target", async ({
+    page,
+  }) => {
+    using _ = guardHydrationErrors(page);
+
+    await page.goto(fixture.url("/slot-redirect"));
+    await waitForShellHydration(page);
+
+    await byTestId(page, "sr-loading-link").click();
     await expect(byTestId(page, "sr-target")).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`${TARGET}$`));
   });

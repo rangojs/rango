@@ -402,6 +402,7 @@ export const routes = {
   shopCategory: "/shop/:categoryId",
   shopProduct: "/shop/:productId.html",
   "slotRedirect.index": "/slot-redirect",
+  "slotRedirect.loading": "/slot-redirect/loading",
   "slotRedirect.page": "/slot-redirect/page",
   "slotRedirect.stored": "/slot-redirect/stored/:slug",
   "slotRedirect.target": "/slot-redirect/target",

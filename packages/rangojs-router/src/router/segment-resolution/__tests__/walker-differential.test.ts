@@ -303,7 +303,14 @@ type Projected = Record<string, unknown>;
  * function by its name.
  */
 async function settled(value: unknown): Promise<unknown> {
-  if (value instanceof Promise) return { promise: await settled(await value) };
+  // A rejection is data too: a streamed handler's Response rejects (a route
+  // handler's loading() branch has always rejected it), and both walks must
+  // project the same thing.
+  if (value instanceof Promise) {
+    return {
+      promise: await value.then(settled, (rejected) => settled({ rejected })),
+    };
+  }
   if (isValidElement(value)) {
     const type = value.type as string | { name?: string };
     return {
@@ -538,7 +545,8 @@ function walkRevalidating(
 
 /** The text a rendered value shows: its strings, elements unwrapped. */
 async function textOf(node: unknown): Promise<string> {
-  if (node instanceof Promise) return textOf(await node);
+  // A streamed handler's Response rejects; it renders no text.
+  if (node instanceof Promise) return node.then(textOf, () => "");
   if (typeof node === "string" || typeof node === "number") return `${node}`;
   if (Array.isArray(node)) {
     return (await Promise.all(node.map(textOf))).join("");
