@@ -19,6 +19,14 @@ import { readWarmMark, type PrerenderWarmRecord } from "../warm-request.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { SegmentCacheStore } from "../../cache/types.js";
 
+/** What `redirect()` hands back to a handler that returns it. */
+function redirectResponse(): Response {
+  return new Response(null, {
+    status: 302,
+    headers: { Location: "/login", "X-RSC-Redirect": "soft" },
+  });
+}
+
 // A minimal producer output for a route named "products.detail" with { id }.
 function output(overrides: Partial<ProducerOutput> = {}): ProducerOutput {
   return {
@@ -235,6 +243,49 @@ describe("createPrerenderTrigger", () => {
     expect(store.size).toBe(0);
   });
 
+  it("maps a redirect throw to skipped-redirect and keeps the store untouched", async () => {
+    const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(async () =>
+      output(),
+    );
+    const { trigger, store } = harness({ runProducer });
+    await trigger("/products/42");
+    const key = {
+      routerId: "r1",
+      version: "b1",
+      routeName: "products.detail",
+      paramHash: hashParams({ id: "42" }),
+    };
+    const page = store.peek(key);
+
+    // A redirect can depend on the request, so a refresh's render answering
+    // one says nothing about whether the page is gone: the entry stored before
+    // is left exactly as it was, and the result is its own status.
+    runProducer.mockRejectedValueOnce(redirectResponse());
+    const result = await trigger("/products/42");
+    expect(result).toEqual({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: "/products/42",
+      routeName: "products.detail",
+    });
+    expect(store.peek(key)).toBe(page);
+  });
+
+  it("a Response that is not a redirect stays render-failed", async () => {
+    const refused = new Response("no", { status: 403 });
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw refused;
+      },
+    });
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    if (result.ok) throw new Error("expected fail");
+    expect(result.error).toBe(refused);
+    expect(store.size).toBe(0);
+  });
+
   it("maps a passthrough sentinel to skipped-passthrough", async () => {
     const { trigger, store } = harness({
       runProducer: async () => output({ passthrough: true }),
@@ -405,6 +456,22 @@ describe("createPrerenderTrigger", () => {
       await expect(
         trigger("/products/42", { throwOnError: true }),
       ).rejects.toBeInstanceOf(PrerenderError);
+    });
+
+    it("throws a PrerenderError on a skipped-redirect too", async () => {
+      const { trigger } = harness({
+        runProducer: async () => {
+          throw redirectResponse();
+        },
+      });
+      const error = await trigger("/products/42", {
+        throwOnError: true,
+      }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(PrerenderError);
+      expect((error as PrerenderError).result).toMatchObject({
+        status: "skipped-redirect",
+      });
+      expect((error as PrerenderError).message).toContain("skipped-redirect");
     });
 
     it("does not throw on success", async () => {

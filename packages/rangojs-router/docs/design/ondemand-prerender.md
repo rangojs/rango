@@ -395,6 +395,7 @@ type PrerenderResult =
         | "no-match"
         | "no-store"
         | "skipped-personalized"
+        | "skipped-redirect" // the render answered redirect(): nothing stored
         | "skipped-unsupported-target"
         | "skipped-passthrough"
         | "skipped-not-on-demand" // prerender.remove() only
@@ -927,6 +928,80 @@ support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
+## A Redirecting Refresh
+
+A refresh whose render answers `redirect()` stores nothing: not the redirect,
+not a "removed" marker. The result is
+`{ ok: false, path: "on-demand", status: "skipped-redirect", target, routeName }`
+and the page stored before keeps serving, to a document request and to a client
+navigation, until a refresh that renders a page replaces it. `markStale(tags)`
+followed by an `onlyIfStale` refresh renders it again, as for any stored page.
+
+Why nothing: a redirect can depend on the request. An auth or session check
+that sends an anonymous refresh to `/login` does not show that the page is
+gone, and a page removed for it would be a live page taken down by a visitor
+check. This is the difference from `notFound()` (#1060, "Removing A Page"):
+that call says the item no longer exists, so it removes the page; a redirect
+says "not for this request", so the stored page's own schedule decides when it
+is rechecked — its `ttl` and `tags`, a later refresh, a sweep.
+
+The status is its own, not `render-failed`: a sweep that runs
+`prerender(target, { onlyIfStale: true })` over a list reports a failure per
+pass for a page that is fine, and `render-failed` is what a crash (an upstream
+500, a broken component) reports. It is also not a stored outcome: nothing was
+written, so `rendered`, `already-fresh` and `removed` do not describe it.
+
+Every handler that can redirect arrives at the same place. The producer
+(`matchForPrerender`) lets the Response out — a returned one is thrown by
+`handleHandlerResult`, a thrown one is rethrown by `resolveWithErrorBoundary`
+— and `renderOnDemand`'s catch maps it (`isThrownRedirect`,
+`src/response-utils.ts`: a 3xx Response carrying a `Location`, which is what
+`redirect()` returns). That one catch covers the route handler, a layout or
+parallel-slot handler, a `Passthrough` route's build handler, and a handler
+streamed behind `loading()` — the streamed case reaches it through the Flight
+error the serializer reports. A build handler's type returns a `ReactNode`, so
+a redirect is thrown there (`throw redirect("/login")`); a returned one needs a
+cast.
+
+### A redirect next to a failure
+
+A render can redirect and fail at once: one component answers a redirect,
+another throws `upstream 500`. Flight collects both, and the order two sibling
+components report in must not decide the outcome — the same lesson `notFound()`
+learned in #1060. So on an on-demand run `firstFlightError`
+(`prerender-match.ts`) ranks failure > redirect > `notFound()`: any error that
+is neither wins, and the result is `render-failed` with that error. A redirect
+that came beside a `notFound()` stores nothing rather than removing the page,
+for the reason above.
+
+The limit is Flight's, and it is the same one `notFound()` has: a streamed
+handler's rejection aborts serialization, and the first rejection the serializer
+sees is the one reported, even if a sibling's promise would also have failed.
+Where the router can see both, the failure wins.
+
+### What does not change
+
+A build-time render has no request to answer a redirect for, and this is
+unchanged: the Response reaches the build's policy (`resolvePrerenderError`,
+`src/vite/utils/prerender-utils.ts`), so `prerender.onError` decides. The
+default `"fail"` logs `FAIL` and fails the build; `"warn"` logs `WARN`,
+skips that URL (it is not pre-rendered) and notifies `onError` with the
+Response stringified, since a Response has no `.message`. Only the on-demand
+producer turns a redirect into a result.
+
+A warm of a route that is not on-demand is a request rather than a render, and
+a redirect there stays `render-failed` with `responseStatus: 302`
+(`prerender-every-route.md`): an anonymous visitor is not served a cached page
+where a redirect was answered.
+
+The userland cases are in
+`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx` (each handler
+kind, the store left byte for byte as it was, a document request and a client
+navigation, the later render, `markStale` + `onlyIfStale`, and a redirect next
+to a failure); the trigger's own status and precedence in
+`prerender/__tests__/create-prerender-trigger.test.ts`; and the build-time
+behaviour in `router/__tests__/prerender-render-error.test.tsx`.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build
@@ -1054,7 +1129,9 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
-  +-- render failed --> render-failed (also when a notFound() happened too)
+  +-- redirect --> skipped-redirect (nothing written: the page stays)
+  +-- render failed --> render-failed (also when a notFound() or a
+  |                     redirect happened too)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,
@@ -1276,6 +1353,15 @@ behavior. Coverage should include:
   component route, and the overlay is read in the RSC match pipeline.
 - E2E for server actions on plain on-demand routes: an action on an
   overlay-only page, and `router.prerender()` inside the action.
+- A redirecting refresh: each handler kind that can redirect, the store left
+  untouched, the page still serving to a document and a client navigation, the
+  later render, `markStale` + `onlyIfStale`, and a redirect beside a failure
+  (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`); the status
+  and its precedence in the producer and the trigger
+  (`create-prerender-trigger.test.ts`); the build-time behaviour under
+  `prerender.onError` (`prerender-render-error.test.tsx`); and in a browser,
+  dev and production in both apps (`expectRedirectingRefreshKeepsStoredPage` in
+  `tests/shared-e2e`).
 - Removing a page: both kinds of marker and their validation, including the
   frozen pre-marker validator (`memory-prerender-store.test.ts`); the writers,
   the recheck, the race with a refresh and every refusal

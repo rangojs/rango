@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isThrownRedirect } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -393,15 +394,22 @@ export async function matchForPrerender<TEnv = any>(
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
         };
-        // The collected error to rethrow. On an on-demand refresh a failure
-        // goes ahead of a notFound(): a render that hit a missing item AND a
-        // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // The collected error to rethrow, ranked on an on-demand refresh as
+        // failure > redirect > notFound(). A render that hit a missing item AND
+        // a failing data source must keep the page (render-failed), not remove
+        // it because the notFound() happened to be reported first; a render
+        // that redirected AND failed some other way must keep it too
+        // (render-failed), not report skipped-redirect.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !isThrownRedirect(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          const redirect = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e),
+          );
+          return flightErrors[redirect === -1 ? 0 : redirect];
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,

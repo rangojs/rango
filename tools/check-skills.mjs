@@ -51,6 +51,7 @@ const URL_EXAMPLES = new Set([
   "/i", // intercept, prerender: intercept storage-key suffix convention
   "/app", // app-structure: example section mount
   "/settings", // app-structure: example section mount
+  "/login", // prerender: example redirect target of an auth check
 ]);
 
 const skillDirs = fs

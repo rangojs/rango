@@ -3852,7 +3852,9 @@ export async function expectRemovedPassthroughPageRunsLiveHandler(
  * - `triggerUrl(slug)`: GET with repeated `?target=<path>` answers
  *   `prerender.many(targets)` as a JSON array in target order;
  *   `?fail=1` makes the plain handler throw (not `notFound()`) for `slug` on
- *   its next refresh and `?fail=0` restores it.
+ *   its next refresh and `?fail=0` restores it;
+ *   `?redirect=1` makes it answer `redirect()` ("skipped-redirect") and
+ *   `?redirect=0` restores it.
  * - `stampTestId` renders a value captured once per render, and
  *   `onDemandTestId` reads `true` for a page the on-demand producer rendered.
  * - `passthrough.triggerUrl(slug)` also takes `?decline=1` / `?decline=0`: the
@@ -3955,6 +3957,60 @@ export async function expectFailedRefreshKeepsStoredPage(
     await removeTrigger(page, trigger, "?fail=0");
   }
 
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
+ * A refresh whose render answers `redirect()` is `skipped-redirect` and
+ * stores nothing: the page stored before keeps serving, to a document request
+ * and to a client navigation, until a refresh that renders replaces it. A
+ * redirect can depend on the request (a session, an auth check), so it says
+ * nothing about whether the page is gone.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const skipped = await removeTrigger(page, trigger);
+    expect(skipped, JSON.stringify(skipped)).toEqual({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: fixture.path(slug),
+      routeName: expect.any(String),
+    });
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+    // A client navigation: the link interceptor's partial request, answered by
+    // the stored page rather than by a render (which would redirect).
+    await page.goto(new URL(fixture.pageUrl("/")).origin + "/");
+    await waitForShellHydration(page);
+    const partial = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === fixture.path(slug) &&
+        url.searchParams.has("_rsc_partial")
+      );
+    });
+    await routerNavigate(page, fixture.pageUrl(slug));
+    await (await partial).finished();
+    await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+    await expect(byTestId(page, fixture.onDemandTestId)).toHaveText("true");
+    expect(await byTestId(page, fixture.stampTestId).textContent()).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  // The render answers a page again: the refresh replaces the entry.
   await refreshPage(page, trigger);
   expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
 }

@@ -26,6 +26,9 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A `redirect()` in the render writes nothing: a redirect can depend on the
+ *   request, so it does not show the page is gone. The page stored before
+ *   keeps serving; the result is `skipped-redirect`.
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -44,6 +47,7 @@ import { createCollectingExecutionContext } from "../cache/background-task.js";
 import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
+import { isThrownRedirect } from "../response-utils.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
@@ -558,6 +562,26 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           ok: false,
           path: "on-demand",
           status: "skipped-personalized",
+          target: display,
+          routeName: match.routeName,
+        };
+      }
+      // A render that answers redirect() stores nothing, neither the redirect
+      // nor a "removed" marker: the answer can depend on the request (a
+      // session, an auth check), so a redirect during a refresh's render does
+      // not show the page is gone. The page stored before keeps serving and
+      // revalidates on its own schedule (its ttl and tags, a later refresh, a
+      // sweep). The producer reports a redirect that came beside another
+      // failure as that failure (prerender-match.ts, firstFlightError), so a
+      // render that redirected AND failed some other way stays render-failed
+      // here. Every handler kind that can redirect arrives through this one
+      // throw: the route handler, a layout or parallel-slot handler, a
+      // Passthrough build handler, and a handler streamed behind loading().
+      if (isThrownRedirect(err)) {
+        return {
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
           target: display,
           routeName: match.routeName,
         };

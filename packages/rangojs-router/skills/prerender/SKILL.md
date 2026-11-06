@@ -823,11 +823,12 @@ skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
 page"), `no-match`, `no-store`, `skipped-personalized`,
-`skipped-unsupported-target` (a target with `?search` or `#hash`),
-`skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
-the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler. A `markStale()` that lands while a refresh renders marks the entry that
-refresh stores.
+`skipped-redirect` (the render answered `redirect()`, see "A render that
+redirects"), `skipped-unsupported-target` (a target with `?search` or
+`#hash`), `skipped-passthrough`, `render-failed` and `store-failed`. Every
+failure keeps the previous entry, except `skipped-passthrough`, which hands the
+page to the live handler. A `markStale()` that lands while a refresh renders
+marks the entry that refresh stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -835,6 +836,39 @@ both: after the store write, the runner sends one warm request so the route's
 loaders' own `cache()` and the document cache are rebuilt on the new entry.
 That request needs a shared app cache store and an origin; without them the
 refresh is complete as it is, and the result has no `caches`.
+
+### A render that redirects
+
+A refresh whose render answers `redirect()` stores nothing: not the redirect,
+not a "removed" marker. It returns `{ ok: false, status: "skipped-redirect" }`
+and the page stored before keeps serving, to a document request and to a client
+navigation, until a refresh that renders a page replaces it (or
+`markStale(tags)` plus an `onlyIfStale` sweep renders it again).
+
+Why nothing: a redirect can depend on the request. An auth or session check
+that sends an anonymous refresh to `/login` says nothing about whether the page
+still exists, so removing the stored page for it would take a live page down.
+It is reported apart from `render-failed` (a crash, which also writes nothing)
+so a sweep can tell "this page answered a redirect" from "this page is broken";
+`render-failed` on every pass for a page that is fine is what the status
+replaces.
+
+It holds for every handler that can redirect: the route handler, a layout or
+parallel-slot handler, a `Passthrough` route's build handler, and a handler
+streamed behind `loading()`. Throw the redirect from a build handler
+(`throw redirect("/login")`): its type returns a `ReactNode`, so a `return`
+needs a cast. A render that redirects and also fails some other way is
+`render-failed`: a failure Flight reports beside the redirect wins over it, as
+a failure wins over a `notFound()` (see "Remove a page").
+
+A build-time render has no request to answer a redirect for, and nothing
+changes there: the Response reaches `prerender.onError`, which by default
+(`"fail"`) logs `FAIL` and fails the build, and with `"warn"` logs `WARN`,
+skips the URL and notifies `onError` with the Response stringified.
+
+A warm of a route that is not on-demand is a request, not a render: middleware
+that redirects it stays `render-failed` with `responseStatus: 302` (see "The
+request is anonymous").
 
 ### Remove a page
 

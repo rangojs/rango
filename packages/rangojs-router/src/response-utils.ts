@@ -62,6 +62,17 @@ export function isRedirectResponse(response: Response): boolean {
 }
 
 /**
+ * True when a value a render threw is a redirect: `redirect()` returned from
+ * or thrown by a handler or a component, or any 3xx Response carrying a
+ * `Location` the router would send as one. Narrowing, because the caller holds
+ * whatever the render threw (a Response, an Error, a Skip sentinel) and
+ * Flight's collected error rows too.
+ */
+export function isThrownRedirect(value: unknown): value is Response {
+  return value instanceof Response && isRedirectResponse(value);
+}
+
+/**
  * Set a header on a response the router hands to the host, skipping a
  * WebSocket upgrade (its headers are not to be touched) and swallowing the
  * TypeError of immutable headers (a passed-through platform Response):

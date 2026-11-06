@@ -44,6 +44,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 
 import { Prerender } from "../../prerender.js";
 import { Skip } from "../../errors.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { createRouter } from "../../router.js";
 import { urls } from "../../urls/urls-function.js";
 
@@ -100,6 +101,22 @@ describe("matchForPrerender surfaces prerender render errors (#587)", () => {
     // than fail the build, so the Skip must survive as a Skip instance.
     expect(err).toBeInstanceOf(Skip);
     expect((err as Skip).message).toMatch(/draft/);
+    expect(renderSpy).not.toHaveBeenCalled();
+  });
+
+  test("a build-time render that redirects rejects with the Response, as it always has", async () => {
+    // A build render has no request to answer a redirect for, and the redirect
+    // is not an outcome on that path: the Response reaches the build's policy
+    // (resolvePrerenderError, vite/utils/prerender-utils.ts) as the thrown
+    // value, so prerender.onError decides — the default "fail" logs FAIL and
+    // fails the build, "warn" logs WARN and skips the URL, notifying onError
+    // with the Response stringified (a Response has no `.message`). Only the
+    // on-demand producer maps it to a result (skipped-redirect).
+    const router = routerWith("/moved", "moved", () => redirect("/login"));
+
+    await expect(router.matchForPrerender("/moved", {})).rejects.toBeInstanceOf(
+      Response,
+    );
     expect(renderSpy).not.toHaveBeenCalled();
   });
 

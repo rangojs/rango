@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -13,6 +13,11 @@ export const guidePlainGoneKey = (slug: string): string =>
 /** KV key of a slug whose data source the e2e took down: a refresh throws. */
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** KV key of a slug whose render answers a redirect: a refresh is
+ *  `skipped-redirect` and stores nothing. */
+export const guidePlainRedirectKey = (slug: string): string =>
+  `gp-redirect:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -37,6 +42,14 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
     ) {
       throw new Error("upstream 500");
+    }
+    // A redirect is request-dependent: the refresh writes nothing and the page
+    // stored before keeps serving (skipped-redirect).
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainRedirectKey(ctx.params.slug)))
+    ) {
+      throw redirect("/login");
     }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.

@@ -314,6 +314,7 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainRedirectKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -514,6 +515,13 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  const redirectOp = ctx.url.searchParams.get("redirect");
+  if (redirectOp) {
+    const redirectKey = guidePlainRedirectKey(ctx.params.slug);
+    if (redirectOp === "1") await ctx.env.PRERENDER_KV.put(redirectKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(redirectKey);
+    return Response.json({ redirect: redirectOp === "1" });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {
