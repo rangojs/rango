@@ -187,7 +187,7 @@ function assertDeclaredIn(entry: EntryData | null, items: AllUseItems[]): void {
             ? `${item.type}() is created inside the ${declared?.type}() marker listed after it [${item.name}]: ` +
                 "a definition registers under the entry that is current when it is created, so list that marker first"
             : `${item.type}() declared outside the ${current?.type ?? "urls"}() it is nested in [${item.name}]: ` +
-                "a definition registers under the entry that is current when it is created, so create it in the entry this list nests it under, or return it from a factory called there",
+                "a definition registers under the entry that is current when it is created, so create it in the entry this list nests it under",
         );
       }
     }

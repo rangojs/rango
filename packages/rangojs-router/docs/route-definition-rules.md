@@ -44,11 +44,11 @@ marker called for its effect and not returned still opens its region:
 marker of this list opened count, so a definition created in a nested
 `layout()`/`use()` callback and returned here is rejected too.
 
-A factory is the way to reuse a subtree:
-`const payouts = () => [layout(L, () => [path("/p", P)])]` is valid when it is
-called inside the callback whose result holds its items, and each call creates
-its own items. Calling it in another callback — at the top of `urls()` and
-spread into a `layout()`'s children, say — throws the same way a constant does.
+A factory called inside the callback whose result holds its items is valid, and
+each call creates its own items:
+`const payouts = () => [layout(L, () => [path("/p", P)])]`. Calling it in
+another callback — at the top of `urls()` and spread into a `layout()`'s
+children, say — throws the same way a constant does.
 
 ### path()
 

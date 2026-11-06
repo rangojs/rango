@@ -32,10 +32,10 @@ opens:
   is the reverse, and throws
   `route() is created inside the cache() marker listed after it`.
 
-The message points at the factory form for a subtree that is reused: a
-factory (`const payouts = () => [layout(L, () => [path("/p", P)])]`) is valid
-when it is called inside the callback whose result holds its items, and calling
-it in another callback throws like a constant does.
+A factory called inside the callback whose result holds its items keeps working
+and creates its own items per call (`const payouts = () => [layout(L, () =>
+[path("/p", P)])]`); calling it in another callback throws like a constant
+does.
 
 An app whose route tree had one of these shapes now fails to build; before
 this change it booted and served the wrong tree. The inline form is unchanged,
