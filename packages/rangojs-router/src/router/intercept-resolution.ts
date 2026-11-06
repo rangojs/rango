@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -393,6 +394,12 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The handler and layout get a ctx carrying the slot's segment: the
+  // request's one ctx carries the route's (_pushSegmentId), so a component
+  // either of them hands the ctx to would otherwise file its push under the
+  // route (handlePushSegment, router/loader-resolution.ts). The scope below
+  // covers the handler's own pushes; this covers the render after it.
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +407,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +432,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

@@ -4,18 +4,22 @@
 
 ### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
 
-**Before.** An async server component a layout's (or a parallel slot's)
-handler handed its `ctx` to that pushed a handle after an `await` was rejected
-— by design, the `.defer()` path is the mitigation — and the dev
-`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
-the request's shared segment id when it was called, and by then the route
-handler had run and moved it on.
+**Before.** An async server component a route's, a layout's or a parallel
+slot's handler handed its `ctx` to that pushed a handle after an `await` was
+rejected — by design, the `.defer()` path is the mitigation — and the dev
+`LateHandlePushError` named the wrong segment: `ctx.use(Handle)` read the
+request's shared segment id when it was called, and by then the walker had
+moved it on. A layout's or a slot's push named the child route's segment; a
+route's named the slot or orphan layout resolved after it. A component that
+held only `use` (`const { use } = ctx`) or a copy (`{ ...ctx }`) read the
+shared id too, whichever handler handed it the ctx.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment whose ctx the push went through, the
+route's, the layout's or the slot's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+Each handler's ctx carries its own segment, and its own `use` keeps it when a
+component calls it detached from the ctx. The push is still rejected, at the
+same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

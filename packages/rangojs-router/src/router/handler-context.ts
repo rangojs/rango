@@ -207,8 +207,8 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a route's, layout's or parallel slot's handler gets: a prototype
+ * child of the request's one handler ctx that carries its own segment.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
@@ -218,6 +218,13 @@ function createPrerenderPassthroughFn(
  * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
+ *
+ * The child owns `use` for that receiver: the shared implementation resolves
+ * the segment off `this`, so a call that lost the receiver — `const { use } =
+ * ctx`, `use` passed as a callback, `{ ...ctx }` — would file under the pin
+ * the walker moved on. The wrapper supplies the child as the receiver, and
+ * reads the base's `use` at call time because loader-cache.ts swaps it for
+ * its override interceptor after the child exists.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -229,14 +236,21 @@ export function withSegmentScope<C>(
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
+  const base = ctx as any;
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use: any;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  scoped.use = function (this: unknown, ...args: unknown[]) {
+    // `this` when a caller supplies one (a copy, a nested scope), else the
+    // child: either way a detached call still files under this segment.
+    return Reflect.apply(base.use, this ?? scoped, args);
+  };
   if (scope !== undefined) {
-    scoped.reverse = scopeReverse((ctx as any).reverse, scope);
+    scoped.reverse = scopeReverse(base.reverse, scope);
     scoped._reverseScope = scope;
   }
   return scoped;

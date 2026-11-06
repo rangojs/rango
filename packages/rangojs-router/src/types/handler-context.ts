@@ -461,9 +461,18 @@ export type InternalHandlerContext<
   /**
    * The segment a layout's or parallel slot's ctx belongs to
    * (withSegmentScope): a handle push made through it files under that
-   * segment, before or after an `await`.
+   * segment, before or after an `await`, however the ctx was called
+   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy).
    */
   _handleSegmentId?: string;
+  /**
+   * The matched route's segment on the request's one handler ctx
+   * (`resolveEntryHandler`): a handle push made through that ctx files under
+   * the route, before or after an `await`. Only `handlePushSegment` reads it;
+   * `segmentPinOf` keeps the live pin for a loader's owner and a `"use
+   * cache"` caller segment.
+   */
+  _pushSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */

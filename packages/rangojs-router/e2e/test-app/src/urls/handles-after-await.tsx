@@ -197,49 +197,55 @@ const HaaDeferPage: Handler = (ctx) => {
   );
 };
 
-export const handlesAfterAwaitPatterns = urls(({ layout, path, loader }) => [
-  layout(HaaShell, () => [
-    path("/handles-after-await", HaaIndex, { name: "handlesAfterAwait" }),
-    layout(HaaAwaitLayout, () => [
-      path("/handles-after-await/handler", HaaHandlerPage, {
-        name: "handlesAfterAwaitHandler",
-      }),
-      path("/handles-after-await/plain", HaaPlainPage, {
-        name: "handlesAfterAwaitPlain",
-      }),
-    ]),
-    layout(HaaLoaderLayout, () => [
-      path(
-        "/handles-after-await/loader",
-        () => <HaaLoaderView />,
-        { name: "handlesAfterAwaitLoader" },
-        () => [loader(HaaAwaitLoader)],
-      ),
-    ]),
-    path(
-      "/handles-after-await/component",
-      (ctx) => <HaaAwaitPush ctx={ctx} label="Component" />,
-      { name: "handlesAfterAwaitComponent" },
-    ),
-    layout(
-      (ctx) => (
-        <div data-testid="haa-component-layout">
-          <HaaAwaitPush ctx={ctx} label="Component Layout" />
-          <Outlet />
-        </div>
-      ),
-      () => [
+export const handlesAfterAwaitPatterns = urls(
+  ({ layout, path, loader, parallel }) => [
+    layout(HaaShell, () => [
+      path("/handles-after-await", HaaIndex, { name: "handlesAfterAwait" }),
+      layout(HaaAwaitLayout, () => [
+        path("/handles-after-await/handler", HaaHandlerPage, {
+          name: "handlesAfterAwaitHandler",
+        }),
+        path("/handles-after-await/plain", HaaPlainPage, {
+          name: "handlesAfterAwaitPlain",
+        }),
+      ]),
+      layout(HaaLoaderLayout, () => [
         path(
-          "/handles-after-await/component-layout",
-          () => <p data-testid="haa-component-layout-page">Page</p>,
-          { name: "handlesAfterAwaitComponentLayout" },
+          "/handles-after-await/loader",
+          () => <HaaLoaderView />,
+          { name: "handlesAfterAwaitLoader" },
+          () => [loader(HaaAwaitLoader)],
         ),
-      ],
-    ),
-    layout(HaaDeferLayout, () => [
-      path("/handles-after-await/defer", HaaDeferPage, {
-        name: "handlesAfterAwaitDefer",
-      }),
+      ]),
+      // The slot resolves after the route handler, which is where the shared
+      // pin stops being the route's: a component the handler hands its ctx to
+      // must still name the route (handles-after-await.test.ts).
+      path(
+        "/handles-after-await/component",
+        (ctx) => <HaaAwaitPush ctx={ctx} label="Component" />,
+        { name: "handlesAfterAwaitComponent" },
+        () => [parallel({ "@side": () => <aside>side</aside> })],
+      ),
+      layout(
+        (ctx) => (
+          <div data-testid="haa-component-layout">
+            <HaaAwaitPush ctx={ctx} label="Component Layout" />
+            <Outlet />
+          </div>
+        ),
+        () => [
+          path(
+            "/handles-after-await/component-layout",
+            () => <p data-testid="haa-component-layout-page">Page</p>,
+            { name: "handlesAfterAwaitComponentLayout" },
+          ),
+        ],
+      ),
+      layout(HaaDeferLayout, () => [
+        path("/handles-after-await/defer", HaaDeferPage, {
+          name: "handlesAfterAwaitDefer",
+        }),
+      ]),
     ]),
-  ]),
-]);
+  ],
+);

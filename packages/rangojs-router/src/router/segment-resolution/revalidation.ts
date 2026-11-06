@@ -1266,6 +1266,13 @@ export async function resolveEntryHandler<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
       if (entry.type === "route") {
+        // The route handler's ctx is the request's one handler ctx, so it
+        // carries the route's segment beside the pin: the route resolves
+        // before its orphan layouts and its parallels, and a component it
+        // hands the ctx to pushes after the walker pinned one of those
+        // (handlePushSegment, router/loader-resolution.ts).
+        (context as InternalHandlerContext<any, TEnv>)._pushSegmentId =
+          entry.shortCode;
         component = await resolveRouteComponent(pass, entry);
       } else {
         const doneHandler = track(`handler:${entry.id}`, 2);

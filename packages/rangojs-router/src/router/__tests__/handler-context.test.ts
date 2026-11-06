@@ -622,6 +622,43 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: a detached `use` calls the base's current `use` with the child", () => {
+      const seen: Array<{ receiver: any; item: string }> = [];
+      const ctx = {
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const record = function (this: unknown, item: string) {
+        seen.push({ receiver: this, item });
+        return item;
+      };
+      (ctx as any).use = record;
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+      // Swapped after the child exists, as loader-cache.ts swaps it: the
+      // wrapper must not have captured the old one.
+      const swapped = function (this: unknown, item: string) {
+        seen.push({ receiver: this, item: `swapped:${item}` });
+        return item;
+      };
+      (ctx as any).use = swapped;
+
+      // A destructured `use` is called with no receiver at all.
+      const { use } = scoped as unknown as { use: (item: string) => string };
+      use("handle");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.item).toBe("swapped:handle");
+      // The receiver carries the segment, which is what ctx.use files by.
+      expect(seen[0]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+
+      // A copy carries the wrapper and the segment together.
+      const copy = { ...scoped } as unknown as {
+        use: (item: string) => string;
+      };
+      copy.use("copied");
+      expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+      // The shared ctx keeps the record it had.
+      expect((ctx as any).use).toBe(swapped);
+    });
   });
 
   describe("optional params", () => {
