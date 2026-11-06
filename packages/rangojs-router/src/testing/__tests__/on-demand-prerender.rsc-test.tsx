@@ -20,10 +20,12 @@ vi.mock(
 );
 
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
+import { withLocationStateKey } from "../location-state-key.js";
 import { createMemoryPrerenderStore, setBuildVersions } from "../index.js";
 import {
   cookies,
   createLoader,
+  createLocationState,
   createRouter,
   notFound,
   Prerender,
@@ -115,6 +117,21 @@ const ComponentMovedDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+const Flash = withLocationStateKey(
+  createLocationState<{ text: string }>(),
+  "Flash",
+);
+
+const StateRedirectDef = Prerender<{ slug: string }>(
+  async () => [],
+  async () => {
+    throw redirect("/article/new-a", {
+      state: [Flash({ text: "This page moved" })],
+    });
+  },
+  { onDemand: true },
+);
+
 const OffHostDef = Prerender<{ slug: string }>(
   async () => [],
   async () => {
@@ -159,6 +176,9 @@ function makeRouter(
       path("/moved/:slug", MovedDef, { name: "moved" }),
       path("/component-moved/:slug", ComponentMovedDef, {
         name: "componentMoved",
+      }),
+      path("/state-redirect/:slug", StateRedirectDef, {
+        name: "stateRedirect",
       }),
       path("/off-host/:slug", OffHostDef, { name: "offHost" }),
       path("/mixed/:slug", MixedDef, { name: "mixed" }),
@@ -515,6 +535,35 @@ describe("on-demand prerender: router.prerender() then serve", () => {
       expect(served.response.headers.get("Location")).toBe(
         "/component-moved/a",
       );
+    });
+
+    it("carries redirect(url, { state }) the way a live redirect does: the one-shot cookie on a document request, the Flight payload on a client navigation", async () => {
+      const router = makeRouter({ store });
+      expect(
+        await router.prerender({ env: {} })("/state-redirect/a"),
+      ).toMatchObject({ ok: true, status: "redirected" });
+
+      const document = await serveShellRequest(router, "/state-redirect/a");
+      expect(document.response.status).toBe(302);
+      expect(document.response.headers.get("Location")).toBe("/article/new-a");
+      // The state is per visitor on a document request: a one-shot cookie the
+      // target's own document request reads, and a private response.
+      expect(document.response.headers.get("Cache-Control")).toBe(
+        "private, no-store",
+      );
+      const cookie = document.response.headers.get("Set-Cookie") ?? "";
+      expect(cookie).toContain("-ls=");
+      expect(decodeURIComponent(cookie)).toContain(
+        '"p":"/article/new-a","s":{"__rsc_ls_Flash":{"text":"This page moved"}}',
+      );
+
+      // A client navigation carries it in the redirect payload instead.
+      const partial = await serveShellRequest(router, "/state-redirect/a", {
+        partial: { from: "/hot/a" },
+      });
+      expect(partial.body).toContain('"locationState"');
+      expect(partial.body).toContain('"text":"This page moved"');
+      expect(partial.body).toContain('"redirect"');
     });
 
     it("a redirect outranks a notFound() collected in the same render, and a real failure outranks both", async () => {

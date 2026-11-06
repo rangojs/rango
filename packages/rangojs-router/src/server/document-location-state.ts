@@ -36,7 +36,7 @@ import {
   type LocationStateEntry,
 } from "../browser/react/location-state-shared.js";
 import { getRawCookieValue } from "../browser/cookie-name.js";
-import { isExternalRedirect } from "../redirect-origin.js";
+import { getRedirectState, isExternalRedirect } from "../redirect-origin.js";
 import { isWebSocketUpgradeResponse } from "../response-utils.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
 import { requestHeaders } from "./request-headers.js";
@@ -224,7 +224,12 @@ export function carryLocationStateAcrossRedirect(
   stateCookieName: string,
 ): Response {
   const entries = reqCtx._locationState;
-  if (!entries || entries.length === 0) return response;
+  // A redirect rebuilt from a stored one (a refresh's `redirect(url, { state })`,
+  // prerender/writable-store.ts toRedirectResponse) carries its state on the
+  // Response instead: the request that answers it never ran the handler that
+  // set it.
+  const carried = entries?.length ? undefined : getRedirectState(response);
+  if ((!entries || entries.length === 0) && !carried) return response;
   if (!isDocumentRequest(request, url)) return response;
   if (response.status < 300 || response.status >= 400) return response;
   if (isExternalRedirect(response)) return response;
@@ -240,7 +245,7 @@ export function carryLocationStateAcrossRedirect(
 
   let state: Record<string, unknown>;
   try {
-    state = resolveLocationStateEntries(entries);
+    state = carried ?? resolveLocationStateEntries(entries!);
   } catch (error) {
     // A lazy entry's getter threw: the redirect still leaves, without state.
     console.warn(

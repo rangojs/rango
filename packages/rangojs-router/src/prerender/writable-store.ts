@@ -14,6 +14,8 @@ import type { PrerenderEntry } from "./store.js";
 import { paramsEqual } from "../router/params-util.js";
 import { isRedirectResponse } from "../response-utils.js";
 import {
+  attachRedirectState,
+  getRedirectState,
   isExternalRedirect,
   markExternalRedirect,
 } from "../redirect-origin.js";
@@ -114,6 +116,17 @@ export interface StoredRedirect {
   location: string;
   external?: boolean;
   soft?: boolean;
+  /**
+   * `redirect(url, { state })`: the resolved location-state record, re-attached
+   * to the rebuilt Response so it reaches the target the way a live redirect's
+   * does (the one-shot cookie on a document request, the Flight redirect's
+   * `locationState` on a client navigation). It is the render's state, shared by
+   * every visitor, which is all a requestless render can produce: state that
+   * depends on the visitor reads a cookie first, and the personalization guard
+   * turns that into `skipped-personalized`. Plain JSON only, as for a document
+   * redirect (`server/document-location-state.ts`).
+   */
+  state?: Record<string, unknown>;
 }
 
 /**
@@ -275,6 +288,7 @@ export function composeStoredRedirect(
  */
 export function toStoredRedirect(response: Response): StoredRedirect | null {
   if (!isRedirectResponse(response)) return null;
+  const state = getRedirectState(response);
   // isRedirectResponse guarantees a Location.
   return {
     status: response.status,
@@ -283,6 +297,7 @@ export function toStoredRedirect(response: Response): StoredRedirect | null {
     ...(response.headers.get("X-RSC-Redirect") === "soft"
       ? { soft: true }
       : {}),
+    ...(state && Object.keys(state).length > 0 ? { state } : {}),
   };
 }
 
@@ -302,6 +317,10 @@ export function toRedirectResponse(redirect: StoredRedirect): Response {
     },
   });
   if (redirect.external === true) markExternalRedirect(response);
+  // The carriers (rsc/helpers.ts interceptRedirectForPartial for a partial
+  // request, server/document-location-state.ts for a document one) read the
+  // state off the Response when the request has none of its own.
+  if (redirect.state) attachRedirectState(response, redirect.state);
   return response;
 }
 
@@ -358,7 +377,8 @@ function isValidStoredRedirect(value: object): boolean {
     redirect.status >= 300 &&
     redirect.status < 400 &&
     typeof redirect.location === "string" &&
-    redirect.location !== ""
+    redirect.location !== "" &&
+    (redirect.state == null || typeof redirect.state === "object")
   );
 }
 

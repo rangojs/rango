@@ -1010,10 +1010,10 @@ await router.prerender({ env, ctx })("/products/old-slug");
 - **A `301` is permanent for the browser too.** A browser that followed the
   stored 301 keeps it, and a later refresh that turns the URL back into a page
   cannot uncache it. Use `302`/`307` for a move that may be undone.
-- **`redirect(url, { state })` is not carried.** The stored redirect holds the
-  status and target only: the producer renders requestlessly, so it has no
-  location state to store, and the target page renders without it. Redirect
-  without state from a prerender handler, or keep that URL live.
+- **`redirect(url, { state })` is carried.** The state is the render's, so
+  every visitor of the moved URL gets the same one; it cannot be per visitor
+  (reading `cookies()` or `headers()` first makes the refresh
+  `skipped-personalized`). Keep it plain JSON, as for any document redirect.
 
 ### What is served
 

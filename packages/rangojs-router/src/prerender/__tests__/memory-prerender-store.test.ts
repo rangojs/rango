@@ -15,6 +15,10 @@ import {
 } from "../writable-store.js";
 import type { PrerenderEntry } from "../store.js";
 import { paramsEqual } from "../../router/params-util.js";
+import {
+  attachRedirectState,
+  getRedirectState,
+} from "../../redirect-origin.js";
 
 const entry: PrerenderEntry = {
   segments: [{ id: "s0", encoded: "x" } as any],
@@ -247,6 +251,38 @@ describe("a stored redirect", () => {
     );
     expect(hard).toEqual({ status: 302, location: "/elsewhere" });
     expect(toRedirectResponse(hard!).headers.get("X-RSC-Redirect")).toBeNull();
+  });
+
+  it("carries redirect(url, { state }) across the store and back onto the rebuilt Response", () => {
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "/moved" },
+    });
+    attachRedirectState(response, { __rsc_ls_flash: { text: "moved" } });
+
+    const redirect = toStoredRedirect(response)!;
+    expect(redirect.state).toEqual({ __rsc_ls_flash: { text: "moved" } });
+
+    // Through a JSON store and back: the state survives, and the rebuilt
+    // Response carries it for the carriers that read it.
+    const stored = composeStoredRedirect(
+      k,
+      JSON.parse(JSON.stringify(redirect)),
+      options,
+      1000,
+    );
+    const rebuilt = toRedirectResponse(
+      (stored as { redirect: NonNullable<typeof stored.redirect> }).redirect,
+    );
+    expect(getRedirectState(rebuilt)).toEqual({
+      __rsc_ls_flash: { text: "moved" },
+    });
+    // A redirect with no state stays without one.
+    expect(
+      toStoredRedirect(
+        new Response(null, { status: 302, headers: { Location: "/x" } }),
+      ),
+    ).not.toHaveProperty("state");
   });
 
   it("is null for anything that is not a redirect: the trigger keeps it render-failed", () => {

@@ -19,7 +19,10 @@ and the stored page no longer serves. The entry carries the route's `ttl` and
 `tags` like a page, so it goes stale and schedules `onRevalidate`,
 `markStale()` reaches it, and `onlyIfStale` reports `redirected` while it is
 fresh; a later refresh that renders a page (or hits `notFound()`) replaces it.
-`redirect(url, { external: true })` keeps its off-host opt-in. A stored `301`
+`redirect(url, { external: true })` keeps its off-host opt-in, and
+`redirect(url, { state })` carries its state to the target (the one-shot cookie
+on a document request, the Flight redirect's `locationState` on a client
+navigation) — the render's state, the same for every visitor. A stored `301`
 is a real permanent redirect: a browser that followed it keeps it, so use
 `302`/`307` for a move that may be undone.
 

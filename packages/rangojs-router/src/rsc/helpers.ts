@@ -20,6 +20,7 @@ import {
 } from "../response-utils.js";
 import {
   EXTERNAL_REDIRECT_MARKER,
+  getRedirectState,
   isExternalRedirect,
   markExternalRedirect,
   resolveSoftRedirectUrl,
@@ -312,8 +313,17 @@ export function interceptRedirectForPartial(
   // a partial fetch. The client re-validates the scheme; see partial-update.ts.
   const external = isExternalRedirect(response);
   const locationState = getLocationState();
+  // A redirect rebuilt from a stored one (a refresh's `redirect(url, { state })`,
+  // prerender/writable-store.ts toRedirectResponse) carries its state on the
+  // Response: this request never ran the handler that set it.
+  const carried =
+    locationState && locationState.length > 0
+      ? undefined
+      : getRedirectState(response);
   let intercepted: Response;
-  if (locationState) {
+  if (carried) {
+    intercepted = createRedirectFlightResponse(redirectUrl, carried, external);
+  } else if (locationState) {
     intercepted = createRedirectFlightResponse(
       redirectUrl,
       resolveLocationStateEntries(locationState),

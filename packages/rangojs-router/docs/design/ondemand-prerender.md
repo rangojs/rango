@@ -996,17 +996,20 @@ permanent one. A stored `301` is a real 301: the browser caches it, and a later
 refresh that turns the URL back into a page cannot uncache it. Use a `302`/`307`
 for a move that may be undone.
 
-One part of a live redirect is not carried: `redirect(url, { state })`
-(`Flash` messages and the like). The state reaches a document request through
-`RequestContext._locationState` (`server/document-location-state.ts`), and the
-producer's requestless context sets it to nothing, so there is no state to
-store: the redirect is stored without it and the target page renders with none.
-Carrying it is a separate decision, not a small fix: a stored state would be
-the same for every visitor of the moved URL, which is right for "this page
-moved" and wrong for anything per visitor, so it needs the owner's call before
-it is stored. Until then, a prerendered redirect that needs state should
-redirect without it and have the target explain, or the app should keep that
-URL live.
+`redirect(url, { state })` is carried, because a stored redirect is a
+replay of the live one and the target page would otherwise render with no
+state. The state is the render's: it cannot depend on the visitor (a read of
+`cookies()` or `headers()` throws `skipped-personalized` before `redirect()`
+runs), so the same state for every visitor is what a requestless render can
+produce, exactly like the rest of the payload. `redirect()` brands the thrown
+Response with the resolved record (`attachRedirectState`, `redirect-origin.ts`),
+`toStoredRedirect` stores it as `redirect.state`, and `toRedirectResponse`
+re-brands the rebuilt Response. The two carriers read the brand when the
+request has no state of its own: `carryLocationStateAcrossRedirect` writes the
+one-shot cookie on a document request (and marks the 3xx `private, no-store`),
+and `interceptRedirectForPartial` puts it in the Flight redirect's
+`locationState` on a client navigation. Keep it plain JSON: a cookie holds
+text, as for a live document redirect.
 
 ## Build-time Durable Seeding
 
