@@ -168,18 +168,22 @@ function makeRouter(options: {
   routeHandler?: (
     ctx: HandlerCtx,
   ) => React.ReactNode | Response | Promise<React.ReactNode | Response>;
+  /** Give the layout an errorBoundary(): where the slot's handler error renders. */
+  errorBoundary?: boolean;
 }) {
   const {
     interceptHandler = handler,
     declareLoading = true,
     onRoute = false,
     routeHandler = handler,
+    errorBoundary = false,
   } = options;
   return createRouter({}).routes(
-    urls(({ path, layout, intercept, loading }) => [
+    urls(({ path, layout, intercept, loading, errorBoundary: boundary }) => [
       layout(
         () => <main>shell</main>,
         () => [
+          ...(errorBoundary ? [boundary(() => <p>failed</p>)] : []),
           path("/page", () => <p>page</p>, { name: "page" }),
           onRoute
             ? path(
@@ -242,6 +246,34 @@ describe("an intercept handler that redirects from an action's revalidation", ()
     );
     expect(acted.response.status).toBe(204);
     expect(acted.response.headers.get("X-RSC-Redirect")).toBe(REDIRECT_HEADER);
+  });
+
+  it("answers a handler error with the status a route handler under loading() does", async () => {
+    const failing = async (ctx: HandlerCtx): Promise<React.ReactNode> => {
+      if (isActionRequest(ctx)) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        throw new Error("intercept handler failed");
+      }
+      return <dialog>modal</dialog>;
+    };
+    const acted = await openThenAct(
+      makeRouter({ interceptHandler: failing, errorBoundary: true }),
+    );
+    // Awaited before the status is committed, as the route handler's is: the
+    // slot renders the boundary and the answer is a 500, not a 200 whose
+    // streamed rejection arrives after the flush.
+    expect(acted.response.status).toBe(500);
+
+    const routeRouter = makeRouter({
+      onRoute: true,
+      routeHandler: failing,
+      errorBoundary: true,
+    });
+    const routeActed = await openThenAct(
+      routeRouter,
+      await pageSegments(routeRouter),
+    );
+    expect(routeActed.response.status).toBe(acted.response.status);
   });
 
   it("renders the slot from the awaited handler when the action does not redirect", async () => {

@@ -12,8 +12,10 @@ answered `204` + `X-RSC-Redirect`.
 
 **Now.** An action's revalidation awaits the intercept's handler, so a thrown
 `Response` short-circuits the action as a route handler's does: `204` +
-`X-RSC-Redirect`, and the browser navigates. A navigation still streams the
-handler under the slot's `loading()` fallback.
+`X-RSC-Redirect`, and the browser navigates. A handler error or `notFound()`
+reaches the same boundary with the action's own status (`500` / `404`) instead
+of a `200` whose streamed rejection arrived after the flush. A navigation
+still streams the handler under the slot's `loading()` fallback.
 
 ## 0.35.0 (2026-11-04)
 
