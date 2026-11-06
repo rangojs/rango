@@ -1274,6 +1274,24 @@ which run made each one.
    the first value they replace; the other runs' values stay where they are.
    A snapshot without pushedBy records (every value the handler's) merges
    exactly as before.
+5. **A HIT lists the segments it replays** (`router/match-result.ts`,
+   `router/match-middleware/cache-lookup.ts`). A run the response did not
+   make can still have its values in the response: a `cache()` record or a
+   bake holds the handler pushes of the request that wrote it, and
+   `serveStoredSegments` replays those of every stored segment it sends. So
+   a sent stored segment belongs in `resolvedIds` next to the handlers that
+   ran, or the client kept the source page's pushes for it — and the
+   record's copy, which is nothing when the writing request's handler pushed
+   nothing, never replaced them. The repro: a chain layout whose
+   `revalidate()` says true on every navigation; a navigation whose re-run
+   pushes nothing clears the layout's crumb, and the next navigation, served
+   from the record, brought it back. `serveStoredSegments` collects the ids of
+   the stored segments it sends (`MatchPipelineState.storedSentIds`) and
+   `match-result.ts` lists them, so nothing on the wire changes but
+   `resolvedIds`. The ids are derived on serve, not stored: which stored
+   segments a request sends hangs on its own `revalidate()` rules and params
+   (`cachedSegmentSends` for a record, `storedEntrySends` for a bake), never
+   on the request that wrote the entry.
 
 ### Covered later: a page shown from the history cache
 
@@ -1353,7 +1371,15 @@ pins that a shared segment's crumb comes from the page on screen.
   the fifth (a held loader's rerun replaces its pushes in place) is the
   control.
 - `src/router/__tests__/match-result.test.ts`, "partial match resolvedIds
-  names the loader segments that ran".
+  names the loader segments that ran", and "partial match resolvedIds names
+  the stored segments a HIT sends and strips the marker".
+- `src/testing/__tests__/cached-hit-resolved-ids.rsc-test.tsx`: a `cache()`
+  HIT reports what the MISS that wrote the record reported, and a
+  `Prerender()` HIT's re-sent route clears the crumb the source page pushed,
+  merged as the browser merges it (`mergePartialHandleData`). Both fail
+  without the marker. `serve-shell-request-replay-revalidate.rsc-test.tsx`
+  compares a PPR replay HIT's payload with the live BYPASS's, `resolvedIds`
+  included: eleven of its cases fail without it.
 - `src/server/__tests__/handle-store.test.ts`, "HandleStore pushedBy records
   (the run of each push)"; `src/handles/__tests__/deferred-resolution.test.ts`,
   "keeps the pushedBy record aligned with the values it drops".

@@ -109,10 +109,12 @@ const present = (value: unknown): boolean =>
 function payloadOf(result: ServeShellRequestResult) {
   const row = result.flight?.split("\n").find((line) => line.startsWith("0:"));
   expect(row).toBeDefined();
-  const { segments, matched, diff } = JSON.parse(row!.slice(2)).metadata as {
+  const { segments, matched, diff, resolvedIds } = JSON.parse(row!.slice(2))
+    .metadata as {
     segments: Array<Record<string, unknown>>;
     matched: string[];
     diff: string[];
+    resolvedIds: string[];
   };
   return {
     segments: segments.map((segment) => ({
@@ -136,6 +138,9 @@ function payloadOf(result: ServeShellRequestResult) {
     })),
     matched,
     diff,
+    // Which segments' handle values the response replaces: a replay serves
+    // its segments from the capture, and must list what the live path listed.
+    resolvedIds,
   };
 }
 

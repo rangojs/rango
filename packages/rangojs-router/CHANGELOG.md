@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `cache()` record, `Prerender()` bake or PPR replay HIT replaces a replayed segment's handle values, as the MISS that wrote it did
+
+**Before.** A partial response's `resolvedIds` told the browser which segments'
+`useHandle` values to replace. A MISS listed every segment whose handler ran, a
+stored segment had no such record, and a HIT served those segments without
+listing them: the browser kept the values the page on screen pushed for them,
+and the entry's copy (nothing, when the writing request's handler pushed
+nothing) never replaced them. A breadcrumb layout whose `revalidate()` re-runs
+on every navigation cleared its crumb on a MISS and brought it back on the next
+navigation, served from the record the MISS wrote. The same happened on a
+`Prerender()` HIT whose route is re-sent for other params, and on a PPR
+navigation replay.
+
+**Now.** A HIT lists every segment it serves from a stored entry in
+`resolvedIds`, as the MISS that wrote the entry listed the handlers it ran: the
+browser replaces those segments' handle values with the entry's, and clears
+them when the entry holds none. Which segments a request sends still hangs on
+its own `revalidate()` rules and params, so a segment the navigation keeps keeps
+the page's values. Only `resolvedIds` on the wire changes; no stored record
+changes shape.
+
+| Partial navigation served from | handle values of a replayed segment, before | now                   |
+| ------------------------------ | ------------------------------------------- | --------------------- |
+| a MISS                         | the run's                                   | the run's             |
+| a `cache()` record HIT         | the page on screen's                        | the record's          |
+| a `Prerender()` HIT            | the page on screen's                        | the bake's            |
+| a PPR navigation replay HIT    | the page on screen's                        | the replayed record's |
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

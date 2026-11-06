@@ -171,17 +171,25 @@ export function buildMatchResult<TEnv>(
     allIds = [...new Set(allIds)];
 
     // One pass over allSegments: keep renderable segments and collect the
-    // ids that ran (resolvedIds) together. A partial match resolves only the
-    // loaders it runs (revalidation.ts), so each loader segment here ran:
-    // the browser replaces that loader's handle pushes, and keeps those of a
-    // loader it skipped (handles/pushed-by.ts).
+    // ids whose handle values this response replaces (resolvedIds) together.
+    // A partial match resolves only the loaders it runs (revalidation.ts), so
+    // each loader segment here ran: the browser replaces that loader's handle
+    // pushes, and keeps those of a loader it skipped (handles/pushed-by.ts).
     const clientIdSet = new Set(ctx.clientSegmentIds);
+    // The stored segments this response serves (a `cache()` record or a bake):
+    // the entry's handler values stand in for a run, so the client replaces
+    // its copy of them as it does for a re-run.
+    const storedSent = state.storedSentIds;
     segmentsToRender = [];
     resolvedIds = [];
     for (const s of allSegments) {
       // A deferred loader (prefetch: false) did not run in this response:
       // its pushes arrive with the fill, which lists it then.
-      if (s._handlerRan || (s.type === "loader" && !isPlaceholder(s))) {
+      if (
+        s._handlerRan ||
+        storedSent?.has(s.id) ||
+        (s.type === "loader" && !isPlaceholder(s))
+      ) {
         resolvedIds.push(s.id);
       }
       // A deferred unit (prefetch: false) has a null component and is sent:

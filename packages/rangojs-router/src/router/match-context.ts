@@ -257,6 +257,18 @@ export interface MatchPipelineState {
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
 
+  /**
+   * Ids of the stored segments a partial response serves (a `cache()` record
+   * or a bake, set by serveStoredSegments in
+   * router/match-middleware/cache-lookup.ts). The entry replays the handler
+   * values it holds for each of them, so match-result.ts lists them in
+   * `MatchResult.resolvedIds` and the client replaces its copy, as it does for
+   * a re-run. Which stored segments a request sends hangs on its own
+   * revalidate() rules and params (cachedSegmentSends, storedEntrySends), so
+   * the record cannot answer it.
+   */
+  storedSentIds?: Set<string>;
+
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 

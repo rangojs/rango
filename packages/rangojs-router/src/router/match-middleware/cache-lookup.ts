@@ -592,6 +592,10 @@ async function* serveStoredSegments<TEnv>(
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
   const sentIds = restoreHandles && new Set<string>();
+  // A document lists every segment it renders (match-result.ts), so only a
+  // partial response needs the stored segments it sends named: their handler
+  // values are the entry's, and the client replaces its copy of them.
+  const storedSentIds = ctx.isFullMatch ? undefined : new Set<string>();
 
   yield* liveSegments;
 
@@ -612,10 +616,16 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      storedSentIds?.add(segment.id);
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
+
+  if (storedSentIds) state.storedSentIds = storedSentIds;
 
   // A partial cache() HIT replays handler values for the segments it sends
   // only, decided above after the live entries: a kept segment keeps the

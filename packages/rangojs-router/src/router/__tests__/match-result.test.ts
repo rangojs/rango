@@ -480,6 +480,30 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
       expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
     });
+
+    // A HIT serves a segment's handler values from its entry instead of
+    // running the handler (state.storedSentIds, set by serveStoredSegments):
+    // the client replaces its copy with them, and clears them when the entry
+    // holds none, exactly as for a re-run.
+    it("partial match resolvedIds names the stored segments a HIT sends", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0", "L1"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0", "L1"];
+      state.storedSentIds = new Set(["L0"]);
+      const segments = [
+        createSegment("L0"),
+        // Kept: the client's copy, its component nullified by the lookup.
+        createSegment("L1", { component: null }),
+      ];
+
+      const result = buildMatchResult(segments, ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0"]);
+      expect(result.segments.map((s) => s.id)).toEqual(["L0"]);
+    });
   });
 
   describe("buildMatchResult() - fromStorage", () => {
