@@ -863,8 +863,10 @@ a failure wins over a `notFound()` (see "Remove a page").
 
 A build-time render has no request to answer a redirect for, and nothing
 changes there: the Response reaches `prerender.onError`, which by default
-(`"fail"`) logs `FAIL` and fails the build, and with `"warn"` logs `WARN`,
-skips the URL and notifies `onError` with the Response stringified.
+(`"fail"`) logs `FAIL /url - undefined` and fails the build, and with
+`"warn"` logs `WARN`, skips the URL (reported skipped) and notifies
+`onError` with the Response stringified. The `undefined` is a Response
+having no `.message`.
 
 A warm of a route that is not on-demand is a request, not a render: middleware
 that redirects it stays `render-failed` with `responseStatus: 302` (see "The

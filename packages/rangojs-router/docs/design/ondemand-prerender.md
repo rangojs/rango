@@ -984,10 +984,11 @@ Where the router can see both, the failure wins.
 A build-time render has no request to answer a redirect for, and this is
 unchanged: the Response reaches the build's policy (`resolvePrerenderError`,
 `src/vite/utils/prerender-utils.ts`), so `prerender.onError` decides. The
-default `"fail"` logs `FAIL` and fails the build; `"warn"` logs `WARN`,
-skips that URL (it is not pre-rendered) and notifies `onError` with the
-Response stringified, since a Response has no `.message`. Only the on-demand
-producer turns a redirect into a result.
+default `"fail"` logs `FAIL /url - undefined` and fails the build; `"warn"`
+logs `WARN /url - render error, not pre-rendered ...: undefined`, skips that
+URL (the build reports it skipped) and notifies `onError` with the Response
+stringified. The `undefined` is a Response having no `.message`. Only the
+on-demand producer turns a redirect into a result.
 
 A warm of a route that is not on-demand is a request rather than a render, and
 a redirect there stays `render-failed` with `responseStatus: 302`
