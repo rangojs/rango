@@ -239,13 +239,12 @@ export function withSegmentScope<C>(
 ): C {
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
-    use: C extends { use: infer U } ? U : unknown;
+    use: (item: unknown) => unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
-  scoped.use = ((item: unknown) =>
-    (ctx as any).use.call(scoped, item)) as typeof scoped.use;
+  scoped.use = (item: unknown) => (ctx as any).use.call(scoped, item);
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

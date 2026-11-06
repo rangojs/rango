@@ -186,14 +186,6 @@ function latePushSegments(reported: string[]): string[] {
   });
 }
 
-/** The one LateHandlePushError the response reported, and its segment. */
-function latePushSegment(reported: string[]): string {
-  expect(reported).toHaveLength(1);
-  const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
-  expect(segment).not.toBeNull();
-  return segment![1]!;
-}
-
 beforeEach(async () => {
   await resetShellTestState();
 });
@@ -202,19 +194,19 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
   it("the layout's, for a component the layout handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component-layout");
     const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
-    expect(latePushSegment(reported)).toBe(layout);
+    expect(latePushSegments(reported)).toEqual([layout]);
   });
 
   it("the slot's, for a component the parallel slot's handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component-slot");
     const slot = matched.find((id) => id.endsWith(".@panel"))!;
-    expect(latePushSegment(reported)).toBe(slot);
+    expect(latePushSegments(reported)).toEqual([slot]);
   });
 
   it("the route's, for a component the route handler handed its ctx to", async () => {
     const { errors: reported, matched } = await serve("/component");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
-    expect(latePushSegment(reported)).toBe(route);
+    expect(latePushSegments(reported)).toEqual([route]);
   });
 
   for (const kind of [
