@@ -116,6 +116,18 @@ const patternsAction = urls(({ path }) => [
   path("/target", () => <p>arrived</p>, { name: "target" }),
 ]);
 
+// A `ppr` route: its shell is captured in the background after the response.
+const patternsPpr = urls(({ path }) => [
+  path("/shell-throw", () => <ThrowSync />, {
+    name: "shellThrow",
+    ppr: { ttl: 300 },
+  }),
+  path("/shell-ok", () => <p>fine</p>, {
+    name: "shellOk",
+    ppr: { ttl: 300 },
+  }),
+]);
+
 const patternsNoBoundary = urls(({ path }) => [
   path("/throw", () => <ThrowSync />, { name: "throw" }),
   path("/ok", async () => <p>fine</p>, { name: "ok" }),
@@ -290,6 +302,17 @@ describe("a component that throws redirect()", () => {
     expect(res.response.headers.get("location")).toBeNull();
     expect(res.flight).toMatch(/^\d+:E\{/m);
     expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it("a redirect is never stored as a ppr route's shell", async () => {
+    const router = createRouter({ onError: vi.fn() }).routes(patternsPpr);
+
+    const res = await serve(router, "/shell-throw");
+
+    expect(res.response.status).toBe(302);
+    expect(res.response.headers.get("location")).toBe("/target");
+    // The capture refuses a render that reported anything (rsc/shell-capture.ts).
+    expect(await res.readEntry()).toBeNull();
   });
 
   it("a healthy page renders unchanged", async () => {
