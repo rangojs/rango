@@ -52,8 +52,8 @@ let chainPushes = true;
 const runs = { list: 0, a: 0, b: 0, baked: 0, shelled: 0 };
 
 /**
- * The three storage kinds, one router each: a cache() record, a Prerender()
- * artifact (build store or on-demand overlay) and a ppr route whose shell
+ * The three storage kinds, one router each: a cache() record, the artifact a
+ * Prerender() route bakes into the build store, and a ppr route whose shell
  * entry carries a doc record a navigation replays.
  */
 const cacheRouter = createRouter({}).routes(
