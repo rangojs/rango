@@ -1266,12 +1266,18 @@ which run made each one.
    makes the field's documented "superset of `diff`" true. A stored answer
    lists what it sends: a segment served from a `cache()` record or a
    prerender entry stands in for a run of its handler, so
-   `serveStoredSegments` (`router/match-middleware/cache-lookup.ts`) marks it
-   run and the browser replaces its values with the record's, or clears them
-   when the record carries none. Without that a HIT listed only the loaders it
-   re-ran, and a value the record did not carry stayed on the page the
-   navigation left. A segment the lookup keeps stays unmarked, as a segment a
-   live walk keeps.
+   `serveStoredSegments` (`router/match-middleware/cache-lookup.ts`) records
+   each sent segment in `MatchPipelineState.storedSentSegments` and
+   `buildMatchResult` lists it beside the handlers that ran. The browser then
+   replaces its values with the record's, or clears them when the record
+   carries none. Without that a HIT listed only the loaders it re-ran, and a
+   value the record did not carry stayed on the page the navigation left. The
+   decision stays on the server, derived at serve time: the record format is
+   unchanged (`serializeSegments`, `cache/segment-codec.ts`, copies named
+   fields, so a stored segment never carried `_handlerRan`). By object, not by
+   id: a segment the live walk resolved under a stored one's id is not the
+   stored copy. A segment the lookup keeps stays out of the set, as a segment
+   a live walk keeps.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

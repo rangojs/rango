@@ -257,6 +257,14 @@ export interface MatchPipelineState {
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
 
+  // The stored segments this answer sends (cache-lookup.ts
+  // serveStoredSegments), by object. A sent one stands in for a run of its
+  // handler, so buildMatchResult lists it in `resolvedIds`: the record's
+  // values replace the client's, or clear them when it carries none. By
+  // object, not by id: a segment the live walk resolved under a stored one's
+  // id is not the stored copy (sendsOnlyStored, match-result.ts).
+  storedSentSegments?: ReadonlySet<ResolvedSegment>;
+
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
 

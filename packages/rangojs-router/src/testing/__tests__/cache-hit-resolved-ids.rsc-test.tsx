@@ -40,6 +40,7 @@ import {
   createHandle,
   createLoader,
   createRouter,
+  intercept,
   Prerender,
   revalidate,
   urls,
@@ -58,6 +59,8 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 let chainPushes = true;
 /** The same, for the layout above the prerendered route. */
 let prerenderPushes = true;
+/** The same, for an intercept's slot handler. */
+let slotPushes = true;
 
 const PageData = createLoader(async (ctx) => {
   ctx.use(Crumbs)("page-loader");
@@ -123,6 +126,10 @@ const router = createRouter({}).routes(
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
+  slots?: Record<
+    string,
+    { active: boolean; segments: Array<Record<string, unknown>> }
+  >;
 }
 
 /** A response's metadata and the last handle state it streamed. */
@@ -192,6 +199,7 @@ async function recordOfA(pushes: boolean): Promise<MemorySegmentCacheStore> {
 beforeEach(async () => {
   chainPushes = true;
   prerenderPushes = true;
+  slotPushes = true;
   await resetShellTestState();
 });
 
@@ -372,4 +380,156 @@ describe("a stored answer lists what it sends, as the live render lists what it 
       );
     });
   }
+});
+
+/**
+ * A cache() boundary whose layout holds an intercept slot. The record keeps
+ * whatever the slot handler pushed; the slot's crumb is what the browser shows
+ * from it.
+ */
+function makeInterceptRouter() {
+  return createRouter({}).routes(
+    urls(({ path, cache, layout, intercept: modal }) => [
+      cache({ ttl: 600 }, () => [
+        layout(
+          (ctx: HandlerContext) => {
+            ctx.use(Crumbs)("layout");
+            return <main>shell</main>;
+          },
+          () => [
+            path(
+              "/list",
+              (ctx: HandlerContext) => {
+                ctx.use(Crumbs)("list");
+                return <ul>list</ul>;
+              },
+              { name: "list" },
+            ),
+            path(
+              "/item/:id",
+              (ctx: HandlerContext<{ id: string }>) => (
+                <article>{`item-${ctx.params.id}`}</article>
+              ),
+              { name: "item" },
+            ),
+            modal("@modal", ".item", (ctx: HandlerContext) => {
+              if (slotPushes) ctx.use(Crumbs)("modal");
+              return <dialog>modal</dialog>;
+            }),
+          ],
+        ),
+      ]),
+    ]),
+  );
+}
+
+describe("an intercept's stored slot", () => {
+  it("is listed, clears a crumb its record does not carry, and leaks no marker", async () => {
+    const router = makeInterceptRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    const source = await readAnswer(
+      await serveShellRequest(router, "/list", { cacheStore }),
+    );
+    const fromList = { from: "/list", segments: source.answer.matched };
+
+    // The record for /item/2 bakes while its slot pushes nothing.
+    slotPushes = false;
+    await serveShellRequest(router, "/item/2", {
+      cacheStore,
+      partial: fromList,
+    });
+    // The page the browser shows: /item/1's intercept, its slot crumb up.
+    slotPushes = true;
+    const opened = await serveShellRequest(router, "/item/1", {
+      cacheStore,
+      partial: fromList,
+    });
+    const shown = await crumbsAfter(source.handles, opened);
+    expect(shown).toContain("modal");
+
+    // A link to /item/2 opens the record's slot, which carries no crumb.
+    const hit = await serveShellRequest(router, "/item/2", {
+      cacheStore,
+      partial: fromList,
+    });
+    const { answer } = await readAnswer(hit);
+    const slot = answer.slots!["@modal"]!.segments[0]!;
+    // The response re-sends the stored slot, so it stands in for a run of its
+    // handler: listed, and the crumb the record does not carry clears.
+    expect(answer.resolvedIds).toContain(slot.id);
+    expect(slot).not.toHaveProperty("_handlerRan");
+    expect(hit.flight).not.toContain("_handlerRan");
+    expect(await crumbsAfter(source.handles, hit)).not.toContain("modal");
+  });
+});
+
+/**
+ * A PPR route whose shell is the record a navigation replays. The layout
+ * pushes its crumb only while the flag is up, so a capture can hold either.
+ */
+function makePprRouter() {
+  return createRouter({}).routes(
+    urls(({ path, layout }) => [
+      layout(
+        (ctx: HandlerContext) => {
+          if (chainPushes) ctx.use(Crumbs)("chain");
+          return <header>chrome</header>;
+        },
+        () => [revalidate(() => true)],
+      ),
+      path(
+        "/list",
+        () => <ul>list</ul>,
+        { name: "list", ppr: true },
+        () => [revalidate(() => true)],
+      ),
+      path(
+        "/other",
+        () => <p>other</p>,
+        { name: "other" },
+        () => [revalidate(() => true)],
+      ),
+    ]),
+  );
+}
+
+describe("a PPR navigation replay", () => {
+  it("lists what its record re-sends, as the live partial it replays did", async () => {
+    const router = makePprRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    // The page the browser shows carries the crumb.
+    chainPushes = true;
+    const other = await readAnswer(
+      await serveShellRequest(router, "/other", { cacheStore }),
+    );
+    // The shell and the navigation capture below bake without it.
+    chainPushes = false;
+    await serveShellRequest(router, "/list", { cacheStore });
+    const partial = { from: "/other", segments: other.answer.matched };
+
+    const live = await serveShellRequest(router, "/list?page=2", {
+      cacheStore,
+      partial,
+    });
+    const replay = await serveShellRequest(router, "/list?page=2", {
+      cacheStore,
+      partial,
+    });
+    expect(live.replayStatus).toEqual({
+      outcome: "BYPASS",
+      reason: "no-entry",
+    });
+    expect(replay.replayStatus?.outcome).toBe("HIT");
+
+    const liveAnswer = await readAnswer(live);
+    const replayAnswer = await readAnswer(replay);
+    expect([...(replayAnswer.answer.resolvedIds ?? [])].sort()).toEqual(
+      [...(liveAnswer.answer.resolvedIds ?? [])].sort(),
+    );
+    // The record re-sends the layout, so its crumb clears on the replay as it
+    // does on the live partial.
+    const liveCrumbs = await crumbsAfter(other.handles, live);
+    expect(liveCrumbs).not.toContain("chain");
+    expect(await crumbsAfter(other.handles, replay)).toEqual(liveCrumbs);
+  });
 });

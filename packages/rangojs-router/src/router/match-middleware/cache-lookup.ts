@@ -592,6 +592,11 @@ async function* serveStoredSegments<TEnv>(
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
   const sentIds = restoreHandles && new Set<string>();
+  // The stored segments this answer sends, by object. buildMatchResult lists
+  // each in `resolvedIds` (match-result.ts) as it lists a re-run handler: the
+  // record's values replace the client's, or clear them when it carries none.
+  // A full match lists every segment it renders anyway.
+  const sentStored = ctx.isFullMatch ? undefined : new Set<ResolvedSegment>();
 
   yield* liveSegments;
 
@@ -616,15 +621,12 @@ async function* serveStoredSegments<TEnv>(
       keepClientSegment(segment);
     } else {
       sentIds?.add(segment.id);
-      // A stored segment the response sends stands in for a run of its
-      // handler: the record's values replace the client's, or clear them when
-      // it carries none, exactly as a re-run handler's do on a MISS. Without
-      // the marker buildMatchResult omits it from `resolvedIds`, and the
-      // browser keeps the values of the page it leaves.
-      segment._handlerRan = true;
+      sentStored?.add(segment);
     }
     yield segment;
   }
+
+  if (sentStored && sentStored.size > 0) state.storedSentSegments = sentStored;
 
   // A partial cache() HIT replays handler values for the segments it sends
   // only, decided above after the live entries: a kept segment keeps the

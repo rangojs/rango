@@ -15,7 +15,9 @@ pages depending on whether the record was there.
 **Now.** A stored segment the response sends is listed in `resolvedIds`, as a
 re-run handler's is: the record's values replace the browser's, or clear them
 when the record carries none. A segment the response keeps is not listed, so
-its values stay. The client is unchanged; only `resolvedIds` on the wire.
+its values stay. The record format is unchanged — the list is derived when a
+stored answer is served — and the client is unchanged; only `resolvedIds` on
+the wire.
 
 ```ts
 // A chain layout above /a and /b, inside cache({ ttl: 60 })
