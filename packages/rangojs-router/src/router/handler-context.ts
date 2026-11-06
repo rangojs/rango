@@ -219,6 +219,12 @@ function createPrerenderPassthroughFn(
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
  *
+ * `use` is the one field the child owns a wrapper for: a `use` destructured
+ * off this ctx (`const { use } = ctx`) has no receiver left to ask, so the
+ * closure holds the segment instead. It reads the base ctx's `use` at call
+ * time, which keeps the loader-cache interceptor (loader-cache.ts) in the
+ * chain.
+ *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
@@ -229,12 +235,17 @@ export function withSegmentScope<C>(
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
+  const base = ctx as { use?: (item: any) => any };
   const scoped = Object.create(ctx as object) as C & {
     _handleSegmentId: string;
+    use?: unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
   scoped._handleSegmentId = segmentId;
+  if (typeof base.use === "function") {
+    scoped.use = (item: unknown) => base.use!.call(scoped, item);
+  }
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
     scoped._reverseScope = scope;

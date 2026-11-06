@@ -622,6 +622,33 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: a `use` destructured off the ctx keeps the segment", () => {
+      const seen: Array<{ receiver: unknown; item: unknown }> = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: unknown, item: unknown) {
+          seen.push({ receiver: this, item });
+          return item;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // Destructured and called later, as a component handed the ctx does: no
+      // receiver is left, so the wrapper's closure supplies the segment.
+      const use = scoped.use as unknown as (item: unknown) => unknown;
+      use("handle");
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.item).toBe("handle");
+      expect(
+        (seen[0]!.receiver as { _handleSegmentId?: string })._handleSegmentId,
+      ).toBe("M0L0L0");
+      // The base ctx's `use` is read at call time, so a later replacement (the
+      // loader-cache interceptor) stays in the chain.
+      const later = vi.fn((item: unknown) => item);
+      (ctx as any).use = later;
+      use("handle again");
+      expect(later).toHaveBeenCalledWith("handle again");
+    });
   });
 
   describe("optional params", () => {

@@ -51,6 +51,20 @@ async function LatePush({
   return <span>{label}</span>;
 }
 
+/** An async server component destructuring `use` off the ctx it was handed. */
+async function LatePushDetached({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const { use } = ctx;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 /** A loader pushing its own crumb: started through a ctx handed to a component. */
 const CrumbLoader = createLoader(async (ctx) => {
   ctx.use(Crumbs)("from loader");
@@ -133,6 +147,14 @@ function makeRouter() {
               }),
               path("/component-loader-slot", () => <p>page</p>, {
                 name: "componentLoaderSlot",
+              }),
+            ],
+          ),
+          layout(
+            (ctx) => <LatePushDetached ctx={ctx} label="layout detached" />,
+            () => [
+              path("/component-detached", () => <p>page</p>, {
+                name: "componentDetached",
               }),
             ],
           ),
@@ -223,6 +245,12 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const { errors: reported, matched } = await serve("/component-loader-slot");
     const slot = matched.find((id) => id.endsWith(".@panel"))!;
     expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the layout's, for a component that destructured `use` off the layout's ctx", async () => {
+    const { errors: reported, matched } = await serve("/component-detached");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
   });
 
   it("the intercept slot's, for a component the intercept's handler handed its ctx to", async () => {
