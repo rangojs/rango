@@ -248,6 +248,32 @@ parallel(
 )
 ```
 
+### Redirects from a slot handler
+
+A slot handler that returns `redirect()` (or throws it) answers as a route or
+layout handler does, because its result goes through the same
+`handleHandlerResult`:
+
+- a document request answers `302` with its `Location`;
+- a client navigation, prefetch or action revalidation answers the
+  client-navigation redirect;
+- an on-demand `prerender()` refresh reports `render-failed` with that
+  `Response` and keeps the page stored before it — a redirect is never stored.
+
+```typescript
+path("/account", AccountPage, { name: "account" }, () => [
+  parallel({
+    "@aside": () => (cookies().get("session") ? <Aside /> : redirect("/login")),
+  }),
+])
+```
+
+The one exception is a slot that declares `loading()` with an `async` handler:
+that handler streams, so its `Response` is rendered into the stream instead of
+becoming an HTTP redirect — the same limit a route with `loading()` has (dev
+logs a warning). Issue that redirect from `middleware` or from a synchronous
+slot handler return.
+
 ## Composable Slots via `handler.use`
 
 Slot handlers can carry their own loader, loading, error/notFound boundaries, revalidation, and transition defaults via `.use`. The mount site then declares **just the slot names** — no per-call data wiring.

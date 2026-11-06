@@ -179,7 +179,9 @@ function expectDocumentRedirect(result: ServeShellRequestResult): void {
  */
 function expectFlightRedirect(result: ServeShellRequestResult): void {
   expect(result.response.status).toBe(204);
-  expect(result.response.headers.get("x-rsc-redirect")).toMatch(/\/target$/);
+  expect(result.response.headers.get("x-rsc-redirect")).toMatch(
+    new RegExp(`${TARGET}$`),
+  );
   expect(result.flight).toBeUndefined();
 }
 
