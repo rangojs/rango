@@ -203,10 +203,14 @@ export interface ResolvedSegment {
   clientGroup?: string;
   /**
    * @internal Server-side marker: true when the segment's handler actually ran
-   * this request (not skipped via the revalidate cache path). Used by
+   * for what this response serves — this request, or the render a stored
+   * record holds (not skipped via the revalidate cache path; a segment the
+   * serve keeps has it cleared, cache-lookup.ts keepClientSegment). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
-   * handle-bucket cleanup. Stripped from the wire payload before serialization
-   * — never reaches the client.
+   * handle-bucket cleanup, and stored with a record (segment-codec.ts
+   * serializeSegments) so a HIT reports the ids of the render that wrote it.
+   * Stripped from the wire payload before serialization — never reaches the
+   * client.
    */
   _handlerRan?: boolean;
 }
