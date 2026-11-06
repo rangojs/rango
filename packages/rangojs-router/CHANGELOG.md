@@ -17,9 +17,10 @@ cleared on the navigation came back on the next HIT of the same page.
 **Now.** The HIT derives the marker from its own send decision
 (`cache-lookup.ts` `serveStoredSegments`): a segment it sends carries the
 record's handler values, so it is listed, and a segment the client keeps is not.
-A HIT reports the same `resolvedIds` as the MISS that wrote the record, and a
-PPR navigation replay reports what the live navigation reports. The client is
-unchanged: only `resolvedIds` on the wire.
+A HIT lists exactly what it re-sends, so a segment the record re-sent with no
+value of its own no longer keeps the client's old one. A PPR navigation replay
+reports what the live navigation reports. The client is unchanged: only
+`resolvedIds` on the wire.
 
 ## 0.35.0 (2026-11-04)
 

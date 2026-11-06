@@ -262,8 +262,8 @@ export interface MatchResult {
    * Every segment id whose handler values this response carries, including
    * ones with `component === null` that get filtered out of `segments`/`diff`
    * to avoid wasted bytes, and every loader segment that ran. A stored HIT
-   * lists the segments it re-sends, so it answers as the MISS that wrote the
-   * record did. Drives the client's handle merge (handles/pushed-by.ts) — a
+   * lists the segments it re-sends. Drives the client's handle merge
+   * (handles/pushed-by.ts) — a
    * slot that re-resolves and pushes nothing must clear its previous handle
    * bucket, but `diff` doesn't carry it because the segment payload doesn't
    * either; a loader that ran replaces its pushes, one that did not keeps

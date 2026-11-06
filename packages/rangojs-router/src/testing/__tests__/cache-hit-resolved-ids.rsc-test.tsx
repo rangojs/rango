@@ -1,8 +1,8 @@
 /**
- * A cache HIT lists in `resolvedIds` the segments it re-sends, as the MISS
- * that wrote the record listed them, so the browser replaces exactly the
- * handle values the response delivers (handles/pushed-by.ts
- * mergePartialHandleData).
+ * A cache HIT lists in `resolvedIds` the segments it re-sends, so the browser
+ * replaces exactly the handle values the response delivers
+ * (handles/pushed-by.ts mergePartialHandleData) and keeps the ones it does
+ * not.
  *
  * A partial MISS marks each segment whose handler ran (`_handlerRan`,
  * segment-resolution/revalidation.ts) and match-result.ts turns that into
