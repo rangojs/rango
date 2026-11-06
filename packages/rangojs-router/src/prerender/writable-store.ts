@@ -289,29 +289,29 @@ export function isStoredEntryValidFor(
   // Exactly one kind: a page carries a whole entry, the "removed" marker
   // carries none, and a stored redirect carries the status and Location it
   // replays. A value with two of them is not one the router wrote.
-  const kinds = [
+  const isPage =
     candidate.removed !== true &&
-      entry != null &&
-      typeof entry === "object" &&
-      Array.isArray(entry.segments) &&
-      typeof entry.handles === "string",
-    candidate.removed === true,
-    // 3xx: the serve path builds a Response from it, and anything else is not
-    // a redirect a handler answered with (isRedirectResponse).
+    entry != null &&
+    typeof entry === "object" &&
+    Array.isArray(entry.segments) &&
+    typeof entry.handles === "string";
+  const isTombstone = candidate.removed === true;
+  // 3xx: the serve path builds a Response from it, and anything else is not a
+  // redirect a handler answered with (isRedirectResponse).
+  const isRedirect =
     redirect != null &&
-      typeof redirect.status === "number" &&
-      Number.isInteger(redirect.status) &&
-      redirect.status >= 300 &&
-      redirect.status < 400 &&
-      typeof redirect.location === "string" &&
-      redirect.location !== "" &&
-      // Absent, or exactly the opt-in: a store that hands back anything else
-      // is not answering with a shape the router wrote.
-      (redirect.external === undefined || redirect.external === true),
-  ].filter(Boolean).length;
+    typeof redirect.status === "number" &&
+    Number.isInteger(redirect.status) &&
+    redirect.status >= 300 &&
+    redirect.status < 400 &&
+    typeof redirect.location === "string" &&
+    redirect.location !== "" &&
+    // Absent, or exactly the opt-in: a store that hands back anything else is
+    // not answering with a shape the router wrote.
+    (redirect.external === undefined || redirect.external === true);
   if (
     candidate.v !== 1 ||
-    kinds !== 1 ||
+    Number(isPage) + Number(isTombstone) + Number(isRedirect) !== 1 ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||
