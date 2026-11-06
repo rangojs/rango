@@ -1,10 +1,11 @@
 /**
- * runAsSegment / segmentPinOf (server/context.ts): the segment a streamed
- * handler or a loader body runs for, carried by its async context instead of
- * the handler ctx's shared `_currentSegmentId`.
+ * runAsSegment / segmentPinOf / carriedSegmentOf (server/context.ts): the
+ * segment a streamed handler or a loader body runs for, carried by its async
+ * context instead of the handler ctx's shared `_currentSegmentId`, and the
+ * segment a ctx itself carries after the walker moved that pin on.
  */
 import { describe, expect, it } from "vitest";
-import { runAsSegment, segmentPinOf } from "../context.js";
+import { carriedSegmentOf, runAsSegment, segmentPinOf } from "../context.js";
 
 describe("segmentPinOf", () => {
   it("reads the ctx's pin outside any scope", () => {
@@ -34,5 +35,28 @@ describe("segmentPinOf", () => {
       runAsSegment("R0", () => runAsSegment("L0", () => segmentPinOf(ctx))),
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
+  });
+
+  it("a carried segment beats the pin the walker moved on", () => {
+    const ctx = { _currentSegmentId: "R0.@side" };
+    expect(segmentPinOf(ctx, "L0")).toBe("L0");
+    // The scope still wins over both: code running as a segment owns it.
+    expect(runAsSegment("R0", () => segmentPinOf(ctx, "L0"))).toBe("R0");
+  });
+});
+
+describe("carriedSegmentOf", () => {
+  it("reads the ctx's own segment: a layout's or slot's child, then the route's", () => {
+    expect(carriedSegmentOf({ _handleSegmentId: "L0" })).toBe("L0");
+    expect(carriedSegmentOf({ _pushSegmentId: "R0" })).toBe("R0");
+    // A layout's child inherits the route's `_pushSegmentId`; its own wins.
+    expect(
+      carriedSegmentOf({ _handleSegmentId: "L0", _pushSegmentId: "R0" }),
+    ).toBe("L0");
+  });
+
+  it("carries nothing for a plain object or no receiver", () => {
+    expect(carriedSegmentOf({})).toBeUndefined();
+    expect(carriedSegmentOf(undefined)).toBeUndefined();
   });
 });

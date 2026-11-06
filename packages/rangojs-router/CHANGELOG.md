@@ -22,9 +22,10 @@ route's, the layout's or the slot's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 Each handler's ctx carries its own segment, its own `use` keeps it when a
 component calls it detached from the ctx or through an object holding only
-that `use`, and a loader a component starts through the ctx belongs to the
-same segment. The push is still rejected, at the same moment, and production
-still shows no message.
+that `use`, a loader a component starts through the ctx belongs to the same
+segment, and a `"use cache"` function called with that ctx replays its
+recorded pushes into it on a HIT. The push is still rejected, at the same
+moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

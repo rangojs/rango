@@ -72,6 +72,7 @@ import {
   runInsideLoaderRun,
   runAsSegment,
   segmentPinOf,
+  carriedSegmentOf,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
   type LoaderRunIdentity,
@@ -125,26 +126,13 @@ function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
+  // The receiver first: a layout's or a slot's child carries its own segment,
+  // and a copy of one carries it too. A receiver that carries none — a method
+  // borrowed onto another object — falls back to the ctx `use` was installed
+  // on, whose `_pushSegmentId` is the route's.
   return segmentPinOf(
     installed as { _currentSegmentId?: string },
-    carriedSegmentOf(receiver, installed),
-  );
-}
-
-/**
- * The segment the ctx a call was made on belongs to, if any: a layout's or a
- * parallel slot's `withSegmentScope` child carries its own
- * (`_handleSegmentId`), and the request's one ctx carries the route's
- * (`_pushSegmentId`). A receiver that carries neither — a method borrowed onto
- * another object — falls back to the ctx `use` was installed on.
- */
-function carriedSegmentOf(
-  receiver: unknown,
-  installed: HandlerContext<any, any>,
-): string | undefined {
-  return (
-    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId
+    carriedSegmentOf(receiver) ?? carriedSegmentOf(installed),
   );
 }
 
@@ -1113,7 +1101,7 @@ export function setupLoaderAccess<TEnv>(
     // the loader, and that pin is the owner.
     const carried = isInsideLoaderScope()
       ? undefined
-      : carriedSegmentOf(this, ctx);
+      : (carriedSegmentOf(this) ?? carriedSegmentOf(ctx));
     return useLoader(loader, null, carried);
   } as typeof ctx.use;
 }

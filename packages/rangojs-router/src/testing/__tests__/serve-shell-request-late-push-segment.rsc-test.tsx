@@ -35,6 +35,7 @@ import {
   createRouter,
   urls,
   type HandlerContext,
+  type LoaderContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
@@ -216,6 +217,24 @@ function latePushSegment(reported: string[]): string {
   const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
   expect(segment).not.toBeNull();
   return segment![1]!;
+}
+
+/**
+ * Every distinct segment the response's LateHandlePushErrors named: one push
+ * a "use cache" HIT replays is reported twice (the cache runtime's own report,
+ * then the render's).
+ */
+function latePushSegments(reported: string[]): string[] {
+  expect(reported.length).toBeGreaterThan(0);
+  return [
+    ...new Set(
+      reported.map((one) => {
+        const segment = /for segment "([^"]+)" was pushed after/.exec(one);
+        expect(segment).not.toBeNull();
+        return segment![1]!;
+      }),
+    ),
+  ];
 }
 
 beforeEach(async () => {
@@ -462,6 +481,109 @@ function interceptRouter() {
     ]),
   );
 }
+
+/**
+ * A "use cache" function that takes the handler's ctx and pushes a handle
+ * through it: the push is recorded on the MISS and replayed into the caller's
+ * segment on the HIT (cache-runtime.ts callerSegmentId).
+ */
+async function cachedCrumb(
+  ctx: HandlerContext | LoaderContext,
+): Promise<string> {
+  "use cache";
+  ctx.use(Crumbs)("cached");
+  return "cached";
+}
+
+/** Runs the cached function from a loader, so a component's call HITs it. */
+const WarmCrumb = createLoader(async (ctx: LoaderContext) => {
+  await cachedCrumb(ctx);
+  return { warm: true };
+});
+
+/** Calls the cached function after an `await`, through the handler's ctx. */
+async function LateCachedPush({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await cachedCrumb(ctx);
+  return <span>cached</span>;
+}
+
+/**
+ * A layout, a parallel slot and a route-with-its-own-slot that each hand their
+ * ctx to a component calling the cached function after the handler returned,
+ * where only the ctx says which segment the replay belongs to.
+ */
+function cachedRouter() {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel, loader }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            (ctx) => (
+              <div>
+                <LateCachedPush ctx={ctx} />
+              </div>
+            ),
+            () => [
+              loader(WarmCrumb),
+              path("/cached-layout", () => <p>page</p>, {
+                name: "cachedLayout",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              loader(WarmCrumb),
+              parallel({
+                "@panel": (ctx) => <LateCachedPush ctx={ctx} />,
+              }),
+              path("/cached-slot", () => <p>page</p>, {
+                name: "cachedSlot",
+              }),
+            ],
+          ),
+          path(
+            "/cached-route",
+            (ctx) => <LateCachedPush ctx={ctx} />,
+            { name: "cachedRoute" },
+            () => [
+              loader(WarmCrumb),
+              parallel({ "@aside": () => <aside>aside</aside> }),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe('a "use cache" HIT of a call through a handler\'s ctx', () => {
+  const serveCached = (url: string) => serveOn(cachedRouter(), url);
+
+  it("replays its push into the layout's segment", async () => {
+    const { errors: reported, matched } = await serveCached("/cached-layout");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegments(reported)).toEqual([layout]);
+  });
+
+  it("replays its push into the slot's segment", async () => {
+    const { errors: reported, matched } = await serveCached("/cached-slot");
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegments(reported)).toEqual([slot]);
+  });
+
+  it("replays its push into the route's segment, not the slot's", async () => {
+    const { errors: reported, matched } = await serveCached("/cached-route");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegments(reported)).toEqual([route]);
+  });
+});
 
 describe("a component an intercept handler handed its ctx to", () => {
   it("files its push under the intercept slot, not the route the base ctx carries", async () => {

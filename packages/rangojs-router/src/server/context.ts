@@ -1746,16 +1746,33 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
  * request ctx's pin (a handler the walker awaits).
  *
  * `carried` is the segment the ctx a caller was invoked on belongs to, for a
- * reader that asks the object rather than the frame — a handle push through a
- * layout's or slot's ctx, which holds after the walker moved on
- * (handlePushSegment, router/loader-resolution.ts). The other readers pass
- * none and read the pin.
+ * reader that asks the object rather than the frame — a handle push or a
+ * "use cache" call through a layout's or slot's ctx, which holds after the
+ * walker moved on (handlePushSegment, router/loader-resolution.ts;
+ * cache-runtime.ts callerSegmentId). The other readers pass none and read the
+ * pin.
  */
 export function segmentPinOf(
   ctx: { _currentSegmentId?: string },
   carried?: string,
 ): string | undefined {
   return segmentPinALS.getStore() ?? carried ?? ctx._currentSegmentId;
+}
+
+/**
+ * The segment a ctx carries itself: a layout's or a parallel slot's ctx holds
+ * its own (`_handleSegmentId`, withSegmentScope), and the request's one handler
+ * ctx holds the route's (`_pushSegmentId`, revalidation.ts
+ * resolveEntryHandler). Both hold after the walker moved the shared pin on, so
+ * a reader that asks the object gets the segment the ctx was handed out for,
+ * not the pin.
+ */
+export function carriedSegmentOf(ctx: unknown): string | undefined {
+  const carried = ctx as
+    | { _handleSegmentId?: string; _pushSegmentId?: string }
+    | null
+    | undefined;
+  return carried?._handleSegmentId ?? carried?._pushSegmentId;
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

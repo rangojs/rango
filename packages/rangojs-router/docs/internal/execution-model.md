@@ -2627,17 +2627,20 @@ at all (a `TypeError`), and a detached or borrowed call read the pin.
 A loader a component starts through the handler's ctx (`ctx.use(Loader)`) is
 the same case at another funnel: the executor belongs to the request ctx, so
 its owning segment (`loaderOwner`) read the pin. `setupLoaderAccess` passes
-the receiver's segment (`carriedSegmentOf`, `loader-resolution.ts`) and the
+the receiver's segment (`carriedSegmentOf`, `server/context.ts`) and the
 executor uses it for the run, so the body's pushes, and the
 `LateHandlePushError` they throw, name the handler's segment.
 
-A `"use cache"` call keeps `segmentPinOf(ctx)` for the caller segment it
-records and replays under (`cache-runtime.ts`): its tainted argument is the
-caller's own ctx, and the replay goes to the calling segment as the record's
-design says. A call made from a handler runs with the pin on the caller's
-segment, so it agrees; one made from a component after the handler returned
-pushes late either way, and the record is only written when the push was
-legal.
+A `"use cache"` call is the same case again, one layer out: the caller
+segment it records its pushes under and replays them into on a HIT
+(`callerSegmentId`, `cache-runtime.ts`) is the tainted ctx's own segment, read
+through `carriedSegmentOf`. It used to read `segmentPinOf` alone, so a HIT
+replayed into whatever was pinned when the component called: a layout's call
+landed in the route's bucket and a route's in its slot's, and the
+`LateHandlePushError` the replay threw named that segment. The replay is
+rejected late either way — the record is only written when the push was
+legal, so a record exists only for a call a handler made — but the segment
+the message and the record's target name is the caller's.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost

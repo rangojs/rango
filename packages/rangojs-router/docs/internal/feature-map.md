@@ -273,8 +273,9 @@ route's `_pushSegmentId` on the request's one ctx; `router/handler-context.ts`,
 `resolveEntryHandler`) for a push from a component the handler handed that ctx
 to, its own `use` keeping the segment when the call lost the receiver (a
 destructured `use`, a `{ ...ctx }` copy, a `use` borrowed onto another object),
-and `carriedSegmentOf` (`router/loader-resolution.ts`) giving a loader a
-component starts through that ctx the same segment; see execution-model.md
+and `carriedSegmentOf` (`server/context.ts`) giving a loader a component
+starts through that ctx, and the caller segment a `"use cache"` HIT replays
+into (`cache-runtime.ts`), the same segment; see execution-model.md
 "A streamed handler keeps its segment".
 
 ---
