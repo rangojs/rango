@@ -1276,6 +1276,10 @@ which run made each one.
    stored in the record: the same record is sent on one navigation and kept on
    another, and a marker set on the segment object would ride to the client in
    the containers `buildMatchResult` does not strip (an intercept's slot).
+   An `intercept()` slot is listed by the marker its own handler sets
+   (`resolveInterceptEntry`, `router/intercept-resolution.ts`); the slot
+   segment is the object the answer also sends under `slots`, so
+   `buildMatchResult` strips the marker from that copy too (`cleanedSlots`).
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

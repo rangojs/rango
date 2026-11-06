@@ -211,12 +211,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutInternalFields(s));
     diff.push(s.id);
   }
 
@@ -235,7 +230,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: cleanedSlots(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -245,6 +240,39 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/**
+ * A segment as the wire carries it: the internal `_handlerRan` marker stripped
+ * (segments/types.ts). The marker decides `resolvedIds` and must not reach the
+ * client, in any container the answer puts a segment in.
+ */
+function withoutInternalFields(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The slots an answer sends, their segments stripped as the segment list is:
+ * an intercept slot's segment carries `_handlerRan` too (a slot handler that
+ * ran), and `state.slots` holds the same object the walk yielded, so a strip
+ * over the segment list alone left it on the slot's wire copy.
+ */
+function cleanedSlots(
+  slots: MatchPipelineState["slots"],
+): MatchResult["slots"] {
+  const names = Object.keys(slots);
+  if (names.length === 0) return undefined;
+  const cleaned: NonNullable<MatchResult["slots"]> = {};
+  for (const name of names) {
+    const slot = slots[name]!;
+    cleaned[name] = {
+      ...slot,
+      segments: slot.segments.map(withoutInternalFields),
+    };
+  }
+  return cleaned;
 }
 
 /**

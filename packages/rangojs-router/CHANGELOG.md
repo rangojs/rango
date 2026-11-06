@@ -28,6 +28,19 @@ layout((ctx) => {
 // without it: the crumb now clears, as it does on a MISS.
 ```
 
+### Fixed: an `intercept()` slot whose handler re-ran clears the handle values it no longer pushes
+
+**Before.** The same `resolvedIds` list decides which of a segment's handle
+values the browser replaces. A layout's or route's handler that re-ran was
+listed; an intercept slot's handler was not, so a crumb the modal pushed on
+one navigation stayed in the modal after the next navigation's handler
+stopped pushing it, until the slot pushed again.
+
+**Now.** The slot is listed when its handler ran, so the browser replaces its
+values with the ones the response delivered — none included. A fill that
+keeps the slot runs neither its handler nor its layout and lists nothing. The
+client is unchanged; only `resolvedIds` on the wire.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
