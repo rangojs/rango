@@ -8,13 +8,20 @@
  * ctx made the push, not whichever segment the walker pinned last. A route's,
  * a layout's and a parallel slot's ctx each carry their own segment
  * (`withSegmentScope`), so the message names the handler's segment however the
- * component holds the ctx: as the object it calls `ctx.use` on, or as a
- * `use` it destructured off it (`{ use } = ctx`), which keeps the segment
- * through the child's own `use`.
+ * component holds the ctx: as the object it calls `ctx.use` on, as a `use` it
+ * destructured off it (`{ use } = ctx`), as a `{ ...ctx }` copy, or as a ctx
+ * built by hand with only `use` copied onto it — the last two keep the
+ * segment through the child's own `use`.
  *
  * The route case is the one the pin cannot cover: the route resolves before
  * its orphan layouts and its parallels, so a route with a slot has a slot's
- * segment pinned by the time its component pushes.
+ * segment pinned by the time its component pushes. The route's ctx has no
+ * child, so the walker stamps the segment on the request's one ctx
+ * (`_pushSegmentId`).
+ *
+ * A `"use cache"` call taking the ctx is the same question one sink over: the
+ * HIT replays the pushes the miss recorded, into the segment the calling ctx
+ * answers with (cache-runtime.ts), and the replay's rejection names it too.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -87,13 +94,32 @@ async function LateCopyPush({
   return <span>{label}</span>;
 }
 
+/**
+ * The same, holding a ctx built by hand with only `use` copied onto it: the
+ * receiver carries no segment, so the push must still file under the segment
+ * of the ctx `use` came from.
+ */
+async function LatePartialPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const partial = { use: ctx.use } as unknown as HandlerContext;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  partial.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 /** How the component holds the ctx it was handed. */
-type Hold = "ctx" | "detached" | "copy";
+type Hold = "ctx" | "detached" | "copy" | "partial";
 
 const HOLD = {
   ctx: LatePush,
   detached: LateDetachedPush,
   copy: LateCopyPush,
+  partial: LatePartialPush,
 } as const;
 
 function makeRouter(hold: Hold) {
@@ -275,6 +301,24 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     );
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a component that holds a hand-built ctx with only `use`", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout",
+      "partial",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a component that holds a hand-built ctx with only `use`", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot",
+      "partial",
+    );
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
   });
 });
 

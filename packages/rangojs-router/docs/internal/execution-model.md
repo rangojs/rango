@@ -2612,8 +2612,11 @@ time its component pushes.
 The receiver is what a caller can lose, so the child owns `use` too
 (`withSegmentScope`): `const { use } = ctx`, `use` passed on as a callback, or
 `{ ...ctx }` reaches the shared implementation without a receiver, and the
-child's own `use` supplies it. It reads the base ctx's `use` at call time,
-because `loader-cache.ts` swaps that for its override interceptor.
+child's own `use` supplies it. It supplies itself as the receiver whenever the
+receiver carries no segment of its own, which covers a ctx a handler built by
+hand with only `use` copied onto it — reading the shared ctx there would name
+the route. It reads the base ctx's `use` at call time, because
+`loader-cache.ts` swaps that for its override interceptor.
 
 Two readers take `segmentPinOf(ctx, carriedPushSegment(ctx))`, the innermost
 scope's segment else the segment the ctx carries else its pin: the handle

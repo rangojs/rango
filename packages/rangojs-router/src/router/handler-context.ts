@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  carriedPushSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -207,8 +208,9 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a route's, layout's or parallel slot's handler gets: a prototype
- * child of the request's one handler ctx that carries its own segment.
+ * The ctx a route's, layout's, parallel slot's or intercept's handler gets: a
+ * prototype child of the request's one handler ctx that carries its own
+ * segment.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
@@ -222,9 +224,11 @@ function createPrerenderPassthroughFn(
  * The child owns `use` for that receiver: the shared implementation resolves
  * the segment off `this`, so a call that lost the receiver — `const { use } =
  * ctx`, `use` passed as a callback, `{ ...ctx }` — would file under the pin
- * the walker moved on. The wrapper supplies the child as the receiver, and
- * reads the base's `use` at call time because loader-cache.ts swaps it for
- * its override interceptor after the child exists.
+ * the walker moved on. The wrapper supplies the child as the receiver when the
+ * receiver carries no segment of its own (a detached call, a ctx built by hand
+ * with only `use` copied onto it), and reads the base's `use` at call time
+ * because loader-cache.ts swaps it for its override interceptor after the
+ * child exists.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -245,9 +249,12 @@ export function withSegmentScope<C>(
   };
   scoped._handleSegmentId = segmentId;
   scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
+    // A receiver that carries a segment names the push: the child itself, a
+    // `{ ...ctx }` copy, a nested scope. One that does not is a ctx built by
+    // hand with only `use` copied onto it, and the push still belongs to this
+    // child — the shared ctx's `_pushSegmentId` would name the route.
+    const receiver = carriedPushSegment(this) === undefined ? scoped : this;
+    return Reflect.apply(base.use, receiver, args);
   };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse(base.reverse, scope);
