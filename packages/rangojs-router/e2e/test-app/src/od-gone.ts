@@ -13,3 +13,8 @@ export const failSlugs: Set<string> = new Set();
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();
+
+// And an item that moved: the plain producer throws redirect(<location>) for a
+// slug in this map (?redirect=<path> / ?redirect= on /od-plain-trigger), so a
+// refresh stores the redirect in place of the page.
+export const redirectSlugs: Map<string, string> = new Map();

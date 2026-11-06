@@ -389,6 +389,21 @@ type PrerenderResult =
       caches?: PrerenderWarmCaches;
     }
   | {
+      ok: true;
+      path: "on-demand";
+      // The render answered with redirect(), and the redirect is stored in
+      // place of the page: a request to the target gets that 3xx. Also what
+      // onlyIfStale finds when the stored answer is a redirect.
+      status: "redirected";
+      target: string;
+      routeName: string;
+      key: string;
+      tags: string[];
+      ttl?: number;
+      // what a request to the target is answered with
+      redirect: { status: number; location: string };
+    }
+  | {
       ok: false;
       path?: "on-demand"; // absent when no route matched
       status:
@@ -509,6 +524,13 @@ the next deploy. On an on-demand run the producer reports a
 recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
+
+The same holds for a redirect: `redirect()` returns a Response, and a handler
+throws it (a `Prerender` handler returns a ReactNode, so `throw redirect(url)`
+is how it answers; a loader or an action does the same). Thrown out of the
+segment resolution, or out of the Flight encode when a component threw it, it
+is an outcome on an on-demand run: the trigger stores the redirect in place of
+the page and returns `redirected`. See "A Redirect Instead Of A Page".
 
 ## Stored Payload
 
@@ -927,6 +949,87 @@ support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
+## A Redirect Instead Of A Page
+
+A product is merged into another, and its handler starts answering
+`redirect("/products/43")`. A refresh of `/products/42` used to come back
+`render-failed` — the redirect Response was thrown out of the render and read
+as a render error — so the page stored by the last refresh kept serving. The
+visitor stayed on a page the app no longer answers that way, and for a plain
+(non-Passthrough) on-demand route nothing could ever change that: its handler
+never runs again in production, so the redirect was unreachable.
+
+The fix is not a "removed" marker. A marker says "no page here, the handler
+answers" — a 404 for a plain route — and the app did not say that. It said
+"this URL is elsewhere". So the redirect is stored, in place of the page:
+
+```ts
+// what composeStoredRedirect (prerender/writable-store.ts) writes
+{ v: 1, redirect: { status: 302, location: "/products/43" }, meta: { … } }
+```
+
+Why storing the redirect beats the tombstone, in the two places a decision
+shows up:
+
+|                         | a "removed" marker                                            | the stored redirect                                            |
+| ----------------------- | ------------------------------------------------------------- | -------------------------------------------------------------- |
+| a visitor to the URL    | 404 (plain route), or the live handler's answer (Passthrough) | the 3xx the handler answered with, without the handler running |
+| a client navigation     | the 404, or the live render                                   | the Flight soft redirect (204 + `X-RSC-Redirect`)              |
+| a later refresh         | renders, and replaces the marker with a page                  | renders, and replaces the redirect with a page                 |
+| `{ onlyIfStale: true }` | leaves a fresh marker (`removed`), renders once stale         | leaves a fresh redirect (`redirected`), renders once stale     |
+| `markStale(tags)`       | reaches a `notFound()` marker                                 | reaches it, the same way                                       |
+
+The redirect is a page's entry in everything but its payload: it carries
+`meta.storedAt`, `staleAt`, `tags` and `params` (`composeStoredRedirect`
+composes them through `composeStoredEntry`), so it goes stale, is rechecked by
+a sweep, is reached by `markStale()`, and is verified on every read like a
+page. A refresh that renders a page replaces it, so an item that moves back
+gets its page back on the next refresh — or on the next sweep once the
+redirect's ttl runs out.
+
+How it is produced and served:
+
+- `matchForPrerender` reports the redirect as an outcome
+  (`{ redirect: { status, location }, onDemandConfig }`) instead of letting
+  the Response out as a throw, on an on-demand run only. It catches it where a
+  handler's Response surfaces (the segment resolution, `handleHandlerResult`)
+  and where a component's does (the Flight encode's error sink,
+  `firstFlightError`). The route's `onDemandConfig` rides along — that is why
+  the producer reports it rather than the trigger catching the throw, which
+  would leave the redirect unstamped and unreachable by `markStale()`.
+- A build-time render keeps throwing it: `prerender.onError` decides, as for
+  any render error. Baking a redirect into the bundled manifest is a separate
+  change (the manifest holds segment payloads).
+- `readPrerenderSource` hands back a `prerender-redirect` source, and
+  `serveStoredSegments` throws the Response it builds (`Location`, plus
+  `X-RSC-Redirect: soft` as `redirect()` sets it). From there the request
+  handler drives it exactly as it drives a handler's redirect: a document
+  request gets the 3xx, a partial navigation the Flight soft redirect
+  (`rsc/handler.ts`), and an action re-render of a plain route the same.
+- No warm request follows it. A warm would follow the redirect it just stored
+  and rebuild the caches of the page it points at.
+- A `remove()` that lands during the render still wins: the redirect write
+  re-reads the key and keeps a marker stored after the render started, as a
+  page write does.
+
+What it does not carry or reach:
+
+- Only the status and `Location` are stored. A `redirect(url, { state })`'s
+  location state is per-render (and is dropped by the requestless producer's
+  context anyway), and any other header the handler's Response had is not
+  replayed.
+- The document cache sits ahead of the router and still serves the document it
+  stored, exactly as it does after a removal: pair the refresh with
+  `updateTag()` when that matters, refresh first.
+- An intercepted navigation does not read the overlay (only the main variant
+  is written), so the build's `:i` artifact of the route still serves — the same
+  v1 limit as a marker's.
+- A stored redirect is the redirect of the refresh's data, not of this
+  request's. A route that redirects _differently per visitor_ (a login gate,
+  say) must not answer `redirect()` in its on-demand handler; that is the same
+  rule as any other personalization, and `cookies()`/`headers()` already map to
+  `skipped-personalized`.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build
@@ -975,6 +1078,11 @@ lookup durable overlay by versioned key; verify the answer
   |                        A stale one schedules onRevalidate first, as a
   |                        stale hit does
   |
+  +-- stored redirect --> nothing is served and the bundled manifest is
+  |                       skipped: the request is answered with the stored
+  |                       3xx. A stale one schedules onRevalidate first, as
+  |                       a stale hit does
+  |
   v
 lookup bundled manifest
   |
@@ -1017,15 +1125,17 @@ action that awaits `router.prerender()` for the page shows the new entry in
 its own re-render. The immutable bundled manifest keeps the client's copy as
 before.
 
-| Request finds                     | `Prerender(..., { onDemand })`                             | `Passthrough(def, live)`                   |
-| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
-| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)      | same                                       |
-| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured  | same                                       |
-| "removed" marker                  | 404 (dev and production); the build entry is not served    | the live handler (dev and production)      |
-| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured       | the live handler; `onRevalidate` likewise  |
-| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render | same                                       |
-| no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint    | the live handler (dev and production)      |
-| server action re-render           | overlay, then build entry, then 404, as above              | the live handler (the overlay is not read) |
+| Request finds                     | `Prerender(..., { onDemand })`                             | `Passthrough(def, live)`                       |
+| --------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)      | same                                           |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured  | same                                           |
+| "removed" marker                  | 404 (dev and production); the build entry is not served    | the live handler (dev and production)          |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured       | the live handler; `onRevalidate` likewise      |
+| stored redirect                   | the stored 3xx; the build entry is not served              | the stored 3xx (the live handler does not run) |
+| stale stored redirect             | the same 3xx; `onRevalidate` scheduled if configured       | the same                                       |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render | same                                           |
+| no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint    | the live handler (dev and production)          |
+| server action re-render           | overlay, then build entry, then 404, as above              | the live handler (the overlay is not read)     |
 
 ### Refreshing
 
@@ -1290,6 +1400,18 @@ behavior. Coverage should include:
   browser, dev and production in both apps, a baked and an unbaked param
   removed both ways, the recheck through `markStale` and `onlyIfStale`, an
   action on a removed page, and a `Passthrough` route (`expectRemoved*` in
+  `tests/shared-e2e`).
+- A refresh that answers with a redirect: the producer's outcome (a handler's
+  throw and a component's, with the route's ttl and tags), the trigger's
+  `redirected` result, the envelope and its validation, the replacement in
+  both directions and the race with `remove()`
+  (`create-prerender-trigger.test.ts`); the serve path — document, partial,
+  action, Passthrough, a stale redirect and the malformed shapes
+  (`cache-lookup-prerender-redirect.test.ts`); the userland flow through
+  `router.prerender()` and `serveShellRequest`
+  (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`); and in a
+  browser, dev and production in both apps, a stored page replaced by a
+  redirect and the page back again (`expectRefreshStoresRedirect` in
   `tests/shared-e2e`).
 - E2E tests in both dev and production for the e2e test app and the Cloudflare
   basic app.

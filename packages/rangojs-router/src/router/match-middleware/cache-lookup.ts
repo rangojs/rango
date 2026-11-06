@@ -67,6 +67,7 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type StoredRedirect,
 } from "../../prerender/writable-store.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
@@ -148,6 +149,9 @@ async function ensurePrerenderDeps(): Promise<void> {
  *   newer than the client's copy: one that a refresh (possibly inside this
  *   very action) replaced. `stale`: it is past its soft `staleAt` (serves
  *   while a refresh is due).
+ * - `prerender-redirect`: the overlay holds the redirect the route answers
+ *   with, not a page (a refresh whose render returned `redirect()`). There
+ *   are no segments to serve: the request is answered with the 3xx.
  */
 type StoredSegmentSource =
   | {
@@ -158,7 +162,23 @@ type StoredSegmentSource =
       restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
   | { kind: "prerender-build"; entry: PrerenderEntry }
-  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean };
+  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean }
+  | { kind: "prerender-redirect"; redirect: StoredRedirect };
+
+/**
+ * The Response a stored redirect replays, in the shape `redirect()` builds
+ * (`X-RSC-Redirect: soft`, so it is the router's own redirect and not an
+ * upstream 3xx). Thrown, as a handler's redirect Response is thrown: the
+ * request handler drives it from there, so a document gets the 3xx and a
+ * partial navigation the Flight soft redirect it derives (rsc/handler.ts,
+ * handleRscRendering).
+ */
+function storedRedirectResponse(redirect: StoredRedirect): Response {
+  return new Response(null, {
+    status: redirect.status,
+    headers: { Location: redirect.location, "X-RSC-Redirect": "soft" },
+  });
+}
 
 /**
  * Decode a prerender entry's segments and replay its handle data into the
@@ -515,6 +535,9 @@ async function* serveStoredSegments<TEnv>(
     }
     return;
   }
+  if (stored.kind === "prerender-redirect") {
+    throw storedRedirectResponse(stored.redirect);
+  }
   const source: StoredSegmentSource = stored;
 
   const fromCache = source.kind === "segment-cache";
@@ -849,6 +872,15 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if ("redirect" in stored) {
+        // The route's stored answer for this URL is a redirect, not a page:
+        // the request is answered with it (serveStoredSegments throws the
+        // Response), and step 2 is skipped like a removal's, so a page stored
+        // or baked before the redirect cannot answer instead. Only the main
+        // variant is written, so an intercepted navigation does not read it
+        // (as with a marker, docs/design/ondemand-prerender.md).
+        return { kind: "prerender-redirect", redirect: stored.redirect };
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }

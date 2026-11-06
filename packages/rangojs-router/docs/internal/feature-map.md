@@ -1043,6 +1043,21 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
   removal does not reach the document cache or a Passthrough route's live
   caches: remove first, then `updateTag()`.
+- A refresh whose render answers `redirect()` stores the redirect in place of
+  the page (`composeStoredRedirect`, `prerender/writable-store.ts`;
+  `{ v: 1, redirect: { status, location }, meta }`, no `entry`, so a router
+  from before it reads it as a miss). Result status `redirected`, carrying the
+  stored `redirect`; `onlyIfStale` finds one fresh as `redirected` too. The
+  producer reports it as an outcome (`matchForPrerender` catches the thrown
+  Response from the segment resolution and from the Flight encode's error
+  sink, on an on-demand run only) so the route's ttl and tags stamp it like a
+  page; a build-time render keeps throwing it (`prerender.onError`).
+  `readPrerenderSource` returns a `prerender-redirect` source and
+  `serveStoredSegments` throws the Response it builds (`Location` +
+  `X-RSC-Redirect: soft`), so a document gets the 3xx and a partial navigation
+  the Flight soft redirect. No warm follows it; a stored redirect is not read
+  by an intercepted navigation (only the main variant is written), and the
+  document cache ahead of the router still serves what it stored.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are

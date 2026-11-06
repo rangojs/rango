@@ -35,6 +35,7 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +111,15 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered with a redirect (a handler returned or
+   * threw `redirect()`, or a component threw one). Reported as an outcome
+   * rather than left as the thrown Response so the trigger can store it in
+   * place of the page, stamped with the route's `onDemandConfig` ttl/tags the
+   * way a `notFound()` marker is. A build-time render keeps throwing it
+   * (`prerender.onError`).
+   */
+  redirect?: { status: number; location: string };
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -141,6 +151,25 @@ export async function matchForPrerender<TEnv = any>(
     routeName: matched.routeKey,
     params: matchedParams,
     passthrough: true as const,
+  });
+
+  // A render that ends in a redirect throws its Response out of the segment
+  // resolution (handleHandlerResult) or, when a component threw it, out of the
+  // Flight encode through firstFlightError. An on-demand run reports it as an
+  // outcome so the trigger stores it with the route's ttl and tags; a
+  // build-time run rethrows it, keeping prerender.onError's policy.
+  const redirectOutcome = (
+    value: unknown,
+  ): { status: number; location: string } | null =>
+    onDemand && value instanceof Response && isRedirectResponse(value)
+      ? { status: value.status, location: value.headers.get("Location")! }
+      : null;
+  const redirectResult = (redirect: { status: number; location: string }) => ({
+    segments: [],
+    handles: "",
+    routeName: matched.routeKey,
+    params: matchedParams,
+    redirect,
   });
 
   // Set inside the render; out here for the notFound() outcome at the end.
@@ -349,17 +378,26 @@ export async function matchForPrerender<TEnv = any>(
         setupBuildUse(buildCtx);
 
         // 8. Resolve all segments with skipLoaders
-        const { segments: allSegments } = await deps.resolveAllSegments(
-          freshPassInput(buildCtx, matched.routeKey, matchedParams, {
-            skipLoaders: true,
-            // A render failure (or `throw new Skip()`) must reach the
-            // build/dev caller, not be baked into a frozen error page
-            // (issue #587).
-            throwOnError: true,
-          }),
-          entries,
-          { pathname: buildCtx.pathname },
-        );
+        let allSegments: ResolvedSegment[];
+        try {
+          ({ segments: allSegments } = await deps.resolveAllSegments(
+            freshPassInput(buildCtx, matched.routeKey, matchedParams, {
+              skipLoaders: true,
+              // A render failure (or `throw new Skip()`) must reach the
+              // build/dev caller, not be baked into a frozen error page
+              // (issue #587).
+              throwOnError: true,
+            }),
+            entries,
+            { pathname: buildCtx.pathname },
+          ));
+        } catch (error) {
+          // A handler that redirects throws its Response through the
+          // resolution (handleHandlerResult, segment-resolution/helpers.ts).
+          const redirect = redirectOutcome(error);
+          if (redirect) return { ...redirectResult(redirect), onDemandConfig };
+          throw error;
+        }
 
         // 9. Detect passthrough sentinel: handler returned ctx.passthrough().
         // When the route declares loading(), the handler result is deferred so the
@@ -430,8 +468,15 @@ export async function matchForPrerender<TEnv = any>(
           }
         }
         const handles = await encodeHandles(handlesRecord, onFlightError);
-        // Before intercept resolution, as a handler throw would be.
-        if (flightErrors.length > 0) throw firstFlightError();
+        // Before intercept resolution, as a handler throw would be. A redirect
+        // thrown by a component reaches here rather than the resolution, and
+        // is an outcome on an on-demand run like a handler's (step 8).
+        if (flightErrors.length > 0) {
+          const first = firstFlightError();
+          const redirect = redirectOutcome(first);
+          if (redirect) return { ...redirectResult(redirect), onDemandConfig };
+          throw first;
+        }
 
         // Use the trie-level route key (e.g., "docs", "docs.article")
         const routeName = matched.routeKey;

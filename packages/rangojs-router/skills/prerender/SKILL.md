@@ -822,7 +822,8 @@ A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
-page"), `no-match`, `no-store`, `skipped-personalized`,
+page"), `redirected` (the render answered `redirect()`, see "A page that
+moved"), `no-match`, `no-store`, `skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
@@ -963,17 +964,70 @@ user-generated content getting removed by its author. Note, `notFound`
 follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
 
+### A page that moved
+
+An item that was merged into another answers `redirect()` instead of a page.
+A refresh that renders that redirect stores it in place of the page, so the
+URL answers with the 3xx — the visitor goes where the app says, without the
+handler running — instead of serving the page stored before it.
+
+```typescript
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => {
+    const product = await ctx.env.PRODUCTS.get(ctx.params.id);
+    if (!product) notFound();
+    if (product.mergedInto) throw redirect(`/products/${product.mergedInto}`);
+    return <Product data={product} />;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+
+await prerender("/products/42");
+// { ok: true, status: "redirected", redirect: { status: 302, location: "/products/43" } }
+```
+
+A `Prerender` handler returns a ReactNode, so a redirect is **thrown** (a
+loader or an action throws it the same way). A returned `Response` is a type
+error.
+
+- **A visitor gets the 3xx.** A document request is answered with the stored
+  status and `Location`; a client navigation gets the router's soft redirect
+  (a 204 + `X-RSC-Redirect`), so the browser moves without a full reload. An
+  action's re-render of a plain on-demand route gets it too.
+- **A later refresh replaces it**, like a page: an item that moves back gets
+  its page back on the next refresh. It is stamped with the route's `ttl` and
+  `tags`, so it goes stale and is rechecked by `onRevalidate` or a sweep, and
+  `markStale()` reaches it. `{ onlyIfStale: true }` leaves a fresh redirect and
+  reports `redirected`.
+- **Only the status and `Location` are stored.** A `redirect(url, { state })`'s
+  location state does not survive a refresh, and neither does any other header
+  the Response had.
+- **Not for per-visitor redirects.** A stored redirect is the redirect of the
+  refresh's data, not of this request's: a login gate must not answer
+  `redirect()` in an on-demand handler. `cookies()` and `headers()` already
+  make a refresh `skipped-personalized`.
+- **What it does not reach**, as with a removal: a document cache ahead of the
+  router keeps serving what it stored until it expires (refresh first, then
+  `updateTag()`), and an intercepted navigation does not read the overlay, so
+  the build's intercept variant still serves.
+- **At build time a redirect is still a render error.** A `Prerender` route
+  that redirects during `vite build` fails the build (or is skipped with
+  `prerender.onError: "warn"`); only a refresh stores a redirect.
+
 ### What is served
 
-| Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                   |
-| --------------------------------- | ----------------------------------------------------------- | ------------------------------------------ |
-| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)       | same                                       |
-| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured   | same                                       |
-| "removed" marker                  | **404** (dev and production); the build entry is not served | the live handler (dev and production)      |
-| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured        | the live handler; `onRevalidate` likewise  |
-| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render  | same                                       |
-| no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint | the live handler (dev and production)      |
-| server action re-render           | overlay, then build entry, then 404, as above               | the live handler (the overlay is not read) |
+| Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                       |
+| --------------------------------- | ----------------------------------------------------------- | ---------------------------------------------- |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)       | same                                           |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured   | same                                           |
+| "removed" marker                  | **404** (dev and production); the build entry is not served | the live handler (dev and production)          |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured        | the live handler; `onRevalidate` likewise      |
+| stored redirect                   | the stored 3xx; the build entry is not served               | the stored 3xx (the live handler does not run) |
+| stale stored redirect             | the same 3xx; `onRevalidate` scheduled if configured        | the same                                       |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render  | same                                           |
+| no overlay entry, param not baked | production: **404**; dev: rendered through the dev endpoint | the live handler (dev and production)          |
+| server action re-render           | overlay, then build entry, then 404, as above               | the live handler (the overlay is not read)     |
 
 The retained handler never renders inside a production request: a plain
 on-demand route 404s for a param until something refreshes it. Dev renders any
@@ -1060,15 +1114,17 @@ Key everything off the `key` you are given (`serializePrerenderKey` includes
 `key.version`). Do not call `getCacheVersions()` in a prerender store: `set()`
 runs outside the producer's request context.
 
-`stored` is a page (`{ v, entry, meta }`) or the "removed" marker
-(`{ v, removed: true, meta }`, no `entry`). A store that persists the JSON it
-is given, like the one above, handles both and needs no change. `meta` has the
-same fields on both, and means the same: a store that indexes by `meta.tags`
-or lowers `meta.staleAt` for `markStale()` treats a marker as it treats a
-page. That is how a `notFound()` marker is rechecked. A `remove()` marker has
-no tags and no `staleAt`. Never drop or rewrite a value you do not
-recognize: the router decides what it means. The router does not call
-`delete(key)`; removing a page is a `set()` of the marker.
+`stored` is a page (`{ v, entry, meta }`), the "removed" marker
+(`{ v, removed: true, meta }`, no `entry`), or a stored redirect
+(`{ v, redirect: { status, location }, meta }`, no `entry`). A store that
+persists the JSON it is given, like the one above, handles all three and needs
+no change. `meta` has the same fields on each, and means the same: a store
+that indexes by `meta.tags` or lowers `meta.staleAt` for `markStale()` treats a
+marker or a redirect as it treats a page. That is how a `notFound()` marker
+and a stored redirect are rechecked. A `remove()` marker has no tags and no
+`staleAt`. Never drop or rewrite a value you do not recognize: the router
+decides what it means. The router does not call `delete(key)`; removing a page
+is a `set()` of the marker.
 
 ### Several routers (host router)
 

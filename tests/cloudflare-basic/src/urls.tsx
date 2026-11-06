@@ -314,6 +314,7 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainMovedKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -514,6 +515,15 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  // ?redirect=<path>: the item moved, so the next refresh stores a redirect;
+  // ?redirect=: it is back, so the next refresh renders a page again.
+  if (ctx.url.searchParams.has("redirect")) {
+    const movedKey = guidePlainMovedKey(ctx.params.slug);
+    const to = ctx.url.searchParams.get("redirect");
+    if (to) await ctx.env.PRERENDER_KV.put(movedKey, to);
+    else await ctx.env.PRERENDER_KV.delete(movedKey);
+    return Response.json({ redirect: to || null });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {

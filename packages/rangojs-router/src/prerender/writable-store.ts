@@ -85,11 +85,42 @@ type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
 type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
 
 /**
- * Versioned envelope the router composes on a refresh or a removal and
- * verifies on every read: a page, or the marker that the page was removed. A
- * store persists either as given and returns it as stored.
+ * A redirect stored in place of a page: the answer a refresh rendered when the
+ * route's handler returned (or threw) `redirect()`. A route whose item moved
+ * answers every request with the 3xx, so storing the page it used to render
+ * would serve a URL the app no longer answers that way; storing the redirect
+ * serves the visitor what a live request would. Only the status and the
+ * `Location` travel: the rest of the handler's Response (its location state
+ * among them) is per-render, not per-entry.
  */
-export type PrerenderStoredEntry = StoredPage | StoredTombstone;
+export interface StoredRedirect {
+  /** The redirect's HTTP status, 3xx as the handler's Response carried it. */
+  status: number;
+  /** The `Location` the handler's Response pointed at. */
+  location: string;
+}
+
+/**
+ * The stored redirect: no `entry` and no `removed`, so a router from before it
+ * reads it as malformed, which is a miss, and serves what a miss serves (the
+ * bundled manifest entry, or the live handler). It never renders an empty page.
+ */
+type StoredRedirectEntry = StoredEnvelope & {
+  redirect: StoredRedirect;
+  entry?: never;
+  removed?: never;
+};
+
+/**
+ * Versioned envelope the router composes on a refresh or a removal and
+ * verifies on every read: a page, the marker that the page was removed, or the
+ * redirect the route now answers with. A store persists any of them as given
+ * and returns it as stored.
+ */
+export type PrerenderStoredEntry =
+  | StoredPage
+  | StoredTombstone
+  | StoredRedirectEntry;
 
 /**
  * The writable durable overlay: plain get/set. Backed in production by a
@@ -199,6 +230,29 @@ export function composeStoredTombstone(
 }
 
 /**
+ * @internal Compose the stored redirect: what a refresh rendered when the
+ * route's handler answered with `redirect()`. Its meta is a page's
+ * (composeStoredEntry), so the route's ttl and tags mean the same: the entry
+ * goes stale and is rechecked like a page, and `markStale()` reaches it.
+ */
+export function composeStoredRedirect(
+  key: PrerenderKey,
+  redirect: StoredRedirect,
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number = now,
+): PrerenderStoredEntry {
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+    staleFrom,
+  );
+  return { v, redirect, meta };
+}
+
+/**
  * @internal Verify a store's answer is safe to serve for this key: the
  * envelope shape and version tag, the key version, and the stored params
  * against the request's (the 8-hex DJB2 collision guard, param-hash.ts: a
@@ -217,15 +271,35 @@ export function isStoredEntryValidFor(
   if (stored == null || typeof stored !== "object") return false;
   const candidate = stored as Partial<PrerenderStoredEntry>;
   const entry = candidate.entry;
+  const rawRedirect = (stored as { redirect?: unknown }).redirect;
+  const redirect =
+    rawRedirect != null && typeof rawRedirect === "object"
+      ? (rawRedirect as Partial<StoredRedirect>)
+      : undefined;
   const meta = candidate.meta;
+  // Exactly one kind: a page carries a whole entry, the "removed" marker
+  // carries none, and a stored redirect carries the status and Location it
+  // replays. A value with two of them is not one the router wrote.
+  const kinds = [
+    candidate.removed !== true &&
+      entry != null &&
+      typeof entry === "object" &&
+      Array.isArray(entry.segments) &&
+      typeof entry.handles === "string",
+    candidate.removed === true,
+    // 3xx: the serve path builds a Response from it, and anything else is not
+    // a redirect a handler answered with (isRedirectResponse).
+    redirect != null &&
+      typeof redirect.status === "number" &&
+      Number.isInteger(redirect.status) &&
+      redirect.status >= 300 &&
+      redirect.status < 400 &&
+      typeof redirect.location === "string" &&
+      redirect.location !== "",
+  ].filter(Boolean).length;
   if (
     candidate.v !== 1 ||
-    // The "removed" marker has no entry; a page must have a whole one.
-    (candidate.removed !== true &&
-      (entry == null ||
-        typeof entry !== "object" ||
-        !Array.isArray(entry.segments) ||
-        typeof entry.handles !== "string")) ||
+    kinds !== 1 ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||

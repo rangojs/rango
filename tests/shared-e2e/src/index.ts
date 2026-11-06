@@ -3867,6 +3867,12 @@ export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
   };
+  /**
+   * The path a refresh redirects a slug to: what the trigger's
+   * `?redirect=<path>` sets for a slug and `?redirect=` clears. A page of the
+   * app, so a followed redirect lands on one.
+   */
+  redirectTarget: string;
 }
 
 /** The page serves from the store (200, rendered on demand); its render stamp. */
@@ -4029,6 +4035,79 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+
+/**
+ * A refresh whose render answers with `redirect()` stores the redirect in
+ * place of the page (issue: a redirected page kept serving). The URL then
+ * answers with the 3xx the handler answered with — a document request gets it
+ * as it is and the browser lands on the target — instead of the page stored
+ * before it. A later refresh that renders a page replaces the redirect, so a
+ * route whose item moves back gets its page back.
+ *
+ * The app's data source decides: the trigger's `?redirect=<path>` makes the
+ * route's build handler answer `redirect(<path>)` for that slug on its next
+ * refresh, and `?redirect=` makes it render a page again.
+ */
+export async function expectRefreshStoresRedirect(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+
+  // A page is stored first: the redirect has something to replace.
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  const moved = await removeTrigger(
+    page,
+    trigger,
+    `?redirect=${encodeURIComponent(fixture.redirectTarget)}`,
+  );
+  expect(moved, JSON.stringify(moved)).toMatchObject({
+    redirect: fixture.redirectTarget,
+  });
+
+  // The refresh reports what it stored, not a failure that keeps the page.
+  const refreshed = await removeTrigger(page, trigger);
+  expect(refreshed, JSON.stringify(refreshed)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "redirected",
+    target: fixture.path(slug),
+    redirect: { status: 302, location: fixture.redirectTarget },
+  });
+
+  // A document request is the 3xx itself, and no render of the page rides
+  // with it.
+  const response = await page.request.get(fixture.pageUrl(slug), {
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(302);
+  expect(response.headers()["location"]).toBe(fixture.redirectTarget);
+  expect(await response.text()).not.toContain(
+    `data-testid="${fixture.stampTestId}"`,
+  );
+
+  // The browser follows it to the target: the stored page never shows.
+  const followed = await page.goto(fixture.pageUrl(slug));
+  expect(followed?.status()).toBe(200);
+  await waitForShellHydration(page);
+  expect(new URL(page.url()).pathname).toBe(fixture.redirectTarget);
+  await expect(byTestId(page, fixture.slugTestId)).not.toHaveText(slug);
+
+  // The item is back where the URL says: a refresh replaces the redirect with
+  // the page, and the page serves again.
+  await removeTrigger(page, trigger, "?redirect=");
+  await refreshPage(page, trigger);
+  const served = await page.goto(fixture.pageUrl(slug));
+  expect(served?.status()).toBe(200);
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(slug);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";

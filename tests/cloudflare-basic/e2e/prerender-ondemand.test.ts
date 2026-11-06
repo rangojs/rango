@@ -6,6 +6,7 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRefreshStoresRedirect,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -323,6 +324,9 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "gp-slug",
   actionTestId: "gp-action-noop",
   bakedSlug: "intro",
+  // A baked page of the same route: where a redirecting refresh points, so a
+  // followed redirect lands on one.
+  redirectTarget: "/guide-plain/intro",
   passthrough: {
     pageUrl: (slug) => f.url(`/guides/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
@@ -378,6 +382,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, guideFixture(f));
+  });
+
+  test("a refresh whose handler redirects stores the redirect, and the URL answers with it instead of the stored page", async ({
+    page,
+  }) => {
+    await expectRefreshStoresRedirect(page, guideFixture(f));
   });
 }
 

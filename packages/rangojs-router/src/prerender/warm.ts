@@ -155,12 +155,21 @@ type WarmStatus =
   | Extract<PrerenderResult, { ok: true; path: "warm" }>["status"]
   | Extract<PrerenderResult, { ok: false }>["status"];
 
-/** The `PrerenderResult` of a finished warm. */
+/**
+ * What a warm answers: a `warm` result or a refusal. Never an on-demand
+ * result — a warm renders no page into the prerender store, so it can neither
+ * `redirected` nor `removed`.
+ */
+export type WarmResult =
+  | Extract<PrerenderResult, { ok: true; path: "warm" }>
+  | Extract<PrerenderResult, { ok: false }>;
+
+/** The {@link WarmResult} of a finished warm. */
 export function composeWarmResult(
   outcome: WarmRequestOutcome,
   target: string,
   routeName: string,
-): PrerenderResult {
+): WarmResult {
   const status = warmStatus(outcome);
   const caches = warmCaches(outcome.record);
   if (status === "warmed" || status === "already-fresh") {

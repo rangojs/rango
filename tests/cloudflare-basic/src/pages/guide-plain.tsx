@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,13 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug whose item moved: its value is where it moved to, and a
+ * refresh answers `redirect(<value>)` for it.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -22,7 +29,10 @@ export const guidePlainFailKey = (slug: string): string =>
 // retains this producer body for router.prerender().
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
-// marker. Read only on a refresh, where ctx.env is the live env.
+// marker. A slug whose item moved (guidePlainMovedKey, ?redirect=<path>) is a
+// redirect(): a refresh stores the redirect in place of the page. Read only on
+// a refresh, where ctx.env is the live env. A Prerender handler returns a
+// ReactNode, so a redirect is thrown (as from a loader or an action).
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
@@ -38,6 +48,10 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
     ) {
       throw new Error("upstream 500");
     }
+    const movedTo = ctx.onDemand
+      ? await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug))
+      : null;
+    if (movedTo) throw redirect(movedTo);
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.
     const stamp = `${new Date().toISOString()}:${Math.random().toString(36).slice(2, 10)}`;

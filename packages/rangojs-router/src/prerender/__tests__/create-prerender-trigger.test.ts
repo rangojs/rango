@@ -322,6 +322,167 @@ describe("createPrerenderTrigger", () => {
     expect(result).toMatchObject({ ok: true, ttl: 300 });
   });
 
+  describe("a render that answers with a redirect", () => {
+    const redirect = { status: 302, location: "/products/43" };
+    const redirected = () =>
+      harness({
+        runProducer: async () =>
+          output({
+            redirect,
+            onDemandConfig: {
+              ttl: 120,
+              tags: ({ params }) => [`product:${params.id}`],
+            },
+          }),
+      });
+
+    it("stores the redirect in place of the page and reports redirected", async () => {
+      const { trigger, store } = redirected();
+
+      const result = await trigger("/products/42");
+
+      expect(result).toMatchObject({
+        ok: true,
+        path: "on-demand",
+        status: "redirected",
+        target: "/products/42",
+        redirect,
+        tags: ["product:42"],
+        ttl: 120,
+      });
+      // A redirect is stamped like a page (route ttl/tags), so it is rechecked
+      // like one; the envelope holds no entry, so nothing renders from it.
+      const stored = store.entries()[0]![1];
+      expect(stored).toMatchObject({ v: 1, redirect });
+      expect(stored).not.toHaveProperty("entry");
+      expect(stored).not.toHaveProperty("removed");
+      expect(stored.meta.tags).toEqual(["product:42"]);
+      expect(stored.meta.staleAt).toBeDefined();
+    });
+
+    it("replaces a page stored by an earlier refresh, and a later refresh replaces the redirect", async () => {
+      const store = createMemoryPrerenderStore();
+      let answer: ProducerOutput = output();
+      const { trigger } = harness({
+        config: { store },
+        runProducer: async () => answer,
+      });
+
+      expect(await trigger("/products/42")).toMatchObject({
+        status: "rendered",
+      });
+      answer = output({ redirect });
+      expect(await trigger("/products/42")).toMatchObject({
+        status: "redirected",
+      });
+      expect(store.entries()[0]![1]).toHaveProperty("redirect");
+
+      answer = output();
+      expect(await trigger("/products/42")).toMatchObject({
+        status: "rendered",
+      });
+      expect(store.entries()[0]![1]).toHaveProperty("entry");
+      expect(store.entries()[0]![1]).not.toHaveProperty("redirect");
+    });
+
+    it("onlyIfStale leaves a fresh redirect and renders once it is stale", async () => {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+      try {
+        const runProducer = vi.fn(async () =>
+          output({ redirect, onDemandConfig: { ttl: 1 } }),
+        );
+        const { trigger } = harness({ runProducer });
+        await trigger("/products/42"); // staleAt = 1000 + 1000ms
+        runProducer.mockClear();
+
+        // Fresh: left as it is, and the result says what a request gets.
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "redirected", redirect });
+        expect(runProducer).not.toHaveBeenCalled();
+
+        // Stale: rendered again, like a page. The route stopped redirecting,
+        // so the page is stored over the redirect.
+        clock.mockReturnValue(5000);
+        runProducer.mockImplementation(async () => output());
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "rendered" });
+        expect(runProducer).toHaveBeenCalledTimes(1);
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("markStale reaches a stored redirect, as it reaches a marker", async () => {
+      const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+      try {
+        const { trigger } = redirected();
+        await trigger("/products/42");
+        clock.mockReturnValue(2000);
+        await trigger.markStale(["product:42"]);
+
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "redirected" });
+      } finally {
+        clock.mockRestore();
+      }
+    });
+
+    it("a remove() that lands during the render wins over the redirect", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(1_000_000);
+        const store = createMemoryPrerenderStore();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        let entered!: () => void;
+        const started = new Promise<void>((resolve) => (entered = resolve));
+        const { trigger } = harness({
+          config: { store },
+          runProducer: async () => {
+            entered();
+            await gate;
+            return output({ redirect });
+          },
+        });
+
+        const run = trigger("/products/42");
+        await started;
+        // A webhook removes the page while this render is in flight.
+        vi.setSystemTime(1_000_005);
+        await trigger.remove("/products/42");
+        release();
+
+        expect(await run).toMatchObject({ ok: true, status: "removed" });
+        expect(store.entries()[0]![1]).toMatchObject({ removed: true });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not warm after storing a redirect", async () => {
+      // A shared store, so the warm would run if it were not refused: the
+      // follow-up request would follow the redirect this refresh just stored.
+      class GlobalStore extends MemorySegmentCacheStore {
+        readonly scope = "global" as const;
+      }
+      const fetch = vi.fn(async () => new Response("ok"));
+      const { trigger } = harness({
+        runProducer: async () => output({ redirect }),
+        resolveCacheConfig: () => ({ store: new GlobalStore() }),
+        fetch,
+      });
+
+      expect(await trigger("https://shop.example/products/42")).toMatchObject({
+        ok: true,
+        status: "redirected",
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    });
+  });
+
   describe("onlyIfStale", () => {
     it("returns already-fresh without rendering when the entry is fresh", async () => {
       const store = createMemoryPrerenderStore();

@@ -9,7 +9,10 @@
 
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
-import type { WritablePrerenderStore } from "./writable-store.js";
+import type {
+  StoredRedirect,
+  WritablePrerenderStore,
+} from "./writable-store.js";
 import type { ShellCaptureRefusal } from "../rsc/shell-capture-constants.js";
 
 declare const prerenderTargetBrand: unique symbol;
@@ -173,6 +176,29 @@ export type PrerenderResult =
        * store is not shared, no origin resolved, or nothing was rendered.
        */
       caches?: PrerenderWarmCaches;
+    }
+  | {
+      ok: true;
+      path: "on-demand";
+      /**
+       * The render answered with a redirect (`redirect()`), and the redirect is
+       * stored in place of the page: requests to the target get that 3xx (a
+       * partial navigation gets the soft redirect) without running the
+       * handler. Stamped with the route's `tags` and `ttl` like a page, so it
+       * is rechecked like one: `onlyIfStale` leaves it while fresh (and
+       * reports `redirected`), renders again once stale, and `markStale()`
+       * reaches it. A later refresh that renders a page replaces it.
+       */
+      status: "redirected";
+      target: string;
+      routeName: string;
+      /** Opaque, for debugging/logs only — not a stable format. */
+      key: string;
+      tags: string[];
+      /** Absent = never stale. */
+      ttl?: number;
+      /** What a request to the target is answered with, as stored. */
+      redirect: StoredRedirect;
     }
   | {
       ok: true;
