@@ -15,11 +15,35 @@ held only `use` (`const { use } = ctx`) or a copy (`{ ...ctx }`) read the
 shared id too, whichever handler handed it the ctx.
 
 **Now.** The message names the segment whose ctx the push went through, the
-route's, the layout's or the slot's:
+route's, the layout's, the slot's or the intercept's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-Each handler's ctx carries its own segment, and its own `use` keeps it when a
-component calls it detached from the ctx. The push is still rejected, at the
+Each handler's ctx belongs to its own segment, however a component holds it:
+the ctx, a destructured `use`, a `use` borrowed onto another object
+(`{ use: ctx.use }`) or a `{ ...ctx }` copy. The push is still rejected, at the
 same moment, and production still shows no message.
+
+### Fixed: a loader a component starts through a layout's ctx pushes into the layout
+
+**Before.** A loader started with `ctx.use(Loader)` from an async component a
+layout's or a parallel slot's handler handed its `ctx` to filed its own handle
+pushes under the child route's segment, and a route's under its own slot's:
+the breadcrumb or meta it pushed sat in the wrong segment's handle data, and
+a navigation that kept the layout and replaced the route dropped it. A
+`"use cache"` function the component called with that `ctx` replayed a HIT's
+pushes into the same wrong segment, while its MISS filed them under the
+layout.
+
+**Now.** Both file under the segment of the handler whose `ctx` the component
+was handed, live and on a `"use cache"` HIT alike.
+
+### Fixed: `{ ...ctx }` in a layout's or slot's handler copies the request fields
+
+**Before.** A spread copy of a layout's or parallel slot's `ctx` held only
+`reverse` (no `params`, `pathname`, `url`, `env`, `get` or `use`), so code
+handed `{ ...ctx }` read `undefined` with no error.
+
+**Now.** A copy of any handler's `ctx` carries the same fields as a copy of a
+route handler's, with the segment's own `use` and `reverse`.
 
 ## 0.35.0 (2026-11-04)
 

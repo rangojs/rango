@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -207,53 +208,106 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a route's, layout's or parallel slot's handler gets: a prototype
- * child of the request's one handler ctx that carries its own segment.
+ * Accessors a segment ctx (withSegmentScope) forwards its base's own
+ * enumerable fields through, one shared pair per key: a closure per ctx would
+ * give every ctx its own property shape (see THEME_DESCRIPTOR).
+ */
+const FORWARDED_FIELDS = new Map<PropertyKey, PropertyDescriptor>();
+
+function forwardedField(key: PropertyKey): PropertyDescriptor {
+  let descriptor = FORWARDED_FIELDS.get(key);
+  if (!descriptor) {
+    descriptor = {
+      get(this: object) {
+        return (Reflect.getPrototypeOf(this) as any)[key];
+      },
+      // A write lands on the segment's ctx alone, as it would on any own
+      // field: the request's one ctx stays what every other segment reads.
+      set(this: object, value: unknown) {
+        Object.defineProperty(this, key, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      },
+      enumerable: true,
+      configurable: true,
+    };
+    FORWARDED_FIELDS.set(key, descriptor);
+  }
+  return descriptor;
+}
+
+/**
+ * The ctx a route's, layout's, parallel slot's or intercept's handler gets: a
+ * prototype child of the request's one handler ctx that carries the
+ * handler's own segment in `_segmentId`.
  *
- * The segment rides the object for the same reason the scope does: the walker
- * moves the shared `_currentSegmentId` on while an async component the handler
- * handed this ctx to is still rendering, so a push made through this ctx after
- * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * The segment rides the object, not the call frame: the walker moves the
+ * shared `_currentSegmentId` on while an async component the handler handed
+ * this ctx to is still rendering, so a handle push, a loader kickoff or a
+ * "use cache" call made through it after an `await` would otherwise file
+ * under (and a LateHandlePushError name) whatever segment the walker pinned
+ * since.
  *
- * The child owns `use` for that receiver: the shared implementation resolves
- * the segment off `this`, so a call that lost the receiver — `const { use } =
- * ctx`, `use` passed as a callback, `{ ...ctx }` — would file under the pin
- * the walker moved on. The wrapper supplies the child as the receiver, and
- * reads the base's `use` at call time because loader-cache.ts swaps it for
- * its override interceptor after the child exists.
+ * The child owns `use`, a closure over the segment, not over a receiver: it
+ * runs the request's `use` as this segment's code (runAsSegment), where the
+ * push's segment and the loader's owner are read synchronously (segmentPinOf).
+ * So `const { use } = ctx`, `use` passed as a callback or borrowed onto
+ * another object, and every wrapper of the request's `use` in between
+ * (loader-cache.ts's override interceptor) file under this segment. It reads
+ * the request's `use` at call time because loader-cache.ts swaps it after
+ * the child exists. A "use cache" call that takes the ctx as an argument
+ * reads `_segmentId` off it (segmentPinOf, cache-runtime.ts).
+ *
+ * Every own enumerable field of the base at creation is forwarded as an
+ * enumerable accessor, so a `{ ...ctx }` copy carries `params`, `pathname`,
+ * `get`, the NOCACHE brand a "use cache" call keys by, `use` and
+ * `_segmentId`, as a copy of the request's one ctx does; a read goes through
+ * live (`_currentSegmentId` as resolution moves it). A field the base gains
+ * later is read through the prototype.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
- * call that takes this ctx, cache-runtime.ts). Every other field reads
- * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ * call that takes this ctx, cache-runtime.ts).
  */
-export function withSegmentScope<C>(
+export function withSegmentScope<C extends object>(
   ctx: C,
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
   const base = ctx as any;
-  const scoped = Object.create(ctx as object) as C & {
-    _handleSegmentId: string;
-    use: any;
-    reverse?: unknown;
-    _reverseScope?: ReverseScope;
-  };
-  scoped._handleSegmentId = segmentId;
-  scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
+  const own: PropertyDescriptorMap = {
+    _segmentId: { value: segmentId, enumerable: true },
+    use: {
+      value: (...args: unknown[]) =>
+        runAsSegment(segmentId, () => base.use(...args)),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    },
   };
   if (scope !== undefined) {
-    scoped.reverse = scopeReverse(base.reverse, scope);
-    scoped._reverseScope = scope;
+    own.reverse = {
+      value: scopeReverse(base.reverse, scope),
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    };
+    own._reverseScope = {
+      value: scope,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    };
   }
-  return scoped;
+  for (const key of Reflect.ownKeys(base)) {
+    if (Object.hasOwn(own, key)) continue;
+    if (!Object.getOwnPropertyDescriptor(base, key)!.enumerable) continue;
+    own[key as string] = forwardedField(key);
+  }
+  return Object.create(base, own) as C;
 }
 
 /**

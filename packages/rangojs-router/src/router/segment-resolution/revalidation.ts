@@ -1197,9 +1197,18 @@ async function resolveRouteComponent<TEnv>(
   // use the build handler from entry.handler.
   const handler =
     !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+  // The route's own ctx, as a layout's and a slot's are: the route resolves
+  // before its parallels and orphan layouts, so a component the handler hands
+  // the ctx to runs after the walker pinned one of those.
+  const routeContext = withSegmentScope(context, entry.shortCode, undefined);
   if (!entry.loading) {
     const result = handleHandlerResult(
-      await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      await observeSegmentHandler(
+        entry.shortCode,
+        entry.id,
+        handler,
+        routeContext,
+      ),
     );
     doneHandler();
     return result;
@@ -1207,7 +1216,7 @@ async function resolveRouteComponent<TEnv>(
   if (!actionContext) {
     const result = handleHandlerResult(
       runAsSegment(entry.shortCode, () =>
-        observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+        observeSegmentHandler(entry.shortCode, entry.id, handler, routeContext),
       ),
     );
     if (result instanceof Promise) {
@@ -1233,7 +1242,12 @@ async function resolveRouteComponent<TEnv>(
     entryId: entry.id,
   });
   const actionResult = handleHandlerResult(
-    await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+    await observeSegmentHandler(
+      entry.shortCode,
+      entry.id,
+      handler,
+      routeContext,
+    ),
   );
   doneHandler();
   return {
@@ -1266,13 +1280,6 @@ export async function resolveEntryHandler<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         entry.shortCode;
       if (entry.type === "route") {
-        // The route handler's ctx is the request's one handler ctx, so it
-        // carries the route's segment beside the pin: the route resolves
-        // before its orphan layouts and its parallels, and a component it
-        // hands the ctx to pushes after the walker pinned one of those
-        // (handlePushSegment, router/loader-resolution.ts).
-        (context as InternalHandlerContext<any, TEnv>)._pushSegmentId =
-          entry.shortCode;
         component = await resolveRouteComponent(pass, entry);
       } else {
         const doneHandler = track(`handler:${entry.id}`, 2);

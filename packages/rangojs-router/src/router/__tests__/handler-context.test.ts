@@ -24,7 +24,11 @@ import {
   stripInternalParams,
   withSegmentScope,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -605,8 +609,8 @@ describe("createReverseFunction", () => {
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
       // The segment the push through this ctx files under holds too.
-      expect(scoped._handleSegmentId).toBe("M0L0L0");
-      expect(ctx._handleSegmentId).toBeUndefined();
+      expect(scoped._segmentId).toBe("M0L0L0");
+      expect(ctx._segmentId).toBeUndefined();
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
     });
@@ -617,47 +621,75 @@ describe("createReverseFunction", () => {
       } as unknown as InternalHandlerContext<any, any>;
       const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
       expect(scoped).not.toBe(ctx);
-      expect(scoped._handleSegmentId).toBe("M0L0L0R0");
+      expect(scoped._segmentId).toBe("M0L0L0R0");
       expect(scoped._reverseScope).toBeUndefined();
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
 
-    it("withSegmentScope: a detached `use` calls the base's current `use` with the child", () => {
-      const seen: Array<{ receiver: any; item: string }> = [];
+    it("withSegmentScope: `use` runs the base's current `use` as the segment, however it is held", () => {
+      const seen: Array<{ segment: string | undefined; item: string }> = [];
       const ctx = {
         reverse: routeReverse(),
+        _currentSegmentId: "M0L0L0R0.@aside",
       } as unknown as InternalHandlerContext<any, any>;
-      const record = function (this: unknown, item: string) {
-        seen.push({ receiver: this, item });
+      (ctx as any).use = (item: string) => {
+        seen.push({ segment: segmentPinOf(ctx), item });
         return item;
       };
-      (ctx as any).use = record;
       const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
       // Swapped after the child exists, as loader-cache.ts swaps it: the
       // wrapper must not have captured the old one.
-      const swapped = function (this: unknown, item: string) {
-        seen.push({ receiver: this, item: `swapped:${item}` });
+      const swapped = (item: string) => {
+        seen.push({ segment: segmentPinOf(ctx), item: `swapped:${item}` });
         return item;
       };
       (ctx as any).use = swapped;
 
-      // A destructured `use` is called with no receiver at all.
-      const { use } = scoped as unknown as { use: (item: string) => string };
-      use("handle");
-      expect(seen).toHaveLength(1);
-      expect(seen[0]!.item).toBe("swapped:handle");
-      // The receiver carries the segment, which is what ctx.use files by.
-      expect(seen[0]!.receiver._handleSegmentId).toBe("M0L0L0R0");
-
-      // A copy carries the wrapper and the segment together.
-      const copy = { ...scoped } as unknown as {
-        use: (item: string) => string;
-      };
-      copy.use("copied");
-      expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0");
-      // The shared ctx keeps the record it had.
+      const held = scoped as unknown as { use: (item: string) => string };
+      const { use } = held;
+      use("detached");
+      ({ ...held }).use("copied");
+      ({ use: held.use }).use("borrowed");
+      expect(seen).toEqual([
+        { segment: "M0L0L0R0", item: "swapped:detached" },
+        { segment: "M0L0L0R0", item: "swapped:copied" },
+        { segment: "M0L0L0R0", item: "swapped:borrowed" },
+      ]);
+      // Outside the call the request's ctx reads its pin, and keeps its `use`.
+      expect(segmentPinOf(ctx)).toBe("M0L0L0R0.@aside");
       expect((ctx as any).use).toBe(swapped);
+    });
+
+    it("withSegmentScope: a spread copy carries the base's fields, read when it is made", () => {
+      const brand = Symbol.for("rango:nocache");
+      const ctx = {
+        params,
+        pathname: "/acme/web/issues",
+        reverse: routeReverse(),
+        _currentSegmentId: "L0",
+        [brand]: true,
+      } as unknown as InternalHandlerContext<any, any>;
+      Object.defineProperty(ctx, "hidden", { value: 1, enumerable: false });
+      const scoped = withSegmentScope(ctx, "M0L0L0", {
+        prefix: "account",
+        rootScoped: false,
+      });
+      ctx._currentSegmentId = "L1";
+      const copy = { ...scoped } as any;
+      expect(copy.params).toBe(params);
+      expect(copy.pathname).toBe("/acme/web/issues");
+      expect(copy._currentSegmentId).toBe("L1");
+      expect(copy[brand]).toBe(true);
+      expect(copy._segmentId).toBe("M0L0L0");
+      // The segment's own reverse, not the route's.
+      expect(copy.reverse(".settings")).toBe("/acme/settings");
+      // Non-enumerable fields stay off copies, as on the request's ctx.
+      expect("hidden" in copy).toBe(false);
+      // A write lands on the segment's ctx, not on the request's.
+      (scoped as any).pathname = "/elsewhere";
+      expect((scoped as any).pathname).toBe("/elsewhere");
+      expect(ctx.pathname).toBe("/acme/web/issues");
     });
   });
 
