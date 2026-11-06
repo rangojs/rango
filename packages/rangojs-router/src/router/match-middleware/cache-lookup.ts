@@ -612,8 +612,18 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      sentIds?.add(segment.id);
+      // A stored segment this response serves stands in for its handler:
+      // the browser replaces the segment's handle values with the ones the
+      // response delivers, none when the record holds none, exactly as for a
+      // handler that ran (handles/pushed-by.ts mergePartialHandleData).
+      // Without the marker, a record written by a handler that pushed nothing
+      // left the previous page's values in place on every HIT.
+      segment._handlerRan = true;
+    }
     yield segment;
   }
 

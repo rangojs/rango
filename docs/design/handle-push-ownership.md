@@ -1263,7 +1263,12 @@ which run made each one.
 3. **`resolvedIds` names the loaders that ran** (`router/match-result.ts`).
    A partial match resolves only the loaders it runs, so each loader segment
    it returns is in `resolvedIds` next to the handlers that ran. That also
-   makes the field's documented "superset of `diff`" true.
+   makes the field's documented "superset of `diff`" true. A segment served
+   from a `cache()` record or a prerender entry stands in for its handler and
+   is listed the same way (`cache-lookup.ts` `serveStoredSegments`): the
+   browser replaces its pushes with the record's, none when the record holds
+   none. A record does not carry the marker, so the list is derived from the
+   send decision on serve.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

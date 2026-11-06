@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a cached response lists the segments it serves, so a handle value a page cleared no longer comes back on a cache hit
+
+**Before.** A partial response lists in `resolvedIds` the segments whose
+handle values the browser replaces with the ones the response delivers. A
+`cache()` record, a `Prerender()` entry and a ppr shell replay served their
+stored segments without listing them, so a segment whose handler pushed
+nothing on the render that wrote the record kept the values of the page the
+visitor left: a breadcrumb a navigation cleared came back on every later hit
+of the same URL.
+
+**Now.** A stored segment a response serves is listed in `resolvedIds`, next
+to the handlers and loaders that ran, so the browser replaces that segment's
+handle values with the ones the response delivers (none when the record holds
+none). A segment the client keeps is still left out, as on a live navigation.
+Nothing else on the wire changes.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -776,7 +776,16 @@ See "Rewrite" below for what moves and what stays.
   HIT exactly as on the live path, `transition({ when })` or not (#986;
   `keepClientSegment` in `match-middleware/cache-lookup.ts`, pinned by
   `serve-shell-request-replay-revalidate.rsc-test.tsx` and the dev+production
-  load-more e2e in both apps). Production may use
+  load-more e2e in both apps). Every stored segment a HIT does serve is listed
+  in `resolvedIds` (`serveStoredSegments`, the branch opposite
+  `keepClientSegment`): the browser replaces that segment's handle values with
+  the ones the response delivers, none when the record holds none, as for a
+  handler that ran (`mergePartialHandleData`). A record carries no
+  `_handlerRan` (`serializeSegments` copies named fields), so the list is
+  derived from the send decision on serve, not persisted. Pinned for a
+  `cache()` record, a `Prerender()` entry and a replay HIT by
+  `testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx` and, across the
+  three sources, by `match-middleware/__tests__/stored-source.rsc-test.tsx`. Production may use
   a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
   and stale-within-SWR runtime generations replay via a non-claiming passive
   read; those usable reads never schedule recapture. Missing, invalid-version,
