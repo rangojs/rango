@@ -4,18 +4,28 @@
 
 ### Fixed: a dev `LateHandlePushError` names the segment whose ctx pushed
 
-**Before.** An async server component a layout's (or a parallel slot's)
-handler handed its `ctx` to that pushed a handle after an `await` was rejected
-— by design, the `.defer()` path is the mitigation — and the dev
-`LateHandlePushError` named the child route's segment: `ctx.use(Handle)` read
-the request's shared segment id when it was called, and by then the route
-handler had run and moved it on.
+**Before.** An async server component a handler handed its `ctx` to that
+pushed a handle after an `await` was rejected — by design, the `.defer()` path
+is the mitigation — and the dev `LateHandlePushError` named the wrong segment:
+`ctx.use(Handle)` read the request's shared segment id when it was called, and
+by then the walker had run another segment's handler and moved it on. For a
+layout's or a parallel slot's ctx that was the child route's segment; for a
+route's ctx with a sibling slot, an orphan layout or an intercept resolved
+after its handler it was that segment's; for an intercept handler's ctx it was
+whichever slot resolved last. Destructuring `use` off the ctx (`const { use } =
+ctx`) filed under the shared id too, and so did a loader the component started
+through the ctx: its pushes belonged to the segment whose pin was current, not
+to the ctx that started it.
 
-**Now.** The message names the layout's or the slot's segment, the one that
-owns the ctx the push went through:
+**Now.** The message names the segment whose ctx made the push — the layout's,
+the slot's, the route's or the intercept's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+A layout's, slot's and intercept's ctx carries its segment, so a destructured
+`use` and a ctx built on it reach the same segment, and a loader a component
+starts through it belongs to it. A route handler's ctx stays the request's one
+ctx, and each sub-walk the walker runs after a handler puts the shared segment
+id back, so the route's own pushes keep naming the route. The push is still
+rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

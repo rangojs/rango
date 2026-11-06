@@ -207,17 +207,25 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx that carries its own segment.
+ * The ctx a layout's, a parallel slot's or an intercept's handler gets: a
+ * prototype child of the request's one handler ctx that carries its own
+ * segment.
  *
  * The segment rides the object for the same reason the scope does: the walker
  * moves the shared `_currentSegmentId` on while an async component the handler
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
  * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
+ * `_handleSegmentId` off the receiver it was called on (useCtx,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
+ *
+ * The child owns `use` for the same reason: a component may destructure it
+ * (`const { use } = ctx`) or rebind it, and the call site's receiver then
+ * carries no segment at all. The closure keeps the ctx, so the push still
+ * files under this segment; it delegates to whatever `use` the parent carries
+ * at call time, so a cached loader's interceptor (loader-cache.ts) still
+ * answers a HIT.
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -229,15 +237,28 @@ export function withSegmentScope<C>(
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
-  const scoped = Object.create(ctx as object) as C & {
+  const scoped = Object.create(ctx as object) as C;
+  const internal = scoped as unknown as {
     _handleSegmentId: string;
+    use?: unknown;
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
-  scoped._handleSegmentId = segmentId;
+  internal._handleSegmentId = segmentId;
+  // `this` is the receiver when it is one of these children (a ctx built on
+  // top of this one), else this child: a detached or re-bound call must not
+  // lose the segment.
+  internal.use = function (
+    this: { _handleSegmentId?: string } | undefined,
+    item: unknown,
+  ): unknown {
+    const receiver =
+      this?._handleSegmentId === undefined ? scoped : (this as object);
+    return Reflect.apply((ctx as any).use, receiver, [item]);
+  };
   if (scope !== undefined) {
-    scoped.reverse = scopeReverse((ctx as any).reverse, scope);
-    scoped._reverseScope = scope;
+    internal.reverse = scopeReverse((ctx as any).reverse, scope);
+    internal._reverseScope = scope;
   }
   return scoped;
 }
