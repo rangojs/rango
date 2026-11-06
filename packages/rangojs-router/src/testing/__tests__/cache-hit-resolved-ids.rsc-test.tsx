@@ -122,6 +122,36 @@ const pprRouter = createRouter({}).routes(
   ]),
 );
 
+/** Whether the intercept's handler pushes on this request. */
+let modalPushes = true;
+
+/** An intercept over /item/:id, opened from /list. */
+const interceptRouter = createRouter({}).routes(
+  urls(({ path, layout, intercept }) => [
+    layout(
+      (ctx: HandlerContext) => {
+        ctx.use(Crumbs)("root");
+        return <main>shell</main>;
+      },
+      () => [
+        path("/list", page("list"), { name: "list" }),
+        path(
+          "/item/:id",
+          (ctx: HandlerContext<{ id: string }>) => {
+            ctx.use(Crumbs)("item");
+            return <article>item</article>;
+          },
+          { name: "item" },
+        ),
+        intercept("@modal", ".item", (ctx: HandlerContext<{ id: string }>) => {
+          if (modalPushes) ctx.use(Crumbs)("modal");
+          return <dialog>modal</dialog>;
+        }),
+      ],
+    ),
+  ]),
+);
+
 /** A baked page under a chain layout the client holds. */
 const prerenderRouter = createRouter({}).routes(
   urls(({ path, layout }) => [
@@ -170,16 +200,15 @@ async function readAnswer(
   return { answer: metadata, handles };
 }
 
-/** The page's crumbs after a partial response, merged as the browser merges. */
-async function crumbsAfter(
+/** A partial response merged onto `current` as the browser merges it. */
+async function mergedOnto(
   current: HandleData,
   result: ServeShellRequestResult,
-): Promise<string[]> {
+): Promise<{ data: HandleData; order: string[] }> {
   const { answer, handles } = await readAnswer(result);
   const order = filterSegmentOrder(answer.matched);
-  return collectHandleData(
-    Crumbs,
-    mergePartialHandleData(
+  return {
+    data: mergePartialHandleData(
       current,
       handles,
       order,
@@ -187,7 +216,16 @@ async function crumbsAfter(
       answer.resolvedIds,
     ),
     order,
-  );
+  };
+}
+
+/** The page's crumbs after a partial response, merged as the browser merges. */
+async function crumbsAfter(
+  current: HandleData,
+  result: ServeShellRequestResult,
+): Promise<string[]> {
+  const { data, order } = await mergedOnto(current, result);
+  return collectHandleData(Crumbs, data, order);
 }
 
 /** The segment whose crumb bucket holds `crumb`. */
@@ -207,18 +245,22 @@ function sentIds(answer: Answer): string[] {
     .map((s) => s.id);
 }
 
-/** No internal marker reaches the wire (match-result.ts strips it). */
-function expectNoInternalFields(answer: Answer): void {
-  const leaked = answer.segments.flatMap((s) =>
-    Object.keys(s).filter((key) => key.startsWith("_")),
+/** No internal segment marker reaches the client, in any payload container. */
+function expectNoInternalFields(result: ServeShellRequestResult): void {
+  const text = [result.flight, result.prelude, result.body]
+    .filter(Boolean)
+    .join("\n");
+  const leaked = new Set(
+    [...text.matchAll(/"(_[A-Za-z][A-Za-z0-9]*)":/g)].map((m) => m[1]),
   );
-  expect(leaked).toEqual([]);
+  expect([...leaked].sort()).toEqual([]);
 }
 
 beforeEach(async () => {
   await resetShellTestState();
   chainPushes = true;
   keptPushes = true;
+  modalPushes = true;
 });
 
 describe("a cache() HIT lists the segments it re-sends", () => {
@@ -227,7 +269,7 @@ describe("a cache() HIT lists the segments it re-sends", () => {
     const document = await serveShellRequest(router, "/a", { cacheStore });
     const { answer: docAnswer, handles: docHandles } =
       await readAnswer(document);
-    expectNoInternalFields(docAnswer);
+    expectNoInternalFields(document);
     expect(
       collectHandleData(
         Crumbs,
@@ -244,7 +286,7 @@ describe("a cache() HIT lists the segments it re-sends", () => {
     const partial = { from: "/a", segments: docAnswer.matched };
     const miss = await serveShellRequest(router, "/b", { cacheStore, partial });
     const { answer: missAnswer } = await readAnswer(miss);
-    expectNoInternalFields(missAnswer);
+    expectNoInternalFields(miss);
     expect(await crumbsAfter(docHandles, miss)).toEqual(["root", "kept", "b"]);
 
     // The HIT serves the record the MISS wrote: it sends the same segments,
@@ -253,7 +295,7 @@ describe("a cache() HIT lists the segments it re-sends", () => {
     keptPushes = true;
     const hit = await serveShellRequest(router, "/b", { cacheStore, partial });
     const { answer: hitAnswer } = await readAnswer(hit);
-    expectNoInternalFields(hitAnswer);
+    expectNoInternalFields(hit);
     expect(hitAnswer.resolvedIds).toEqual(missAnswer.resolvedIds);
     expect(await crumbsAfter(docHandles, hit)).toEqual(["root", "kept", "b"]);
   });
@@ -303,7 +345,7 @@ describe("a PPR navigation replay lists what the live navigation lists", () => {
       reason: "no-entry",
     });
     const { answer: liveAnswer } = await readAnswer(live);
-    expectNoInternalFields(liveAnswer);
+    expectNoInternalFields(live);
     expect(await crumbsAfter(listHandles, live)).toEqual([
       "root",
       "kept",
@@ -318,13 +360,47 @@ describe("a PPR navigation replay lists what the live navigation lists", () => {
     });
     expect(replay.replayStatus).toEqual({ outcome: "HIT", freshness: "fresh" });
     const { answer: replayAnswer } = await readAnswer(replay);
-    expectNoInternalFields(replayAnswer);
+    expectNoInternalFields(replay);
     expect(replayAnswer.resolvedIds).toEqual(liveAnswer.resolvedIds);
     expect(await crumbsAfter(listHandles, replay)).toEqual([
       "root",
       "kept",
       "target",
     ]);
+  });
+});
+
+describe("a live intercept navigation lists the slot whose handler ran", () => {
+  it("a slot that re-runs and pushes nothing clears its crumb", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const list = await serveShellRequest(interceptRouter, "/list", {
+      cacheStore,
+    });
+    const { answer: listAnswer, handles: listHandles } = await readAnswer(list);
+
+    const first = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: listAnswer.matched },
+    });
+    const { answer: firstAnswer } = await readAnswer(first);
+    expectNoInternalFields(first);
+    const open = await mergedOnto(listHandles, first);
+    expect(collectHandleData(Crumbs, open.data, open.order)).toEqual([
+      "root",
+      "modal",
+      "list",
+    ]);
+
+    // A second open re-runs the slot's handler, which pushes nothing this
+    // time: the client clears the crumb it holds.
+    modalPushes = false;
+    const second = await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore,
+      partial: { from: "/list", segments: listAnswer.matched },
+    });
+    const { answer: secondAnswer } = await readAnswer(second);
+    expectNoInternalFields(second);
+    expect(await crumbsAfter(open.data, second)).toEqual(["root", "list"]);
   });
 });
 
@@ -343,7 +419,7 @@ describe("a Prerender() HIT lists the segments its bake sends", () => {
       partial,
     });
     const { answer } = await readAnswer(baked);
-    expectNoInternalFields(answer);
+    expectNoInternalFields(baked);
     // The bake's route is sent whole; the chain layout above it is the
     // client's, so it is neither delivered nor listed.
     expect(sentIds(answer)).toEqual(answer.resolvedIds);

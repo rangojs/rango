@@ -487,7 +487,14 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  // The handler ran, so the browser replaces the slot's handle values with
+  // what this response delivers, as it does for a layout's or a route's
+  // handler (match-result.ts resolvedIds). A slot a fill keeps (above) did not
+  // run and keeps its values. Assigned, not spread: match-result.ts strips the
+  // marker from the wire (`segments` and `slots`).
+  const slot = slotSegment(component, layoutElement);
+  slot._handlerRan = true;
+  return [slot, ...loaderSegments];
 }
 
 /**

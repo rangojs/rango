@@ -211,12 +211,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -235,7 +230,10 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots:
+      Object.keys(state.slots).length > 0
+        ? cleanedSlots(state.slots)
+        : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -260,6 +258,35 @@ export function buildMatchResult<TEnv>(
  * answer that sends nothing count as live too: the browser would keep the
  * first two past their refresh, and the third is a source page's answer.
  */
+/**
+ * `segment` without the internal `_handlerRan` marker: the same object when it
+ * carries none, so a segment that never ran is not copied.
+ */
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The pipeline's slots with their segments stripped of the marker. A slot's
+ * segments are the objects the pipeline yielded (intercept-resolution.ts marks
+ * a slot whose handler ran), and `slots` ships as payload metadata, where the
+ * marker must not appear — `segments` is stripped the same way.
+ */
+function cleanedSlots(
+  slots: MatchPipelineState["slots"],
+): Record<string, MatchPipelineState["slots"][string]> {
+  const out: Record<string, MatchPipelineState["slots"][string]> = {};
+  for (const [name, slot] of Object.entries(slots)) {
+    const segments = slot.segments.map(withoutHandlerRan);
+    out[name] = segments.every((segment, i) => segment === slot.segments[i])
+      ? slot
+      : { ...slot, segments };
+  }
+  return out;
+}
+
 function sendsOnlyStored(
   sent: readonly ResolvedSegment[],
   state: MatchPipelineState,

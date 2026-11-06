@@ -2,25 +2,30 @@
 
 ## Unreleased
 
-### Fixed: a cache HIT lists the segments it re-sends in `resolvedIds`, as the MISS that wrote the record did
+### Fixed: a response lists every segment whose handle values it carries, on a cache HIT and on an intercept navigation
 
 **Before.** A partial response's `resolvedIds` tells the browser which
 segments' handle values to replace (`NavigationProvider` → `setHandleData` →
-`mergePartialHandleData`). A partial MISS listed every segment whose handler
-re-ran; a HIT listed none of the segments it served from a `cache()` record, a
-`Prerender()` bake or a PPR navigation replay, because a stored record does not
-carry the internal `_handlerRan` marker. A segment the record re-sent without a
-value of its own — a chain layout whose `revalidate()` re-runs it and which
-pushes nothing this time — kept the client's previous value: a breadcrumb that
-cleared on the navigation came back on the next HIT of the same page.
+`mergePartialHandleData`). Two kinds of segment were missing from it, so a
+value the response did not carry stayed on the page. A cache HIT listed none of
+the segments it served from a `cache()` record, a `Prerender()` bake or a PPR
+navigation replay, because a stored record does not carry the internal
+`_handlerRan` marker. An intercept slot was never listed at all, because
+`resolveInterceptEntry` did not mark the slot whose handler ran. A segment
+re-sent without a value of its own — a chain layout whose `revalidate()`
+re-runs it, or an intercept reopened on another item — kept the client's
+previous value: a breadcrumb that cleared on the navigation came back on the
+next HIT of the same page, and a modal's crumb survived a second open.
 
-**Now.** The HIT derives the marker from its own send decision
+**Now.** A stored HIT derives the list from its own send decision
 (`cache-lookup.ts` `serveStoredSegments`): a segment it sends carries the
 record's handler values, so it is listed, and a segment the client keeps is not.
-A HIT lists exactly what it re-sends, so a segment the record re-sent with no
-value of its own no longer keeps the client's old one. A PPR navigation replay
-reports what the live navigation reports. The client is unchanged: only
-`resolvedIds` on the wire.
+An intercept slot whose handler ran is listed like any other handler's segment,
+and the internal marker no longer travels in the payload's `slots` metadata.
+So every response lists exactly the segments whose values it carries: a
+segment it re-sent with no value of its own no longer keeps the client's old
+one. A PPR navigation replay reports what the live navigation reports. The
+client is unchanged: only `resolvedIds` on the wire.
 
 ## 0.35.0 (2026-11-04)
 
