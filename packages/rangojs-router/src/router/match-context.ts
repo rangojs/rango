@@ -265,6 +265,13 @@ export interface MatchPipelineState {
   // that lands (MatchResult.fromStorage counts it live)
   storedStale?: boolean;
 
+  // Ids of the stored segments a HIT re-sent (match-middleware/cache-lookup.ts
+  // serveStoredSegments). The response carries the record's handler values for
+  // them, so the browser replaces them as it does a handler's that ran
+  // (MatchResult.resolvedIds). Empty or absent on a document, which lists
+  // every segment anyway.
+  storedSentIds?: ReadonlySet<string>;
+
   // Source of cache hit ("runtime" or "prerender")
   cacheSource?: "runtime" | "prerender";
 
@@ -295,5 +302,6 @@ export function createPipelineState(): MatchPipelineState {
     matchedIds: [],
     interceptSegments: [],
     slots: {},
+    storedSentIds: undefined,
   };
 }

@@ -592,6 +592,13 @@ async function* serveStoredSegments<TEnv>(
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
   const sentIds = restoreHandles && new Set<string>();
+  // The segments this HIT re-sends carry the record's handler values, so the
+  // browser replaces their handle buckets as it does a handler's that ran
+  // (MatchResult.resolvedIds). A record does not carry the run marker
+  // (segment-codec.ts serializeSegments copies named fields), and the send
+  // decision here is what the client keeps, so the ids are collected as it is
+  // made. A document lists every segment, so it collects none.
+  const storedSentIds = ctx.isFullMatch ? undefined : new Set<string>();
 
   yield* liveSegments;
 
@@ -612,10 +619,15 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      sentIds?.add(segment.id);
+      storedSentIds?.add(segment.id);
+    }
     yield segment;
   }
+  state.storedSentIds = storedSentIds;
 
   // A partial cache() HIT replays handler values for the segments it sends
   // only, decided above after the live entries: a kept segment keeps the

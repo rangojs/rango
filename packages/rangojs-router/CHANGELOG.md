@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a cache HIT lists the segments it re-sends in `resolvedIds`, as the MISS that wrote the record did
+
+**Before.** A partial response's `resolvedIds` tells the browser which
+segments' handle values to replace (`NavigationProvider` → `setHandleData` →
+`mergePartialHandleData`). A partial MISS listed every segment whose handler
+re-ran; a HIT listed none of the segments it served from a `cache()` record, a
+`Prerender()` bake or a PPR navigation replay, because a stored record does not
+carry the internal `_handlerRan` marker. A segment the record re-sent without a
+value of its own — a chain layout whose `revalidate()` re-runs it and which
+pushes nothing this time — kept the client's previous value: a breadcrumb that
+cleared on the navigation came back on the next HIT of the same page.
+
+**Now.** The HIT derives the marker from its own send decision
+(`cache-lookup.ts` `serveStoredSegments`): a segment it sends carries the
+record's handler values, so it is listed, and a segment the client keeps is not.
+A HIT reports the same `resolvedIds` as the MISS that wrote the record, and a
+PPR navigation replay reports what the live navigation reports. The client is
+unchanged: only `resolvedIds` on the wire.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -176,12 +176,20 @@ export function buildMatchResult<TEnv>(
     // the browser replaces that loader's handle pushes, and keeps those of a
     // loader it skipped (handles/pushed-by.ts).
     const clientIdSet = new Set(ctx.clientSegmentIds);
+    // A stored HIT's handler did not run; the response carries the record's
+    // copy of its values, which the browser replaces the same way
+    // (cache-lookup.ts serveStoredSegments collects what it sends).
+    const storedSentIds = state.storedSentIds;
     segmentsToRender = [];
     resolvedIds = [];
     for (const s of allSegments) {
       // A deferred loader (prefetch: false) did not run in this response:
       // its pushes arrive with the fill, which lists it then.
-      if (s._handlerRan || (s.type === "loader" && !isPlaceholder(s))) {
+      if (
+        s._handlerRan ||
+        storedSentIds?.has(s.id) ||
+        (s.type === "loader" && !isPlaceholder(s))
+      ) {
         resolvedIds.push(s.id);
       }
       // A deferred unit (prefetch: false) has a null component and is sent:

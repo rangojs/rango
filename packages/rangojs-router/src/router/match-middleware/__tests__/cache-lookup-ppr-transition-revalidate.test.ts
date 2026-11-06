@@ -64,7 +64,7 @@ const ROUTE = "L0R0";
 async function drain(
   routeRevalidates: boolean,
   clientSegments: string[],
-): Promise<ResolvedSegment[]> {
+): Promise<{ segments: ResolvedSegment[]; state: MatchPipelineState }> {
   const store = new MemorySegmentCacheStore();
   await store.set(
     "partial:localhost/p?page=2",
@@ -140,7 +140,7 @@ async function drain(
     }),
   );
   expect(state.cacheHit).toBe(true);
-  return yielded;
+  return { segments: yielded, state };
 }
 
 const CLEARED = { component: false, loading: undefined };
@@ -167,7 +167,7 @@ describe("withCacheLookup — cache-hit segment decision with PPR transition dec
       route: { component: true, loading: "route-loading" },
     },
   ])("$label", async ({ routeRevalidates, clientSegments, route }) => {
-    const segments = await drain(routeRevalidates, clientSegments);
+    const { segments } = await drain(routeRevalidates, clientSegments);
 
     expect(
       Object.fromEntries(
@@ -177,5 +177,18 @@ describe("withCacheLookup — cache-hit segment decision with PPR transition dec
         ]),
       ),
     ).toEqual({ [LAYOUT]: CLEARED, [ROUTE]: route });
+  });
+
+  // A record does not carry the run marker (segment-codec.ts copies named
+  // fields), so a HIT collects the ids it sends as it decides them: the
+  // browser replaces a sent segment's handle values with the record's and
+  // keeps a kept one's (match-result.ts resolvedIds).
+  it("reports the segments it sends as run, and only those", async () => {
+    const { segments, state } = await drain(true, [LAYOUT, ROUTE]);
+
+    expect([...state.storedSentIds!]).toEqual([ROUTE]);
+    // No marker rides a served segment: state.slots carries these objects to
+    // the client as metadata.
+    expect(segments.some((s) => s._handlerRan !== undefined)).toBe(false);
   });
 });
