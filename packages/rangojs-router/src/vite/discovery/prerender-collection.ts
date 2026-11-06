@@ -445,11 +445,13 @@ export async function renderStaticHandlers(
             def.handler,
             def.$$id,
             // Full route name when stamped; the historical $$routePrefix is a
-            // name PREFIX (never in the root-scope registry) kept as fallback.
+            // name PREFIX kept as fallback for an unstamped def.
             (def as any).$$routeName ?? (def as any).$$routePrefix,
             state.resolvedBuildEnv,
             !state.isBuildMode,
-            (def as any).$$rootScoped,
+            // The def's own include scope, so dot-local reverse() bakes in the
+            // module that declared the segment (see stampStaticDefScope).
+            (def as any).$$reverseScope,
           );
           if (result) {
             // result.handles is the pre-encoded handle string ("" when none).

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or slot links in the module that defines it, at every nesting depth
+
+**Before.** A `Static()` layout or parallel slot baked `ctx.reverse(".name")`
+from the name PREFIX of its mount, which `resolveRouteName` strips one more
+segment off. A layout in `include("/:projectId", …, { name: "project" })`
+nested in `{ name: "account" }` resolved `.settings` from `account` and baked
+`/acme/settings`, while the same layout rendered live linked
+`/acme/web/settings`. A `Static()` layout at root scope got no prefix at all
+and threw `Unknown route: ".home"` at build, failing the build; the live root
+layout resolved it.
+
+**Now.** The build passes the def's own include scope — the same
+`ReverseScope` a live layout or slot carries — so `.name` bakes where it
+resolves live at every nesting depth, the root included. Global names and the
+links a nested module's own routes bake are unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

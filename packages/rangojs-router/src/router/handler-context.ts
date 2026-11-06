@@ -503,12 +503,18 @@ export function createPrerenderContext<TEnv>(
  *
  * Returns an InternalHandlerContext where only reverse and use(handle) work.
  * Static handlers have no URL, no params, no pathname — everything else throws.
+ *
+ * `reverseScope` is the def's mount-time include scope (stampStaticDefScope):
+ * the bake has no matched route, so it is the only anchor a dot-local name can
+ * resolve in. Without it the bake falls back to `routeName`, which for a
+ * layout or slot is a name PREFIX that resolveRouteName strips one segment off.
  */
 export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
+  reverseScope?: ReverseScope,
 ): InternalHandlerContext<any, TEnv> {
   const variables: Record<string, any> = {};
 
@@ -581,13 +587,16 @@ export function createStaticContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: createReverseFunction(
-      routeMap,
-      routeName,
-      undefined,
-      routeName
-        ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
-        : undefined,
+    reverse: scopeReverse(
+      createReverseFunction(
+        routeMap,
+        routeName,
+        undefined,
+        routeName
+          ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
+          : undefined,
+      ),
+      reverseScope,
     ),
     _routeName: routeName,
   } as InternalHandlerContext<any, TEnv>;

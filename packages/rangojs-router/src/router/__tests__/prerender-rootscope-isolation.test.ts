@@ -32,8 +32,8 @@ import { generateManifestFull } from "../../build/generate-manifest.js";
 // root-scope registry — so even a router-scoped registry lookup degrades to
 // the `!prefix.includes(".")` heuristic. The fix stamps the definitive values
 // on the Static definition at mount time (stampStaticDefScope: $$routerId,
-// $$routeName, $$rootScoped) and the collector selects the owning router and
-// passes the stamped root-scope through.
+// $$routeName, $$reverseScope) and the collector selects the owning router and
+// passes the stamped reverse scope through.
 let resolved: string | undefined;
 let reverseError: unknown;
 
@@ -82,7 +82,7 @@ describe("bake-time root-scope isolation (issue #762)", () => {
 
     // Replicate the collector's EXACT production call on the OWNING router
     // (prerender-collection.ts): full route name with the prefix fallback,
-    // and the def-stamped root-scope. Pre-fix this shape leaked "/foo": the
+    // and the def-stamped reverse scope. Pre-fix this shape leaked "/foo": the
     // stamps did not exist, the prefix-shaped fallback name is never in the
     // root-scope registry, and the lookup fell to the no-dot heuristic.
     const def = staticDef as any;
@@ -93,7 +93,7 @@ describe("bake-time root-scope isolation (issue #762)", () => {
         def.$$routeName ?? def.$$routePrefix,
         undefined,
         undefined,
-        def.$$rootScoped,
+        def.$$reverseScope,
       )
       .catch(() => {});
 
@@ -103,7 +103,7 @@ describe("bake-time root-scope isolation (issue #762)", () => {
     // Mount-time stamps: the collector's ownership + scoping inputs.
     expect(def.$$routerId).toBe("bake-site");
     expect(def.$$routeName).toBe("scope.shared");
-    expect(def.$$rootScoped).toBe(false);
+    expect(def.$$reverseScope).toEqual({ prefix: "scope", rootScoped: false });
     expect(def.$$routePrefix).toBe("scope");
   });
 });

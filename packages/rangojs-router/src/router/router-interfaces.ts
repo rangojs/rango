@@ -562,7 +562,7 @@ export interface RangoInternal<
     routeName?: string,
     buildEnv?: any,
     devMode?: boolean,
-    rootScoped?: boolean,
+    reverseScope?: import("../server/context.js").ReverseScope,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
