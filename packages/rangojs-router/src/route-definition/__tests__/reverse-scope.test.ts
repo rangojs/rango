@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import { runWithPrefixes, type EntryData } from "../../server/context.js";
 import { layout, loader, parallel } from "../dsl-helpers.js";
 import type { LoaderDefinition } from "../../types.js";
+import { Static } from "../../static-handler.js";
 import { parentEntry, withDslStore } from "./dsl-test-helpers.js";
 
 const Loader = {
@@ -45,6 +46,33 @@ describe("reverseScope stamping", () => {
     const parent = parentEntry();
     withDslStore(parent, () => layout(null as never, () => []));
     expect(addedLayout(parent).reverseScope).toEqual({
+      prefix: undefined,
+      rootScoped: true,
+    });
+  });
+
+  it("a Static() layout and slot carry their scope to the build's bake", () => {
+    const shell = Static(() => null);
+    const aside = Static(() => null);
+    const parent = parentEntry();
+    withDslStore(parent, () =>
+      runWithPrefixes("/:accountId", "account", () =>
+        runWithPrefixes("/:projectId", "project", () =>
+          layout(shell as never, () => [
+            parallel({ "@aside": aside as never }),
+          ]),
+        ),
+      ),
+    );
+    const scope = { prefix: "account.project", rootScoped: false };
+    expect((shell as any).$$reverseScope).toEqual(scope);
+    expect((aside as any).$$reverseScope).toEqual(scope);
+  });
+
+  it("a root Static() layout carries the root scope", () => {
+    const shell = Static(() => null);
+    withDslStore(parentEntry(), () => layout(shell as never, () => []));
+    expect((shell as any).$$reverseScope).toEqual({
       prefix: undefined,
       rootScoped: true,
     });

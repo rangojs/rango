@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or parallel slot builds the links it shows in dev
+
+**Before.** A `Static()` layout or slot resolved `ctx.reverse(".name")` at
+build time one module too high when it sat two or more named includes deep.
+In `include("/:projectId", ..., { name: "project" })` inside
+`{ name: "account" }`, a `Static()` layout's `.settings` baked
+`/acme/settings` (the account route), while the same layout in dev linked to
+`/acme/web/settings` (the project route). A `Static()` layout or slot outside
+any named include failed the build with `Unknown route` for a name dev
+resolved. One include deep it matched. Separately, spreading a `Static()` or
+`Prerender()` build ctx (`{ ...ctx }`) threw on its first unavailable field
+(`params`, `request`), where the live ctx spreads.
+
+**Now.** A `Static()` layout or slot resolves `.name` at build in the module
+that declares it, exactly as it does live, at every depth, the root
+included. A `Static()` route still resolves from its own name, as before. A
+build ctx spreads as the live ctx does, and the copy's `reverse` links the
+same; reading an unavailable field on the ctx itself still throws.
+
+```tsx
+export const ProjectNav = Static((ctx) => (
+  <a href={ctx.reverse(".settings", { accountId: "acme", projectId: "web" })}>
+    Settings
+  </a>
+));
+
+// include("/:accountId", urls(() => [
+//   path("/settings", AccountSettings, { name: "settings" }),
+//   include("/:projectId", urls(() => [
+//     layout(ProjectNav, () => [
+//       path("/settings", ProjectSettings, { name: "settings" }),
+//     ]),
+//   ]), { name: "project" }),
+// ]), { name: "account" })
+
+// Before: dev  /acme/web/settings, build /acme/settings
+// Now:    dev  /acme/web/settings, build /acme/web/settings
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

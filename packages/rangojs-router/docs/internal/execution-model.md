@@ -2554,14 +2554,29 @@ Limits:
   those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
-- `Static()` layouts and slots bake at build time through
-  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
-  through this scope. At one include level that gives the same module; in a
-  nested module the last name segment is dropped.
+- A `Static()` layout or slot bakes in the same scope. `layout()` and
+  `parallel()` stamp it on the definition (`$$reverseScope`,
+  `stampStaticDefScope`), the build's collector (`renderStaticHandlers`,
+  `vite/discovery/prerender-collection.ts`) passes it to
+  `renderStaticSegment`, and that hands the handler
+  `withReverseScope(buildCtx, scope)`, as the live render does. The def's
+  `$$routePrefix` is no help here: it is the include's own prefix, and
+  `resolveRouteName` drops its last segment as if it were a route name, so a
+  nested module's layout linked one module up and a root one threw
+  `Unknown route`. A `Static()` route carries no scope and resolves from its
+  `$$routeName`, as a live route does. A definition mounted in two modules
+  bakes once (the manifest is keyed by its `$$id`), in the scope of the mount
+  evaluated last, so the other mount shows that module's links.
+- A build ctx (`createStaticContext`, `createPrerenderContext`) keeps its
+  unavailable fields (`params`, `request`, a missing `env`) as
+  non-enumerable throwing getters, so `{ ...ctx }` copies the rest instead of
+  throwing on the spread, as the live ctx copies.
 
-Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
-`runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
-and the `reverse-segment-scope` e2e (test-app and cloudflare-basic).
+Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`,
+`testing/__tests__/static-reverse-scope.rsc-test.tsx` (a `Static()` segment
+served live and from the build's bake), the `runLoader({ declaredIn })` test
+in `testing/__tests__/run-loader.test.ts`, and the `reverse-segment-scope` and
+`static-reverse-scope` e2e (test-app and cloudflare-basic).
 
 ### A streamed handler keeps its segment
 

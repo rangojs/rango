@@ -185,6 +185,48 @@ function resolveScopedName(
   return scope.rootScoped ? routeMap[lookupName] : undefined;
 }
 
+/**
+ * Define each of `props` on a build-time ctx (createPrerenderContext,
+ * createStaticContext) as a getter that throws `unavailable(prop)`, and
+ * `env` as `buildEnv` or a getter that throws `envError`. The throwing
+ * getters are non-enumerable, as THEME_DESCRIPTOR is: a `{ ...ctx }` copy
+ * reads every enumerable getter, so an enumerable one threw on the spread
+ * itself and the copy's `reverse` never ran, while the live ctx spreads.
+ */
+function defineBuildUnavailable(
+  ctx: object,
+  props: readonly string[],
+  unavailable: (prop: string) => never,
+  buildEnv: unknown,
+  envError: string,
+): void {
+  for (const prop of props) {
+    Object.defineProperty(ctx, prop, {
+      get: () => unavailable(prop),
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  Object.defineProperty(
+    ctx,
+    "env",
+    buildEnv !== undefined
+      ? {
+          value: buildEnv,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        }
+      : {
+          get: () => {
+            throw new Error(envError);
+          },
+          enumerable: false,
+          configurable: true,
+        },
+  );
+}
+
 function createPrerenderPassthroughFn(
   build: boolean,
   isPassthroughRoute: boolean,
@@ -430,7 +472,7 @@ export function createPrerenderContext<TEnv>(
     );
   }
 
-  return {
+  const ctx = {
     params,
     build: true,
     // Inert here: prerender/static contexts have no live PPR-shell decision to
@@ -438,21 +480,11 @@ export function createPrerenderContext<TEnv>(
     dynamic: () => {},
     dev: devMode ?? false,
     onDemand: onDemand ?? false,
-    get request(): Request {
-      return throwUnavailable("request");
-    },
     searchParams: syntheticUrl.searchParams,
     search: {},
     pathname,
     url: syntheticUrl,
     originalUrl: syntheticUrl,
-    get env(): TEnv {
-      if (buildEnv !== undefined) return buildEnv;
-      throw new Error(
-        "ctx.env is not available during pre-rendering. " +
-          "Configure buildEnv in your rango() plugin options to enable build-time env access.",
-      );
-    },
     // Build-time prerender has no live request. waitUntil is a true no-op
     // (running fn() here would fire side effects during build, which is
     // incorrect — these are meant to outlive the live response).
@@ -464,12 +496,6 @@ export function createPrerenderContext<TEnv>(
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
     }) as any,
-    get res(): Response {
-      return throwUnavailable("res");
-    },
-    get headers(): Headers {
-      return throwUnavailable("headers");
-    },
     // Placeholder use() - replaced by setupBuildUse
     use: () => {
       throw new Error("ctx.use() called before build context was initialized");
@@ -495,7 +521,16 @@ export function createPrerenderContext<TEnv>(
       isPassthroughRoute === true,
     ),
     _routeName: routeName,
-  } as InternalHandlerContext<any, TEnv>;
+  } as unknown as InternalHandlerContext<any, TEnv>;
+  defineBuildUnavailable(
+    ctx,
+    ["request", "res", "headers"],
+    throwUnavailable,
+    buildEnv,
+    "ctx.env is not available during pre-rendering. " +
+      "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+  );
+  return ctx;
 }
 
 /**
@@ -519,40 +554,12 @@ export function createStaticContext<TEnv>(
     );
   }
 
-  return {
-    get params(): any {
-      return throwUnavailable("params");
-    },
+  const ctx = {
     build: true,
     // Inert here: prerender/static contexts have no live PPR-shell decision to
     // gate. dynamic() only reaches the shell axis on a live request or capture.
     dynamic: () => {},
     dev: devMode ?? false,
-    get request(): Request {
-      return throwUnavailable("request");
-    },
-    get searchParams(): URLSearchParams {
-      return throwUnavailable("searchParams");
-    },
-    get search(): any {
-      return throwUnavailable("search");
-    },
-    get pathname(): string {
-      return throwUnavailable("pathname");
-    },
-    get url(): URL {
-      return throwUnavailable("url");
-    },
-    get originalUrl(): URL {
-      return throwUnavailable("originalUrl");
-    },
-    get env(): TEnv {
-      if (buildEnv !== undefined) return buildEnv;
-      throw new Error(
-        "ctx.env is not available in Static() handlers. " +
-          "Configure buildEnv in your rango() plugin options to enable build-time env access.",
-      );
-    },
     // Static() handlers have no live request. waitUntil is a true no-op
     // (running fn() here would fire side effects during build, which is
     // incorrect). executionContext is absent for the same reason.
@@ -563,12 +570,6 @@ export function createStaticContext<TEnv>(
     set: ((keyOrVar: any, value: any) => {
       contextSet(variables, keyOrVar, value);
     }) as any,
-    get res(): Response {
-      return throwUnavailable("res");
-    },
-    get headers(): Headers {
-      return throwUnavailable("headers");
-    },
     // Placeholder use() - replaced by setupBuildUse
     use: () => {
       throw new Error("ctx.use() called before build context was initialized");
@@ -590,5 +591,24 @@ export function createStaticContext<TEnv>(
         : undefined,
     ),
     _routeName: routeName,
-  } as InternalHandlerContext<any, TEnv>;
+  } as unknown as InternalHandlerContext<any, TEnv>;
+  defineBuildUnavailable(
+    ctx,
+    [
+      "params",
+      "request",
+      "searchParams",
+      "search",
+      "pathname",
+      "url",
+      "originalUrl",
+      "res",
+      "headers",
+    ],
+    throwUnavailable,
+    buildEnv,
+    "ctx.env is not available in Static() handlers. " +
+      "Configure buildEnv in your rango() plugin options to enable build-time env access.",
+  );
+  return ctx;
 }

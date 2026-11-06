@@ -450,6 +450,8 @@ export async function renderStaticHandlers(
             state.resolvedBuildEnv,
             !state.isBuildMode,
             (def as any).$$rootScoped,
+            // A layout's or slot's own include scope (stampStaticDefScope).
+            (def as any).$$reverseScope,
           );
           if (result) {
             // result.handles is the pre-encoded handle string ("" when none).

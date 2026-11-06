@@ -8,6 +8,7 @@ import type { ErrorInfo, MatchResult } from "../types";
 import type { NonceProvider } from "../rsc/types.js";
 import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
+import type { ReverseScope } from "../server/context.js";
 import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
@@ -563,6 +564,7 @@ export interface RangoInternal<
     buildEnv?: any,
     devMode?: boolean,
     rootScoped?: boolean,
+    reverseScope?: ReverseScope,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**

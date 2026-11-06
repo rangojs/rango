@@ -861,15 +861,22 @@ export function scopeReverse(
  * cross-router collision #757/#762 fixed (and the collector's historical
  * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
  * never contains, silently degrading to the dot-heuristic).
+ * A layout or parallel slot also carries its segment's ReverseScope
+ * (`$$reverseScope`): the bake resolves its dot names in that scope, as live
+ * segment resolution does (withReverseScope), since `$$routePrefix` is the
+ * include's own prefix and resolveRouteName strips its last segment as if it
+ * were a route name. A route mount clears it: a route resolves from its name.
  * A definition mounted more than once is stamped each time; the last mount wins.
  */
 export function stampStaticDefScope(
   handler: unknown,
   routeName?: string,
+  reverseScope?: ReverseScope,
 ): void {
   const store = RangoContext.getStore();
   const def = handler as Record<string, unknown>;
   if (routeName !== undefined) def.$$routeName = routeName;
+  def.$$reverseScope = reverseScope;
   def.$$rootScoped = getRootScoped();
   if (store?.routerId !== undefined) def.$$routerId = store.routerId;
 }

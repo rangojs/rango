@@ -621,6 +621,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   // The descriptor's `use` runs after the broadcast `use` for that slot,
   // so single-assignment items like `loading()` placed there win without
   // affecting siblings.
+  const reverseScope = getReverseScope();
   const unwrappedSlots: Record<string, any> = {};
   const slotLocalUses: Record<string, (() => any[]) | undefined> = {};
   let hasStaticSlot = false;
@@ -642,7 +643,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
         if (ctx.namePrefix) {
           (slotHandler as any).$$routePrefix = ctx.namePrefix;
         }
-        stampStaticDefScope(slotHandler);
+        stampStaticDefScope(slotHandler, undefined, reverseScope);
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -659,7 +660,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     parent: null, // Parallels don't participate in parent chain traversal
     handler: unwrappedSlots,
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
-    reverseScope: getReverseScope(),
+    reverseScope,
     ...(hasStaticSlot
       ? {
           isStaticPrerender: true as const,
@@ -1192,7 +1193,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     if (ctx.namePrefix) {
       (handler as any).$$routePrefix = ctx.namePrefix;
     }
-    stampStaticDefScope(handler);
+    stampStaticDefScope(handler, undefined, entry.reverseScope);
   }
 
   // Merge handler.use defaults with explicit use

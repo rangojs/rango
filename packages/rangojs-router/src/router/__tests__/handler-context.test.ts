@@ -332,6 +332,53 @@ describe("createStaticContext routeName", () => {
   });
 });
 
+describe("a spread copy of a build-time ctx", () => {
+  const routeMap = { "blog.post": "/blog/:slug", "blog.index": "/blog" };
+
+  it("a Static() ctx spreads; its copy links and its request fields still throw", () => {
+    const ctx = createStaticContext(routeMap, "blog.post");
+    const copy = { ...ctx };
+    expect(copy.reverse(".index")).toBe("/blog");
+    expect(() => ctx.params).toThrow(/"params" is not available/);
+    expect(() => ctx.request).toThrow(/"request" is not available/);
+    expect(() => ctx.env).toThrow(/ctx\.env is not available in Static/);
+  });
+
+  it("a Prerender() ctx spreads; its copy links and its request fields still throw", () => {
+    const ctx = createPrerenderContext(
+      { slug: "a" },
+      "/blog/a",
+      routeMap,
+      "blog.post",
+    );
+    const copy = { ...ctx };
+    expect(copy.reverse(".index")).toBe("/blog");
+    expect(copy.params).toEqual({ slug: "a" });
+    expect(() => ctx.request).toThrow(/"request" is not available/);
+    expect(() => ctx.env).toThrow(/ctx\.env is not available during/);
+  });
+
+  it("carries a configured buildEnv", () => {
+    const env = { KEY: "v" };
+    expect({ ...createStaticContext(routeMap, "blog.post", env) }.env).toBe(
+      env,
+    );
+    expect(
+      {
+        ...createPrerenderContext(
+          {},
+          "/blog",
+          routeMap,
+          "blog.index",
+          undefined,
+          false,
+          env,
+        ),
+      }.env,
+    ).toBe(env);
+  });
+});
+
 describe("createReverseFunction", () => {
   // Simulates route map from include("/tenant/:tenantId", innerPatterns)
   // where innerPatterns has path("/", ...) and path("/settings", ...)

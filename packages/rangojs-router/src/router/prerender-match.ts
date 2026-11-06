@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withReverseScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -23,7 +24,11 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -668,6 +673,7 @@ export async function renderStaticSegment<TEnv = any>(
   devMode?: boolean,
   routerId?: string,
   rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -749,7 +755,9 @@ export async function renderStaticSegment<TEnv = any>(
 
     setupBuildUse(buildCtx);
 
-    const raw = await handler(buildCtx);
+    // A layout or slot resolves `.name` in its own include scope, as the live
+    // render hands it (resolveLayoutComponent, revalidation's slot context).
+    const raw = await handler(withReverseScope(buildCtx, reverseScope));
 
     // Static handlers must return a ReactNode. A returned Response (e.g. an
     // accidental redirect()) would otherwise be serialized as a corrupt build
