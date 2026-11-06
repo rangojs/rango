@@ -22,8 +22,9 @@ import { x } from "tinyexec";
 const cwd = path.resolve("./e2e/test-app");
 const VITE = "./node_modules/.bin/vite";
 const ERROR = "path() declared outside the layout() it is nested in [";
-// Outside every shared server block (5188.. / 5296..), per-checkout offset.
-const DEV_PORT = 5393 + checkoutPortOffset();
+// Outside every shared server block (5188.. / 5296..) and every other
+// per-test server base in this suite (5391, 5393), per-checkout offset.
+const DEV_PORT = 5405 + checkoutPortOffset();
 
 function isolatedEnv(): Record<string, string> {
   return {
