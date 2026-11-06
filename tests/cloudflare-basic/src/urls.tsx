@@ -314,6 +314,7 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainRedirectKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -488,6 +489,9 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //                          the next refresh hits notFound() or renders again
 //   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
 //                          next refresh throws something other than notFound()
+//   ?redirect=1 / ?redirect=0 -> the data source answers elsewhere for this
+//                          request (as an auth check does), so the next
+//                          refresh is skipped-redirect
 //   ?target=<path> (repeated) -> prerender.many(targets): the results as a
 //                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -514,6 +518,13 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  const redirecting = ctx.url.searchParams.get("redirect");
+  if (redirecting) {
+    const redirectKey = guidePlainRedirectKey(ctx.params.slug);
+    if (redirecting === "1") await ctx.env.PRERENDER_KV.put(redirectKey, "1");
+    else await ctx.env.PRERENDER_KV.delete(redirectKey);
+    return Response.json({ redirect: redirecting === "1" });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {

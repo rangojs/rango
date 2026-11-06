@@ -3960,6 +3960,58 @@ export async function expectFailedRefreshKeepsStoredPage(
 }
 
 /**
+ * A refresh whose render answers `redirect()` is `skipped-redirect`: a result
+ * of its own, not `render-failed` (a crash) and not a stored outcome. It writes
+ * nothing, so the page stored before it keeps serving — same stamp, to a
+ * document request and to a server action's partial re-render — and is still
+ * fresh for a sweep. A later refresh replaces it.
+ *
+ * A redirect can depend on the request (a session or auth check), so unlike a
+ * `notFound()` it does not show the page is gone.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirecting");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const skipped = await removeTrigger(page, trigger);
+    expect(skipped, JSON.stringify(skipped)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: fixture.path(slug),
+    });
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+    // A partial request reads the same entry: the action's re-render of the
+    // route keeps the page on screen.
+    await byTestId(page, fixture.actionTestId).click();
+    await expect(byTestId(page, fixture.stampTestId)).toHaveText(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  // Nothing was written, so the stored entry is still fresh: a sweep leaves
+  // it, and a plain refresh renders the page again.
+  const fresh = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(fresh, JSON.stringify(fresh)).toMatchObject({
+    ok: true,
+    status: "already-fresh",
+  });
+  expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
  * A `Passthrough` build handler that calls `ctx.passthrough()` for a param:
  * the refresh is `skipped-passthrough`, the next request is served by the
  * live handler, and a second refresh answers the same.

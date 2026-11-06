@@ -365,6 +365,15 @@ build (needs request-time env, say) skips just that URL. This used to be broken 
 — a `Skip` thrown in a _render fn_ was swallowed by the same error boundary; it now
 propagates correctly (the `getParams()` Skip path always worked).
 
+A handler that answers `redirect()` at build time throws its `Response` like any
+other render error, so it takes the same row of the table: `"fail"` fails the build
+naming the URL, `"warn"` warns and skips baking it. That is deliberate — a build
+render is anonymous, so a route that redirects there cannot be baked for visitors
+in general. An on-demand refresh (`router.prerender()`) is a different question:
+there the redirect may be the request's own answer, so it stores nothing, keeps the
+page that was already stored, and reports `skipped-redirect`
+(`docs/design/ondemand-prerender.md`, "A Redirect Is Not A Removal").
+
 `"warn"` is a build-unblock, NOT a runtime contract for the skipped entry. At runtime
 the route falls through to normal resolution, which may render live (its handler is
 still bundled — e.g. when nothing else baked, so handler eviction never ran) or 404

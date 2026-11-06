@@ -127,6 +127,48 @@ test.describe("prerender render error (production)", () => {
     expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
   });
 
+  // A build render is anonymous, so a route whose build handler answers
+  // redirect() cannot be baked: it is a render error for prerender.onError,
+  // exactly like a throw (the refresh path, which may answer for the request,
+  // reports it as skipped-redirect instead).
+  test("a build-time redirect fails the build by default, naming the URL", async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({ RANGO_TEST_PRERENDER_REDIRECT: "1" }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `build should exit non-zero; output:\n${out}`,
+    ).not.toBe(0);
+    expect(out).toMatch(/FAIL\s+\/prerender-redirect/);
+  });
+
+  test('a build-time redirect under prerender.onError "warn" is skipped, not baked', async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({
+          RANGO_TEST_PRERENDER_REDIRECT: "1",
+          RANGO_TEST_PRERENDER_ONERROR: "warn",
+        }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `warn build should succeed (exit 0); output:\n${out}`,
+    ).toBe(0);
+    expect(out).toMatch(
+      /WARN\s+\/prerender-redirect.*prerender\.onError: "warn"/,
+    );
+    expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
+  });
+
   test("a Static() handler render error also fails the build by default", async () => {
     // No prerender error this run, so the prerender phase succeeds and the build
     // reaches renderStaticHandlers, where StaticBoom throws and the same

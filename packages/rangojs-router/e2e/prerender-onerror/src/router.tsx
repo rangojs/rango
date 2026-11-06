@@ -1,4 +1,10 @@
-import { createRouter, Prerender, Static, urls } from "@rangojs/router";
+import {
+  createRouter,
+  Prerender,
+  redirect,
+  Static,
+  urls,
+} from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import { serverWhen } from "./server-when.js";
 
@@ -28,6 +34,12 @@ export const PrerenderChildBoom = Prerender(async () => (
     <ChildBoom />
   </div>
 ));
+
+// A Prerender route whose build handler answers redirect(): a build render is
+// anonymous, so a route that answers elsewhere there cannot be baked. It is a
+// render error for prerender.onError, like a throw. Registered only when
+// RANGO_TEST_PRERENDER_REDIRECT is set.
+export const PrerenderRedirect = Prerender(async () => redirect("/login"));
 
 // A Static handler exercising the SAME prerender.onError policy via the
 // renderStaticHandlers loop. Static handlers are discovered by export (not route
@@ -94,6 +106,9 @@ export const router = createRouter({}).routes(
       : []),
     ...(process.env.RANGO_TEST_PRERENDER_CHILD_ERROR
       ? [path("/prerender-child-boom", PrerenderChildBoom)]
+      : []),
+    ...(process.env.RANGO_TEST_PRERENDER_REDIRECT
+      ? [path("/prerender-redirect", PrerenderRedirect)]
       : []),
     ...(process.env.RANGO_TEST_PRERENDER_LIVE_INTERCEPT
       ? [

@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `router.prerender()` refresh whose render redirects keeps the stored page, and reports `skipped-redirect` instead of `render-failed`
+
+**Before.** A refresh of an on-demand `Prerender()` route whose render
+answered `redirect()` — from the route handler, a layout or parallel-slot
+handler, a `Passthrough` route's build handler, or a handler streaming behind
+`loading()` — returned `{ ok: false, status: "render-failed" }`, the result a
+crash gets. Nothing was stored, so the page kept serving, but a cron sweep
+reported a failure on every pass for a page that was fine, and `throwOnError`
+threw for it.
+
+**Now.** Such a refresh returns its own result,
+`{ ok: false, path: "on-demand", status: "skipped-redirect" }`, next to the
+other request-dependent render (`skipped-personalized`). It writes nothing, so
+the page stored before keeps serving to documents and client navigations,
+still fresh for a sweep, until a later refresh renders and replaces it. A
+redirect can depend on the request (a session or auth check), so unlike a
+`notFound()` it does not remove the page. A render that redirects and also
+fails another way stays `render-failed`, and so does any thrown `Response`
+that is not a redirect. A build-time render that redirects is unchanged: it
+throws like any other render error under `prerender.onError` (`"fail"` fails
+the build naming the URL, `"warn"` skips baking it).
+
+```ts
+const result = await router.prerender({ env, ctx })("/products/42");
+// before: { ok: false, status: "render-failed", error: Response(302) }
+// now:    { ok: false, path: "on-demand", status: "skipped-redirect" }
+if (!result.ok && result.status === "skipped-redirect") {
+  // request-dependent: not a failure of the page, do not count it as one
+}
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

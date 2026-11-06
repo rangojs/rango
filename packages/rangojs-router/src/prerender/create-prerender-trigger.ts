@@ -26,6 +26,10 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A `redirect()` in the render writes nothing: a redirect can depend on the
+ *   request, so it says nothing about whether the page is gone. The result is
+ *   `skipped-redirect` (not `render-failed`, which is a crash) and the stored
+ *   page keeps serving until its own ttl, tags, a refresh or a sweep.
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -36,6 +40,7 @@
  */
 
 import type { SerializedSegmentData } from "../cache/types.js";
+import { isRedirectResponse } from "../response-utils.js";
 import { isReservedSearchParam } from "../cache/cache-key-utils.js";
 import { resolveWarmStoreScope } from "../cache/store-scope.js";
 import type { HandlerCacheConfig } from "../rsc/types.js";
@@ -558,6 +563,19 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           ok: false,
           path: "on-demand",
           status: "skipped-personalized",
+          target: display,
+          routeName: match.routeName,
+        };
+      }
+      // A handler's redirect() (the Response it returns, thrown by the
+      // resolution) is the render saying "this URL answers elsewhere for this
+      // request". It is not a crash and not a removal: store nothing, keep
+      // the page. Any other thrown Response is a failure, as it was.
+      if (err instanceof Response && isRedirectResponse(err)) {
+        return {
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
           target: display,
           routeName: match.routeName,
         };

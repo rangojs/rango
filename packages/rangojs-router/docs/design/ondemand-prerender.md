@@ -395,6 +395,9 @@ type PrerenderResult =
         | "no-match"
         | "no-store"
         | "skipped-personalized"
+        // the render answered redirect(): nothing written, the stored page
+        // keeps serving (see "A Redirect Is Not A Removal")
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         | "skipped-passthrough"
         | "skipped-not-on-demand" // prerender.remove() only
@@ -927,6 +930,74 @@ support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
+## A Redirect Is Not A Removal
+
+A page can answer a redirect instead of rendering, and often it depends on the
+request rather than on the data: a session expired, the visitor is not signed
+in, a locale or tenant check sent them elsewhere. So a redirect during a
+refresh is not evidence that the page is gone, and treating it as one would
+take a working page down for every anonymous visitor (or every visitor, if the
+check is about something else).
+
+Hence the decision: a refresh whose render answers `redirect()` stores
+nothing — no page, and no "removed" marker either. The page stored before
+keeps serving, on its own schedule: its `ttl` and `tags`, a later refresh, a
+sweep. That is the same rule a personalized render follows
+(`skipped-personalized`), and the result says so in its own status:
+
+```ts
+const result = await router.prerender({ env, ctx })("/products/42");
+// { ok: false, path: "on-demand", status: "skipped-redirect",
+//   target: "/products/42", routeName: "products.detail" }
+```
+
+It is `ok: false` like every other refresh that did not store, and it is its
+own status so a sweep can count it apart from `render-failed`: a redirect is
+not a crash, and a page that redirects on every pass is not a failing page.
+`throwOnError` throws for it, as it does for every `ok: false`.
+
+The trigger classifies the thrown `Response` (`isRedirectResponse`, a 3xx
+carrying a `Location`); `create-prerender-trigger.ts` `renderOnDemand`. A
+thrown `Response` that is not a redirect stays `render-failed` with the
+response as its `error`, as before.
+
+Every handler kind is covered, because each one's `redirect()` reaches the
+trigger as a thrown `Response`:
+
+| where the redirect comes from          | how it surfaces                                       |
+| -------------------------------------- | ----------------------------------------------------- |
+| the route handler                      | `handleHandlerResult` throws the returned `Response`  |
+| a layout handler                       | the same (`resolveLayoutComponent`)                   |
+| a parallel-slot handler                | the producer throws it before serializing (below)     |
+| a `Passthrough` route's build handler  | it is the route handler                               |
+| a handler streaming behind `loading()` | the resolved result is the `Response`; it is rethrown |
+
+A parallel slot is the one place the resolution does not throw a handler's
+`Response`: `resolveParallelSlotComponent` takes the raw result as the slot's
+component, so it would ride into the payload and fail serialization with
+"Only plain objects … can be passed to Client Components", which reads as a
+crash. On an on-demand run `matchForPrerender` looks for those Responses on
+the resolved segments (`findPrerenderResponses`, `src/prerender.ts`) and
+throws one before serializing, so a slot's redirect is reported like every
+other. A non-redirect `Response` goes first when a render carries both: a
+render that redirects and also fails another way stays `render-failed`, as a
+render error goes ahead of a `notFound()` (`firstFlightError`). Build and dev
+renders keep the serialization error their `prerender.onError` policy already
+handles.
+
+Nothing here changes a build-time render: a `redirect()` at build time throws
+its `Response` like any other render error, so `prerender.onError` decides —
+`"fail"` fails the build naming the URL, `"warn"` warns and skips baking it
+(`resolvePrerenderError`, `vite/utils/prerender-utils.ts`). A route whose
+build handler redirects is a route that cannot be pre-rendered anonymously;
+that is a build-time question, not a refresh result.
+
+Pinned by `testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx` (every
+handler kind, the document and the client navigation, the later refresh, the
+`markStale()` + `onlyIfStale` recheck, a redirect plus another failure) and by
+`e2e/on-demand-prerender.test.ts` in the test-app and
+`tests/cloudflare-basic/e2e/prerender-ondemand.test.ts`, dev and production.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build
@@ -1054,6 +1125,8 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
+  +-- redirect() --> skipped-redirect (nothing written; the stored page keeps
+  |                 serving, no warm)
   +-- render failed --> render-failed (also when a notFound() happened too)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)

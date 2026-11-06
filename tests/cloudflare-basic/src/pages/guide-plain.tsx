@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,14 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug whose data source answers "elsewhere for this request", as
+ * a session or auth check does: a refresh is skipped-redirect and the stored
+ * page keeps serving.
+ */
+export const guidePlainRedirectKey = (slug: string): string =>
+  `gp-redirect:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -22,7 +30,9 @@ export const guidePlainFailKey = (slug: string): string =>
 // retains this producer body for router.prerender().
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
-// marker. Read only on a refresh, where ctx.env is the live env.
+// marker. A slug whose source redirects (guidePlainRedirectKey, ?redirect=1) is
+// skipped-redirect: nothing stored, the page keeps serving. Read only on a
+// refresh, where ctx.env is the live env.
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
@@ -37,6 +47,12 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       (await ctx.env.PRERENDER_KV.get(guidePlainFailKey(ctx.params.slug)))
     ) {
       throw new Error("upstream 500");
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainRedirectKey(ctx.params.slug)))
+    ) {
+      return redirect("/login") as never;
     }
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.

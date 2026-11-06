@@ -1038,6 +1038,20 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
   neither and is permanent until a refresh without `onlyIfStale`.
+- A refresh whose render answers `redirect()` writes nothing and returns
+  `skipped-redirect`: a redirect can depend on the request (a session or auth
+  check), so unlike `notFound()` it does not show the page is gone. The stored
+  page keeps serving to documents and navigations, still fresh for a sweep,
+  until a later refresh replaces it. The trigger classifies the thrown 3xx
+  `Response` (`isRedirectResponse`) in `renderOnDemand`. Every handler kind is
+  covered: the route handler and a layout handler throw it
+  (`handleHandlerResult`), a handler behind `loading()` resolves to it, and a
+  parallel-slot handler's is not thrown by the resolution
+  (`resolveParallelSlotComponent` takes the raw result as the slot's
+  component), so `matchForPrerender` throws one before serializing
+  (`findPrerenderResponses`, `src/prerender.ts`) — a non-redirect `Response`
+  ahead of a redirect. Any other thrown `Response` stays `render-failed`, and
+  a build-time render that redirects keeps its `prerender.onError` policy.
 - `remove()` and a refresh are two writes to one key: last write wins, except
   that a page is not written over a marker stored after its render started
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
@@ -1058,9 +1072,10 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   re-render live on actions. A stale overlay entry still serves because it is
   newer than the build artifact; staleness only schedules refresh work.
 - The producer reuses `matchForPrerender` without inheriting request state.
-  Personalized reads map to `skipped-personalized`; failed renders and writes
-  leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
+  Personalized reads map to `skipped-personalized`, a redirecting render to
+  `skipped-redirect`; failed renders and writes leave the previous entry
+  intact (a `notFound()` is not a failure: it removes the page, above). Its
+  context carries the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the
@@ -1077,7 +1092,9 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`@rangojs/router/testing/flight`) serves the refreshed entry through the
   production handler (`testing/__tests__/on-demand-prerender.rsc-test.tsx`);
   after `runner.remove(url)` the same request is a 404
-  (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`).
+  (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`); after a
+  redirecting refresh the document and a `partial: true` navigation both serve
+  the stored page (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`).
 
 ### Warming Any Route (router.prerender() for every route)
 

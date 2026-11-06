@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   detectPrerenderPassthrough,
+  findPrerenderResponses,
   PRERENDER_PASSTHROUGH,
 } from "../prerender.js";
 
@@ -40,5 +41,51 @@ describe("detectPrerenderPassthrough", () => {
     expect(await detectPrerenderPassthrough([{ component: rejected }])).toBe(
       false,
     );
+  });
+});
+
+// A parallel slot handler's Response is not thrown by the resolution, so the
+// on-demand producer looks for it on the resolved segments before serializing.
+describe("findPrerenderResponses", () => {
+  const redirect = new Response(null, {
+    status: 302,
+    headers: { location: "/login" },
+  });
+  const unauthorized = new Response("nope", { status: 401 });
+
+  it("finds a synchronous Response component", async () => {
+    expect(
+      await findPrerenderResponses([
+        { component: { type: "div" } },
+        { component: redirect },
+      ]),
+    ).toEqual([redirect]);
+  });
+
+  it("finds one wrapped in a Promise (a slot behind loading())", async () => {
+    expect(
+      await findPrerenderResponses([{ component: Promise.resolve(redirect) }]),
+    ).toEqual([redirect]);
+  });
+
+  it("returns every one, so the caller can prefer a failure over a redirect", async () => {
+    expect(
+      await findPrerenderResponses([
+        { component: redirect },
+        { component: unauthorized },
+      ]),
+    ).toEqual([redirect, unauthorized]);
+  });
+
+  it("returns none for ordinary components or a rejected thenable", async () => {
+    const rejected = Promise.reject(new Error("boom"));
+    rejected.catch(() => {});
+    expect(
+      await findPrerenderResponses([
+        { component: { type: "div" } },
+        { component: null },
+        { component: rejected },
+      ]),
+    ).toEqual([]);
   });
 });

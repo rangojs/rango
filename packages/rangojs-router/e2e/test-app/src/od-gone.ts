@@ -9,7 +9,13 @@ export const goneSlugs: Set<string> = new Set();
 // slug in this set (?fail=1 / ?fail=0), so a refresh is `render-failed`.
 export const failSlugs: Set<string> = new Set();
 
-// And a Passthrough build handler that declines a baked param on demand: the
+// And for a data source that answers "elsewhere for this request", as a
+// session or auth check does: the plain producer redirects for a slug in this
+// set (?redirect=1 / ?redirect=0), so a refresh is `skipped-redirect` and the
+// stored page keeps serving.
+export const redirectSlugs: Set<string> = new Set();
+
+// A Passthrough build handler that declines a baked param on demand: the
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();

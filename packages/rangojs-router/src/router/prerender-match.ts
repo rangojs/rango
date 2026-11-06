@@ -12,7 +12,11 @@ import {
   createStaticContext,
   createReverseFunction,
 } from "./handler-context.js";
-import { detectPrerenderPassthrough } from "../prerender.js";
+import {
+  detectPrerenderPassthrough,
+  findPrerenderResponses,
+} from "../prerender.js";
+import { isRedirectResponse } from "../response-utils.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
 import { setupBuildUse } from "./loader-resolution.js";
 import { findInOrphans } from "./error-handling.js";
@@ -368,6 +372,24 @@ export async function matchForPrerender<TEnv = any>(
         // corrupt artifact).
         if (await detectPrerenderPassthrough(allSegments)) {
           return { ...passthroughResult(), onDemandConfig };
+        }
+
+        // An on-demand refresh: a parallel slot handler's Response is not
+        // thrown by the resolution (see resolveParallelSlotComponent), so
+        // serializing it fails with a "not a plain object" error and the
+        // refresh reads as a crash. Throw it here instead, as every other
+        // handler kind does, so the trigger reports the render's own outcome
+        // (skipped-redirect, or render-failed) and keeps the stored page.
+        // Build/dev keep the serialization error their onError policy handles.
+        // A failure goes ahead of a redirect, as a render error goes ahead of
+        // a notFound() (firstFlightError): a slot answering 401 fails the
+        // render even when another slot redirects.
+        if (onDemand) {
+          const responses = await findPrerenderResponses(allSegments);
+          const thrown =
+            responses.find((response) => !isRedirectResponse(response)) ??
+            responses[0];
+          if (thrown) throw thrown;
         }
 
         // 10. Filter out any loader segments (belt-and-suspenders)

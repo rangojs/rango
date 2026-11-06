@@ -235,6 +235,59 @@ describe("createPrerenderTrigger", () => {
     expect(store.size).toBe(0);
   });
 
+  it("maps a redirect thrown by the render to skipped-redirect, keeping the stored page", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/login" },
+    });
+    let produce = async () => output();
+    const { trigger, store } = harness({ runProducer: () => produce() });
+    expect(await trigger("/products/42")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const stored = store.entries()[0]![1];
+
+    produce = async () => {
+      throw redirect;
+    };
+    const result = await trigger("/products/42");
+
+    // Its own outcome: not render-failed (a crash) and not a stored one.
+    expect(result).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: "/products/42",
+      routeName: "products.detail",
+    });
+    // Nothing written: the page the earlier refresh stored still serves.
+    expect(store.entries()).toHaveLength(1);
+    expect(store.entries()[0]![1]).toBe(stored);
+
+    produce = async () => output({ handles: "next" });
+    expect(await trigger("/products/42")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    expect(store.entries()[0]![1]).not.toBe(stored);
+  });
+
+  it("keeps a thrown Response that is not a redirect as render-failed", async () => {
+    const unauthorized = new Response("nope", { status: 401 });
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw unauthorized;
+      },
+    });
+
+    const result = await trigger("/products/42");
+
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    expect((result as { error?: unknown }).error).toBe(unauthorized);
+    expect(store.size).toBe(0);
+  });
+
   it("maps a passthrough sentinel to skipped-passthrough", async () => {
     const { trigger, store } = harness({
       runProducer: async () => output({ passthrough: true }),
