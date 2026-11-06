@@ -106,10 +106,13 @@ export type LoaderErrorCallback = (
  * The receiver decides when it carries a segment: a layout's or a parallel
  * slot's ctx does (withSegmentScope), and the segment holds however long after
  * the handler returned, so an async component the handler handed the ctx to
- * still files under it after the walker moved the shared pin on. Any other
- * receiver reads the ctx `use` was installed on, whose `_currentSegmentId`
- * the walker pins — a handler that built a smaller ctx with `use` copied onto
- * it (a Prerender handler forwarding to a shared page handler) included.
+ * still files under it after the walker moved the shared pin on. That ctx
+ * owns a `use` which supplies the receiver itself, so a detached or copied
+ * `use` resolves the same segment (handler-context.ts withSegmentScope). Any
+ * other receiver reads the ctx `use` was installed on, whose
+ * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
+ * with `use` copied onto it (a Prerender handler forwarding to a shared page
+ * handler) included.
  */
 function handlePushSegment(
   receiver: unknown,

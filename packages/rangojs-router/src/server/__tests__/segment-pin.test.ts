@@ -1,7 +1,8 @@
 /**
  * runAsSegment / segmentPinOf (server/context.ts): the segment a streamed
  * handler or a loader body runs for, carried by its async context instead of
- * the handler ctx's shared `_currentSegmentId`.
+ * the handler ctx's shared `_currentSegmentId`, or by the ctx a layout or a
+ * parallel slot handed to its components (`_handleSegmentId`).
  */
 import { describe, expect, it } from "vitest";
 import { runAsSegment, segmentPinOf } from "../context.js";
@@ -34,5 +35,15 @@ describe("segmentPinOf", () => {
       runAsSegment("R0", () => runAsSegment("L0", () => segmentPinOf(ctx))),
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
+  });
+
+  it("prefers the segment the ctx carries over its pin", () => {
+    // A layout's ctx carries its own segment (withSegmentScope); the pin the
+    // walker left on the request ctx belongs to whichever segment ran since.
+    const ctx = { _handleSegmentId: "L0", _currentSegmentId: "R0" };
+    expect(segmentPinOf(ctx)).toBe("L0");
+    // A live scope still wins: its handler or loader body is what is running.
+    expect(runAsSegment("L1", () => segmentPinOf(ctx))).toBe("L1");
+    expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("L0");
   });
 });

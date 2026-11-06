@@ -15,7 +15,11 @@ handler had run and moved it on.
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 The push is still rejected, at the same moment, and production still shows no
-message.
+message. The segment holds for an accepted push too: one a component makes
+while it renders now files under the layout's or the slot's segment instead
+of whichever segment the walker pinned since, and the segment follows the ctx
+however the component calls it — detached (`const { use } = ctx`), passed on
+as a prop, or through a `{ ...ctx }` copy.
 
 ## 0.35.0 (2026-11-04)
 

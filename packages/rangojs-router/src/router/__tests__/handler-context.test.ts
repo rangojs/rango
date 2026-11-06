@@ -622,6 +622,40 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    it("withSegmentScope: `use` arrives as this ctx in every call shape, and a nested scope wins", () => {
+      // `use` resolves a push's segment from its receiver (handlePushSegment,
+      // loader-resolution.ts), so the child has to be the receiver even when
+      // the function is detached from it.
+      const receivers: unknown[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use(this: unknown) {
+          receivers.push(this);
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      const nested = withSegmentScope(scoped, "M0L0L0L1", undefined);
+      const { use } = scoped;
+      use(null as any);
+      scoped.use(null as any);
+      ({ ...scoped }).use(null as any);
+      nested.use(null as any);
+      expect(receivers).toEqual([scoped, scoped, scoped, nested]);
+    });
+
+    it("withSegmentScope: the parent's `use` is read per call", () => {
+      // loader-cache.ts executeLoaderData swaps the parent's `use` for an
+      // interceptor while a cached loader runs; the child must go through it.
+      const ctx = {
+        reverse: routeReverse(),
+        use: () => "parent",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      expect(scoped.use(null as any)).toBe("parent");
+      (ctx as any).use = () => "interceptor";
+      expect(scoped.use(null as any)).toBe("interceptor");
+    });
   });
 
   describe("optional params", () => {
