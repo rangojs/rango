@@ -139,6 +139,8 @@ export function buildMatchResult<TEnv>(
   let allIds: string[];
   let segmentsToRender: ResolvedSegment[];
   let resolvedIds: string[];
+  // PROBE
+  console.log("PROBE segments", JSON.stringify(allSegments.map((s) => [s.id, s.type, s._handlerRan, s.component === null, s.namespace, s.layoutName, s.belongsToRoute])));
 
   if (ctx.isFullMatch) {
     // One pass over allSegments: dedup by id (segmentsToRender + allIds) while
