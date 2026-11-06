@@ -31,6 +31,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -83,13 +84,32 @@ async function LateCopyPush({
   return <span>{label}</span>;
 }
 
+/**
+ * The same, with `use` borrowed onto another object and called on it: the
+ * receiver is neither the ctx nor absent, and it carries no segment of its
+ * own.
+ */
+async function LateBorrowedPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const holder = { use: ctx.use };
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  holder.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 /** How the component holds the ctx it was handed. */
-type Hold = "ctx" | "detached" | "copy";
+type Hold = "ctx" | "detached" | "copy" | "borrowed";
 
 const HOLD = {
   ctx: LatePush,
   detached: LateDetachedPush,
   copy: LateCopyPush,
+  borrowed: LateBorrowedPush,
 } as const;
 
 function makeRouter(hold: Hold) {
@@ -136,6 +156,29 @@ function makeRouter(hold: Hold) {
             (ctx) => <Push ctx={ctx} label="route" />,
             { name: "componentWithSlot" },
             () => [parallel({ "@aside": () => <aside>aside</aside> })],
+          ),
+          // A layout inside a layout: the inner scope's segment must not leak
+          // into the outer one's push, or the other way round.
+          layout(
+            (ctx) => (
+              <div>
+                <Push ctx={ctx} label="outer" />
+              </div>
+            ),
+            () => [
+              layout(
+                (ctx) => (
+                  <section>
+                    <Push ctx={ctx} label="inner" />
+                  </section>
+                ),
+                () => [
+                  path("/component-nested", () => <p>page</p>, {
+                    name: "componentNested",
+                  }),
+                ],
+              ),
+            ],
           ),
         ],
       ),
@@ -258,6 +301,132 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
       "/component-with-slot",
       "detached",
     );
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout",
+      "borrowed",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot",
+      "borrowed",
+    );
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the route's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-with-slot",
+      "borrowed",
+    );
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("each nested layout's own, innermost included", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-nested",
+      "borrowed",
+    );
+    const layouts = matched.filter((id) => /L\d+$/.test(id)).slice(-2);
+    expect(reported.map((one) => latePushSegment([one])).sort()).toEqual(
+      layouts.slice().sort(),
+    );
+  });
+});
+
+/** A loader whose body pushes a handle, for the ctx a component starts it through. */
+const LateLoader = createLoader(async (loaderCtx) => {
+  loaderCtx.use(Crumbs)("loader");
+  return { ok: true };
+});
+
+/** Starts a loader through the ctx its handler handed it, after an `await`. */
+async function LateLoaderStart({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await ctx.use(LateLoader);
+  return <span>loader</span>;
+}
+
+/**
+ * A router whose layout, slot and route handlers each hand their ctx to a
+ * component that starts a loader through it. The loader's push belongs to the
+ * segment whose ctx started it, as a handle push through that ctx does.
+ */
+function loaderRouter() {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            (ctx) => (
+              <div>
+                <LateLoaderStart ctx={ctx} />
+              </div>
+            ),
+            () => [
+              path("/loader-layout", () => <p>page</p>, {
+                name: "loaderLayout",
+              }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({ "@panel": (ctx) => <LateLoaderStart ctx={ctx} /> }),
+              path("/loader-slot", () => <p>page</p>, { name: "loaderSlot" }),
+            ],
+          ),
+          // The route's own ctx, with a slot resolved after its handler.
+          path(
+            "/loader-route",
+            (ctx) => <LateLoaderStart ctx={ctx} />,
+            { name: "loaderRoute" },
+            () => [parallel({ "@aside": () => <aside>aside</aside> })],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe("a loader a component started through a handler's ctx", () => {
+  const serveLoader = async (url: string) => {
+    errors.length = 0;
+    const result = await serveShellRequest(loaderRouter(), url, {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    return { errors: [...errors], matched: await matchedOf(result.flight) };
+  };
+
+  it("files its push under the layout's segment", async () => {
+    const { errors: reported, matched } = await serveLoader("/loader-layout");
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("files its push under the slot's segment", async () => {
+    const { errors: reported, matched } = await serveLoader("/loader-slot");
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("files its push under the route's segment, not the slot's", async () => {
+    const { errors: reported, matched } = await serveLoader("/loader-route");
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });

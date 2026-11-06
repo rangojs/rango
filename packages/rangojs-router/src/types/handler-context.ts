@@ -462,15 +462,19 @@ export type InternalHandlerContext<
    * The segment a layout's or parallel slot's ctx belongs to
    * (withSegmentScope): a handle push made through it files under that
    * segment, before or after an `await`, however the ctx was called
-   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy). Only
-   * `handlePushSegment` reads it; `segmentPinOf` takes it as an argument.
+   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy, a `use` borrowed
+   * onto another object), and a loader a component starts through it belongs
+   * to that segment too. Read by `carriedSegmentOf`
+   * (`router/loader-resolution.ts`) and passed to `segmentPinOf` as an
+   * argument.
    */
   _handleSegmentId?: string;
   /**
    * The matched route's segment on the request's one handler ctx
    * (`resolveEntryHandler`): a handle push made through that ctx files under
-   * the route, before or after an `await`. Only `handlePushSegment` reads it,
-   * so a loader's owner and a `"use cache"` caller segment keep the live pin.
+   * the route, before or after an `await`, and so does a loader a component
+   * starts through it. Read by `carriedSegmentOf`, so a `"use cache"` caller
+   * segment keeps the live pin.
    */
   _pushSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

@@ -125,10 +125,27 @@ function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried =
+  return segmentPinOf(
+    installed as { _currentSegmentId?: string },
+    carriedSegmentOf(receiver, installed),
+  );
+}
+
+/**
+ * The segment the ctx a call was made on belongs to, if any: a layout's or a
+ * parallel slot's `withSegmentScope` child carries its own
+ * (`_handleSegmentId`), and the request's one ctx carries the route's
+ * (`_pushSegmentId`). A receiver that carries neither — a method borrowed onto
+ * another object — falls back to the ctx `use` was installed on.
+ */
+function carriedSegmentOf(
+  receiver: unknown,
+  installed: HandlerContext<any, any>,
+): string | undefined {
+  return (
     (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId;
-  return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
+    (installed as { _pushSegmentId?: string })._pushSegmentId
+  );
 }
 
 /**
@@ -486,10 +503,14 @@ function warnRenderedBesideUnit(
  * Shared by setupLoaderAccess and setupLoaderAccessSilent; only the handle
  * branch differs between the two, so only the loader logic is extracted here.
  *
- * Returns a useLoader(loader, callerLoaderId) function that:
+ * Returns a useLoader(loader, callerLoaderId, carriedSegmentId?) function that:
  * - Tracks dependency edges between loaders for cycle detection
  * - Throws immediately (synchronously inside an async fn) on circular deps
  * - Memoizes each loader's promise so it runs at most once per request
+ *
+ * `carriedSegmentId` is the segment of the ctx the read was made on, for a
+ * read through a handler's ctx (setupLoaderAccess): it owns the run's handle
+ * pushes where the pin no longer names that segment.
  */
 function createLoaderExecutor<TEnv>(
   ctx: HandlerContext<any, TEnv>,
@@ -521,6 +542,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  carriedSegmentId?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -539,6 +561,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    carriedSegmentId?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -636,7 +659,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, carriedSegmentId);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1082,7 +1105,16 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // A loader a component starts through this ctx belongs to the ctx's
+    // segment, as a handle push through it does: the ctx is the only thing
+    // left after the handler returned, and the pin has moved on by then
+    // (createLoaderExecutor's owningSegmentId, loaderOwner). A DSL kickoff is
+    // not a handler read: resolveOwnerLoaders pinned the segment that declares
+    // the loader, and that pin is the owner.
+    const carried = isInsideLoaderScope()
+      ? undefined
+      : carriedSegmentOf(this, ctx);
+    return useLoader(loader, null, carried);
   } as typeof ctx.use;
 }
 

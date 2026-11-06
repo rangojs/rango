@@ -245,9 +245,15 @@ export function withSegmentScope<C>(
   };
   scoped._handleSegmentId = segmentId;
   scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
+    // Only a receiver that carries a segment may supply it: a nested scope's
+    // child does, and so does a copy, because `_handleSegmentId` rides the
+    // object. Any other receiver — `{ use: ctx.use }` borrowed onto another
+    // object — carries none, and forwarding it would file the push under the
+    // pin the walker moved on instead of this child's segment.
+    const carries =
+      (this as { _handleSegmentId?: string } | undefined)?._handleSegmentId !==
+      undefined;
+    return Reflect.apply(base.use, carries ? this : scoped, args);
   };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse(base.reverse, scope);

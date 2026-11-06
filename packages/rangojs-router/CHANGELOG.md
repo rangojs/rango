@@ -11,15 +11,20 @@ rejected — by design, the `.defer()` path is the mitigation — and the dev
 request's shared segment id when it was called, and by then the walker had
 moved it on. A layout's or a slot's push named the child route's segment; a
 route's named the slot or orphan layout resolved after it. A component that
-held only `use` (`const { use } = ctx`) or a copy (`{ ...ctx }`) read the
-shared id too, whichever handler handed it the ctx.
+held only `use` (`const { use } = ctx`), a copy (`{ ...ctx }`), or a `use`
+borrowed onto another object (`{ use: ctx.use }`) read the shared id too,
+whichever handler handed it the ctx. So did a loader a component started
+through that ctx (`ctx.use(Loader)`): the run filed its pushes, and their
+`LateHandlePushError`, under whatever segment was pinned by then.
 
 **Now.** The message names the segment whose ctx the push went through, the
 route's, the layout's or the slot's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-Each handler's ctx carries its own segment, and its own `use` keeps it when a
-component calls it detached from the ctx. The push is still rejected, at the
-same moment, and production still shows no message.
+Each handler's ctx carries its own segment, its own `use` keeps it when a
+component calls it detached from the ctx or through an object holding only
+that `use`, and a loader a component starts through the ctx belongs to the
+same segment. The push is still rejected, at the same moment, and production
+still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

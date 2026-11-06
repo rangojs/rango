@@ -659,6 +659,37 @@ describe("createReverseFunction", () => {
       // The shared ctx keeps the record it had.
       expect((ctx as any).use).toBe(swapped);
     });
+
+    it("withSegmentScope: `use` borrowed onto another object keeps the child's segment", () => {
+      const seen: Array<{ receiver: any; item: string }> = [];
+      const ctx = {
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      const record = function (this: unknown, item: string) {
+        seen.push({ receiver: this, item });
+        return item;
+      };
+      (ctx as any).use = record;
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+
+      // `{ use: ctx.use }`, called on the object holding it: the receiver
+      // carries no segment, so the child's own must not be dropped for it.
+      const holder = { use: (scoped as any).use };
+      holder.use("borrowed");
+      expect(seen[0]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+
+      // A nested scope's child does carry one, and it is the innermost.
+      const nested = withSegmentScope(
+        scoped as unknown as InternalHandlerContext<any, any>,
+        "M0L0L0R0L0",
+        undefined,
+      );
+      (nested as any).use("nested");
+      expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0L0");
+      // The outer scope still files its own after the inner one ran.
+      (scoped as unknown as { use: (item: string) => string }).use("outer");
+      expect(seen[2]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+    });
   });
 
   describe("optional params", () => {

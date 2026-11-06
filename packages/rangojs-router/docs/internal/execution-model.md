@@ -2615,12 +2615,29 @@ The receiver is what a caller can lose, so the child owns `use` too
 child's own `use` supplies it. It reads the base ctx's `use` at call time,
 because `loader-cache.ts` swaps that for its override interceptor.
 
-The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin, and pass no carried segment: a started loader's owning
-segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
-and the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
-reading its pin.
+A receiver is only believed when it carries a segment: a nested scope's child
+does, a copy does (the field is copied with it), and nothing else does. So
+`const holder = { use: ctx.use }; holder.use(Handle)` — a `use` borrowed onto
+another object, which is what a `use`-only prop or an `Object.assign` into a
+wrapper produces — files under the child's segment too, where forwarding the
+receiver would have filed it under the pin the walker moved on. This is the
+shape `withSegmentScope`'s own `use` exists for; before it, a copy had no `use`
+at all (a `TypeError`), and a detached or borrowed call read the pin.
+
+A loader a component starts through the handler's ctx (`ctx.use(Loader)`) is
+the same case at another funnel: the executor belongs to the request ctx, so
+its owning segment (`loaderOwner`) read the pin. `setupLoaderAccess` passes
+the receiver's segment (`carriedSegmentOf`, `loader-resolution.ts`) and the
+executor uses it for the run, so the body's pushes, and the
+`LateHandlePushError` they throw, name the handler's segment.
+
+A `"use cache"` call keeps `segmentPinOf(ctx)` for the caller segment it
+records and replays under (`cache-runtime.ts`): its tainted argument is the
+caller's own ctx, and the replay goes to the calling segment as the record's
+design says. A call made from a handler runs with the pin on the caller's
+segment, so it agrees; one made from a component after the handler returned
+pushes late either way, and the record is only written when the push was
+legal.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
@@ -2643,9 +2660,10 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, through `ctx.use` and through a destructured `use`,
-and for a route whose slot resolves after its handler) and
-`server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
+slot handed the ctx to, through `ctx.use`, a destructured `use`, a `{ ...ctx }`
+copy and a `use` borrowed onto another object; a layout inside a layout; a
+route whose slot resolves after its handler; and a loader a component started
+through the handler's ctx) and `server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
 (test-app and cloudflare-basic, dev and production) checks the message on the
 page.
 
