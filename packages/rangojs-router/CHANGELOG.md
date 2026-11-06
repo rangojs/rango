@@ -15,7 +15,26 @@ handler had run and moved it on.
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 The push is still rejected, at the same moment, and production still shows no
-message.
+message. A push that beats collection (a streamed tree) files under the
+layout's or the slot's segment too.
+
+### Breaking: a layout's or a parallel slot's handler ctx is always a derived object
+
+**Before.** Only a layout or a slot inside an `include()` got a ctx of its
+own: a prototype child of the request's handler ctx carrying the segment's
+`reverse` scope. Everywhere else the handler got the request's ctx itself, so
+`{ ...ctx }` in it copied every handler field (`use`, `params`, `pathname`,
+`get`, `set`, `request`, ...).
+
+**Now.** Every layout's and slot's handler gets that derived object, because
+it carries the segment the handler's `ctx.use(Handle)` pushes file under (the
+entry above). Every field still reads through live, but a `{ ...ctx }` copy
+of the ctx carries only the object's own fields: `_handleSegmentId`, plus
+`reverse` and `_reverseScope` when the segment has an `include()` scope. Such
+a copy has no `use` (`copy.use(Handle)` throws `ctx.use is not a function`),
+no `params` and no `pathname`, so hand the ctx itself to a helper or to a
+`"use cache"` function rather than a spread copy. A route's, a middleware's
+and a response route's ctx is unchanged.
 
 ## 0.35.0 (2026-11-04)
 

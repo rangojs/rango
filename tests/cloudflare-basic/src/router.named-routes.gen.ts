@@ -111,6 +111,7 @@ export const NamedRoutes = {
   handlesAfterAwait: "/handles-after-await",
   handlesAfterAwaitComponent: "/handles-after-await/component",
   handlesAfterAwaitComponentLayout: "/handles-after-await/component-layout",
+  handlesAfterAwaitComponentSlot: "/handles-after-await/component-slot",
   handlesAfterAwaitDefer: "/handles-after-await/defer",
   handlesAfterAwaitHandler: "/handles-after-await/handler",
   handlesAfterAwaitLoader: "/handles-after-await/loader",

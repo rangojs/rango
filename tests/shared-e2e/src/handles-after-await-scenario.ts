@@ -422,7 +422,8 @@ export function runHandlesAfterAwaitTests(
       path: "/component",
       link: "haa-link-component",
       // The message names the segment whose ctx made the push: the route's
-      // own for the route handler, the layout's for the layout handler.
+      // own for the route handler, the layout's for the layout handler, the
+      // slot's for the slot handler.
       segment: /for segment "\w*R\d+" was pushed after/,
     },
     {
@@ -430,6 +431,13 @@ export function runHandlesAfterAwaitTests(
       path: "/component-layout",
       link: "haa-link-component-layout",
       segment: /for segment "\w*L\d+" was pushed after/,
+    },
+    {
+      name: "slot handler",
+      path: "/component-slot",
+      link: "haa-link-component-slot",
+      // A parallel slot's id is its owner's plus the slot name.
+      segment: /for segment "\w*\.@panel" was pushed after/,
     },
   ]) {
     test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation`, async ({
@@ -462,10 +470,10 @@ export function runHandlesAfterAwaitTests(
       } else {
         await expect(page.getByText(LATE_PUSH_MESSAGE).first()).toBeVisible();
         await expect(page.getByText(DEFER_HINT).first()).toBeVisible();
-        // The message names the segment whose ctx pushed. A layout's ctx
-        // carries its own segment (a layout id ends in L<n>), so the layout
-        // variant names the layout, not the child route whose handler ran
-        // during the await.
+        // The message names the segment whose ctx pushed. A layout's or a
+        // slot's ctx carries its own segment (a layout id ends in L<n>, a
+        // slot's in .@<name>), so those variants name the segment that handed
+        // the ctx out, not the child route whose handler ran during the await.
         await expect(page.getByText(variant.segment).first()).toBeVisible();
       }
 

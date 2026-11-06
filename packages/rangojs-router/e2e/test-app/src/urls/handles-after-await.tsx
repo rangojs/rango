@@ -6,7 +6,7 @@ import {
   type Handler,
   type MetaDescriptor,
 } from "@rangojs/router";
-import { Link, Outlet } from "@rangojs/router/client";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Suspense, type ReactNode } from "react";
 import {
   HAA_WAIT_MS,
@@ -43,6 +43,7 @@ const LINKS: ReadonlyArray<readonly [testId: string, to: string]> = [
   ["haa-link-loader-3", "/handles-after-await/loader?v=3"],
   ["haa-link-component", "/handles-after-await/component"],
   ["haa-link-component-layout", "/handles-after-await/component-layout"],
+  ["haa-link-component-slot", "/handles-after-await/component-slot"],
   ["haa-link-defer-2", "/handles-after-await/defer?v=2"],
   ["haa-link-defer-3", "/handles-after-await/defer?v=3"],
 ];
@@ -197,49 +198,74 @@ const HaaDeferPage: Handler = (ctx) => {
   );
 };
 
-export const handlesAfterAwaitPatterns = urls(({ layout, path, loader }) => [
-  layout(HaaShell, () => [
-    path("/handles-after-await", HaaIndex, { name: "handlesAfterAwait" }),
-    layout(HaaAwaitLayout, () => [
-      path("/handles-after-await/handler", HaaHandlerPage, {
-        name: "handlesAfterAwaitHandler",
-      }),
-      path("/handles-after-await/plain", HaaPlainPage, {
-        name: "handlesAfterAwaitPlain",
-      }),
-    ]),
-    layout(HaaLoaderLayout, () => [
-      path(
-        "/handles-after-await/loader",
-        () => <HaaLoaderView />,
-        { name: "handlesAfterAwaitLoader" },
-        () => [loader(HaaAwaitLoader)],
-      ),
-    ]),
-    path(
-      "/handles-after-await/component",
-      (ctx) => <HaaAwaitPush ctx={ctx} label="Component" />,
-      { name: "handlesAfterAwaitComponent" },
-    ),
-    layout(
-      (ctx) => (
-        <div data-testid="haa-component-layout">
-          <HaaAwaitPush ctx={ctx} label="Component Layout" />
-          <Outlet />
-        </div>
-      ),
-      () => [
+export const handlesAfterAwaitPatterns = urls(
+  ({ layout, path, loader, parallel }) => [
+    layout(HaaShell, () => [
+      path("/handles-after-await", HaaIndex, { name: "handlesAfterAwait" }),
+      layout(HaaAwaitLayout, () => [
+        path("/handles-after-await/handler", HaaHandlerPage, {
+          name: "handlesAfterAwaitHandler",
+        }),
+        path("/handles-after-await/plain", HaaPlainPage, {
+          name: "handlesAfterAwaitPlain",
+        }),
+      ]),
+      layout(HaaLoaderLayout, () => [
         path(
-          "/handles-after-await/component-layout",
-          () => <p data-testid="haa-component-layout-page">Page</p>,
-          { name: "handlesAfterAwaitComponentLayout" },
+          "/handles-after-await/loader",
+          () => <HaaLoaderView />,
+          { name: "handlesAfterAwaitLoader" },
+          () => [loader(HaaAwaitLoader)],
         ),
-      ],
-    ),
-    layout(HaaDeferLayout, () => [
-      path("/handles-after-await/defer", HaaDeferPage, {
-        name: "handlesAfterAwaitDefer",
-      }),
+      ]),
+      path(
+        "/handles-after-await/component",
+        (ctx) => <HaaAwaitPush ctx={ctx} label="Component" />,
+        { name: "handlesAfterAwaitComponent" },
+      ),
+      layout(
+        (ctx) => (
+          <div data-testid="haa-component-layout">
+            <HaaAwaitPush ctx={ctx} label="Component Layout" />
+            <Outlet />
+          </div>
+        ),
+        () => [
+          path(
+            "/handles-after-await/component-layout",
+            () => <p data-testid="haa-component-layout-page">Page</p>,
+            { name: "handlesAfterAwaitComponentLayout" },
+          ),
+        ],
+      ),
+      // Case 4b: the same async component, handed a parallel slot's ctx. The
+      // slot sits on a layout, so the route handler runs after it and moves the
+      // walker's shared segment pin on before the component pushes.
+      layout(
+        () => (
+          <div data-testid="haa-component-slot-frame">
+            <ParallelOutlet name="@panel" />
+            <Outlet />
+          </div>
+        ),
+        () => [
+          parallel({
+            "@panel": (ctx) => (
+              <HaaAwaitPush ctx={ctx} label="Component Slot" />
+            ),
+          }),
+          path(
+            "/handles-after-await/component-slot",
+            () => <p data-testid="haa-component-slot-page">Page</p>,
+            { name: "handlesAfterAwaitComponentSlot" },
+          ),
+        ],
+      ),
+      layout(HaaDeferLayout, () => [
+        path("/handles-after-await/defer", HaaDeferPage, {
+          name: "handlesAfterAwaitDefer",
+        }),
+      ]),
     ]),
-  ]),
-]);
+  ],
+);
