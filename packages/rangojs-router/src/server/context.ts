@@ -888,7 +888,7 @@ export function stampStaticDefScope(
     routeName: bakeRouteName,
     routerId,
   });
-  const mounts = (def.$$staticMounts ??= [] as StaticMount[]) as StaticMount[];
+  const mounts = (def.$$staticMounts ??= []) as StaticMount[];
   if (!mounts.some((mount) => mount.key === key)) {
     mounts.push({ key, routeName: bakeRouteName, rootScoped, routerId });
   }

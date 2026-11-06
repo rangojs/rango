@@ -11,39 +11,16 @@
  * router/__tests__/static-reverse-scope.rsc-test.tsx.
  */
 import { describe, it, expect } from "vitest";
-import {
-  RangoContext,
-  runWithPrefixes,
-  type EntryData,
-} from "../../server/context.js";
+import { runWithPrefixes, type EntryData } from "../../server/context.js";
 import { urls } from "../../urls/urls-function.js";
 import { Static, type StaticHandlerDefinition } from "../../static-handler.js";
 import type { StaticMount } from "../../static-handler.js";
 import type { UrlPatterns } from "../../urls/pattern-types.js";
+import { parentEntry, withDslStore } from "./dsl-test-helpers.js";
 
 /** A fresh definition per test: mount records accumulate on the definition. */
 function staticDef(id: string): StaticHandlerDefinition {
   return Static((_ctx) => null, undefined, id) as StaticHandlerDefinition;
-}
-
-/** A parent entry shaped enough for the DSL helpers to attach to. */
-function parentEntry(): EntryData {
-  return {
-    id: "test",
-    shortCode: "L0",
-    type: "layout",
-    parent: null,
-    handler: null,
-    loading: undefined,
-    middleware: [],
-    revalidate: [],
-    errorBoundary: [],
-    notFoundBoundary: [],
-    layout: [],
-    parallel: {},
-    intercept: [],
-    loader: [],
-  } as unknown as EntryData;
 }
 
 interface Evaluated {
@@ -64,16 +41,8 @@ function evaluate(
 ): Evaluated {
   const root = parentEntry();
   const manifest = new Map<string, EntryData>();
-  RangoContext.run(
-    {
-      manifest,
-      patterns: new Map(),
-      patternsByPrefix: new Map(),
-      namespace: "test",
-      parent: root,
-      counters: {},
-      routerId: "mount-router",
-    } as never,
+  withDslStore(
+    root,
     () => {
       const run = () => {
         patterns.handler();
@@ -81,6 +50,7 @@ function evaluate(
       if (include) runWithPrefixes(include.url, include.name, run);
       else run();
     },
+    { manifest, patternsByPrefix: new Map(), routerId: "mount-router" },
   );
   return { root, manifest };
 }
@@ -126,19 +96,13 @@ describe("Static() mount scope", () => {
     const SharedNav = staticDef("test#SharedNav");
     const patterns = urls(({ layout }) => [layout(SharedNav, () => [])]);
     const root = parentEntry();
-    RangoContext.run(
-      {
-        manifest: new Map(),
-        patterns: new Map(),
-        namespace: "test",
-        parent: root,
-        counters: {},
-        routerId: "mount-router",
-      } as never,
+    withDslStore(
+      root,
       () => {
         runWithPrefixes(mountA.url, mountA.name, () => patterns.handler());
         runWithPrefixes(mountA.url, mountA.name, () => patterns.handler());
       },
+      { routerId: "mount-router" },
     );
 
     const [first, second] = root.layout as Array<{ staticHandlerId: string }>;

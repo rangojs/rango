@@ -20,8 +20,16 @@ export function parentEntry(): EntryData {
   } as unknown as EntryData;
 }
 
-/** Run `fn` inside a fresh DSL build context with the given parent. */
-export function withDslStore<T>(parent: EntryData, fn: () => T): T {
+/**
+ * Run `fn` inside a fresh DSL build context with the given parent.
+ * `store` adds fields the caller needs to observe or scope (a manifest to read,
+ * the router id a segment's scope is keyed by).
+ */
+export function withDslStore<T>(
+  parent: EntryData,
+  fn: () => T,
+  store?: Record<string, unknown>,
+): T {
   return RangoContext.run(
     {
       manifest: new Map(),
@@ -29,6 +37,7 @@ export function withDslStore<T>(parent: EntryData, fn: () => T): T {
       parent,
       counters: {},
       patterns: new Map(),
+      ...store,
     } as never,
     fn,
   );

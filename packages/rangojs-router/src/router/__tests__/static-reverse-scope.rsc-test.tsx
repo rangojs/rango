@@ -205,4 +205,34 @@ describe("a Static() def mounted twice", () => {
     expect(Object.keys(assets)).toEqual([`test#SharedNav::${ROUTER_ID}::a`]);
     expect(assets[`test#SharedNav::${ROUTER_ID}::a`]).toContain("/a/settings");
   });
+
+  it("a definition no DSL position mounted keeps its single historical bake", async () => {
+    // A Static export the build's module scan finds but the route tree never
+    // mounts: no mount record exists, so the collector falls back to the
+    // definition's last-mount stamps and bakes it once, as it always did.
+    const orphan = Static(
+      () => <p>orphan</p>,
+      undefined,
+      "test#Orphan",
+    ) as StaticHandlerDefinition;
+    const nav = staticDef("test#SharedNav", "shared-nav");
+    const moduleA = urls(({ path, layout }) => [
+      layout(nav as never, () => [
+        path("/settings", () => null, { name: "settings" }),
+      ]),
+    ]);
+    const patterns = urls(({ include }) => [
+      include("/a", moduleA, { name: "a" }),
+    ]);
+
+    const { assets } = await bake(patterns, {
+      SharedNav: nav,
+      Orphan: orphan,
+    });
+
+    expect(orphan.$$staticMounts).toBeUndefined();
+    expect(Object.keys(assets).sort()).toEqual(
+      [`test#Orphan::::`, `test#SharedNav::${ROUTER_ID}::a`].sort(),
+    );
+  });
 });
