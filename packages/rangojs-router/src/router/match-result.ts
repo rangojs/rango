@@ -203,12 +203,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutMarker(s));
     diff.push(s.id);
   }
 
@@ -227,7 +222,8 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots:
+      Object.keys(state.slots).length > 0 ? cleanSlots(state.slots) : undefined,
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -237,6 +233,33 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/**
+ * The segment as the payload carries it: `_handlerRan` is the pipeline's own
+ * mark (revalidation.ts for a live walk, cache-lookup.ts serveStoredSegments
+ * for the segments a stored answer re-renders), and no client reads it.
+ */
+function withoutMarker(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The named slots as the payload carries them. A slot's segments are the walk's
+ * own objects (intercept-resolution.ts files a stored slot's segments there on
+ * a HIT), so each goes through withoutMarker as `segments` does: a slot that
+ * re-rendered from a record would otherwise carry the mark to the client.
+ */
+function cleanSlots(
+  slots: MatchPipelineState["slots"],
+): MatchPipelineState["slots"] {
+  const out: MatchPipelineState["slots"] = {};
+  for (const [name, slot] of Object.entries(slots)) {
+    out[name] = { ...slot, segments: slot.segments.map(withoutMarker) };
+  }
+  return out;
 }
 
 /**

@@ -480,6 +480,30 @@ describe("match-result", () => {
       expect(result.resolvedIds).toEqual(["R0", "R0D1.rerun"]);
       expect(result.matched).toEqual(["R0", "R0D0.held", "R0D1.rerun"]);
     });
+
+    // A slot's segments are the walk's own objects (intercept-resolution.ts
+    // files a stored slot's segments there on a HIT), so they are stripped too.
+    it("a slot's segments reach the payload without _handlerRan", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: ["L0", "L0.@modal"],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0", "L0.@modal"];
+      const slot = createSegment("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      state.slots["@modal"] = { active: true, segments: [slot] };
+
+      const result = buildMatchResult([slot], ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0.@modal"]);
+      expect(result.slots?.["@modal"]?.segments?.[0]).not.toHaveProperty(
+        "_handlerRan",
+      );
+    });
   });
 
   describe("buildMatchResult() - fromStorage", () => {

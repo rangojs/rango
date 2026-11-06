@@ -54,6 +54,8 @@ const Crumbs = createHandle<string, string[]>(function (segments) {
 
 /** Whether the chain layout pushes on this request. */
 let chainPushes = true;
+/** How many times the intercept's handler has run. */
+let modalRuns = 0;
 /** How many times the chain layout's handler ran. */
 let chainRuns = 0;
 /** How many times the Prerender route's handler ran (the bake only). */
@@ -120,6 +122,48 @@ function makePrerenderRouter() {
   );
 }
 
+/**
+ * The chain layout with an intercept that opens over /list: a cache() HIT that
+ * re-sends the slot, whose segment the walk files into `metadata.slots`.
+ */
+function makeInterceptRouter() {
+  return createRouter({}).routes(
+    urls(({ path, cache, layout, intercept }) => [
+      cache({ ttl: 600 }, () => [
+        layout(RootLayout, () => [
+          path(
+            "/list",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("list");
+              return <ul>list</ul>;
+            },
+            { name: "list" },
+          ),
+          path(
+            "/item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)("item-page");
+              return <article>item page</article>;
+            },
+            { name: "item" },
+          ),
+          intercept(
+            "@modal",
+            ".item",
+            (ctx: HandlerContext) => {
+              // Pushes on its first render only, so the record a second render
+              // writes holds no values for the slot.
+              if (modalRuns++ === 0) ctx.use(Crumbs)("modal");
+              return <dialog>modal</dialog>;
+            },
+            { when: ({ from }) => from.url.pathname === "/list" },
+          ),
+        ]),
+      ]),
+    ]),
+  );
+}
+
 /** A ppr route under the same chain layout: a navigation replay's source. */
 function makePprRouter() {
   return createRouter({}).routes(
@@ -175,11 +219,11 @@ function crumbsOf(page: Page): string[] {
   return collectHandleData(Crumbs, page.handles, order);
 }
 
-/** The page's crumbs after a partial response, merged as the browser merges. */
-async function crumbsAfter(
+/** The handles and segment order a partial response leaves the page with. */
+async function mergedAfter(
   page: Page,
   result: ServeShellRequestResult,
-): Promise<string[]> {
+): Promise<{ handles: HandleData; order: string[] }> {
   const { answer, handles } = await readAnswer(result);
   const order = filterSegmentOrder(answer.matched);
   const merged = mergePartialHandleData(
@@ -189,16 +233,37 @@ async function crumbsAfter(
     answer.matched,
     answer.resolvedIds,
   );
-  return collectHandleData(Crumbs, merged, order);
+  return { handles: merged, order };
 }
 
-/** No server-side marker rides the wire: `resolvedIds` is the only trace. */
-async function expectNoMarkers(
+/** The page's crumbs after a partial response, merged as the browser merges. */
+async function crumbsAfter(
+  page: Page,
   result: ServeShellRequestResult,
-): Promise<void> {
-  for (const segment of (await readAnswer(result)).answer.segments) {
-    expect(Object.keys(segment)).not.toContain("_handlerRan");
-  }
+): Promise<string[]> {
+  const { handles, order } = await mergedAfter(page, result);
+  return collectHandleData(Crumbs, handles, order);
+}
+
+/**
+ * No server-side marker rides the wire: `resolvedIds` is the only trace. Walks
+ * the whole payload, a slot's segments included (they are the walk's own
+ * objects, filed into `metadata.slots`).
+ */
+async function expectNoMarkers(result: ServeShellRequestResult): Promise<void> {
+  const found: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, inner] of Object.entries(value as object)) {
+      if (key === "_handlerRan") found.push(path);
+      else walk(inner, `${path}.${key}`);
+    }
+  };
+  const { metadata } = await deserializeResult<{ metadata: unknown }>(
+    result.flight!,
+  );
+  walk(metadata, "metadata");
+  expect(found).toEqual([]);
 }
 
 /** The cache.decision status the last request reported for `pathname`. */
@@ -211,6 +276,7 @@ function cacheStatusOf(pathname: string): string | undefined {
 
 beforeEach(async () => {
   chainPushes = true;
+  modalRuns = 0;
   chainRuns = 0;
   prerenderRuns = 0;
   events.length = 0;
@@ -287,6 +353,51 @@ describe("a Prerender() HIT lists the segments it re-renders", () => {
       (segment) => segment.type === "route",
     )!;
     expect(await resolvedIdsOf(hit)).toEqual([layouts.at(-1)!.id, route.id]);
+    await expectNoMarkers(hit);
+  });
+});
+
+describe("a cache() HIT of an intercept navigation lists the slot it re-renders", () => {
+  it("an intercept that re-ran and pushed nothing, with the slot in metadata.slots", async () => {
+    const router = makeInterceptRouter();
+    const page = await readAnswer(
+      await serveShellRequest(router, "/list", {
+        cacheStore: new MemorySegmentCacheStore(),
+      }),
+    );
+    expect(crumbsOf(page)).toEqual(["root", "list"]);
+
+    const cacheStore = new MemorySegmentCacheStore();
+    const partial = { from: "/list", segments: page.answer.matched } as const;
+
+    // The navigation that writes the intercept's record: the slot renders
+    // live and pushes its crumb.
+    const miss = await serveShellRequest(router, "/item/1", {
+      cacheStore,
+      partial,
+    });
+    const afterMiss = await mergedAfter(page, miss);
+    expect(
+      collectHandleData(Crumbs, afterMiss.handles, afterMiss.order),
+    ).toEqual(["root", "modal", "list"]);
+    await expectNoMarkers(miss);
+
+    // The same intercept again, the client holding it: the record answers and
+    // re-sends the slot. The record holds no values for it: the render that
+    // wrote it ran the slot's handler a second time, which pushed nothing.
+    // The slot must be listed, or the client keeps the crumb the page shows.
+    const held = {
+      answer: (await readAnswer(miss)).answer,
+      handles: afterMiss.handles,
+    };
+    const hit = await serveShellRequest(router, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: held.answer.matched },
+    });
+    expect(await crumbsAfter(held, hit)).toEqual(["root", "list"]);
+    expect(await resolvedIdsOf(hit)).toEqual(
+      held.answer.matched.filter((id) => id.includes(".@")),
+    );
     await expectNoMarkers(hit);
   });
 });
