@@ -1268,10 +1268,13 @@ which run made each one.
    prerender entry stands in for a run of its handler, so
    `serveStoredSegments` (`router/match-middleware/cache-lookup.ts`) marks it
    run and the browser replaces its values with the record's, or clears them
-   when the record carries none. Without that a HIT listed only the loaders it
-   re-ran, and a value the record did not carry stayed on the page the
-   navigation left. A segment the lookup keeps stays unmarked, as a segment a
-   live walk keeps.
+   when the record carries none. Every source that serves there counts: a
+   route's `cache()` record, a `Prerender()` bake, an on-demand
+   `Prerender()` overlay entry, and a `ppr` route's shell doc record, which a
+   navigation replay reads as a record under the shell's key. Without that a
+   HIT listed only the loaders it re-ran, and a value the record did not carry
+   stayed on the page the navigation left. A segment the lookup keeps stays
+   unmarked, as a segment a live walk keeps.
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment
@@ -1362,6 +1365,15 @@ pins that a shared segment's crumb comes from the page on screen.
   control.
 - `src/router/__tests__/match-result.test.ts`, "partial match resolvedIds
   names the loader segments that ran".
+- `src/testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx`, through
+  `serveShellRequest` and `mergePartialHandleData` as the browser runs it: a
+  breadcrumb the record does not carry clears on a HIT as it does on the MISS
+  (a `cache()` record, a `Prerender()` bake, a `Prerender()` overlay entry,
+  and a `ppr` shell replay), the record's crumb shows where a live render
+  pushes none, and a request kind's HIT reports the `resolvedIds` its MISS
+  does. Seven of its ten tests fail on the base without the mark; the three
+  that pass are the controls (the record's own crumb, a kept entry listing
+  nothing, no marker on the wire).
 - `src/server/__tests__/handle-store.test.ts`, "HandleStore pushedBy records
   (the run of each push)"; `src/handles/__tests__/deferred-resolution.test.ts`,
   "keeps the pushedBy record aligned with the values it drops".
