@@ -2615,12 +2615,25 @@ The receiver is what a caller can lose, so the child owns `use` too
 child's own `use` supplies it. It reads the base ctx's `use` at call time,
 because `loader-cache.ts` swaps that for its override interceptor.
 
-The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin, and pass no carried segment: a started loader's owning
-segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
-and the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
-reading its pin.
+`segmentPinOf(ctx)` is the one funnel, and it reads the object before the pin:
+the innermost scope's segment, else the ctx's carried segment, else the pin.
+So the ctx decides for the readers that were handed it, not only for a push:
+a started loader's owning segment (`loaderOwner`, after a prefetch-deferred
+loader's registered owner) and the caller segment a `"use cache"` call
+records and replays under (`cache-runtime.ts`) file under the layout's or the
+slot's segment when a component starts them through that ctx after an await,
+and under the route's when it uses the route handler's ctx.
+
+A loader is the one reader whose ctx is not the object the call arrived on:
+the executor closes over the request's one handler ctx, so `ctx.use(loader)`
+passes the receiver's carried segment on (`useLoader`'s `carried`, from
+`setupLoaderAccess`). The DSL kickoff needs nothing passed: it runs inside
+`runAsSegment(owner)` (`resolveOwnerLoaders`), which outranks the ctx's own
+segment — the shared ctx carries the route's `_pushSegmentId`, and a layout's
+or a slot's DSL loader belongs to the layout or the slot, not the route.
+That is why the scope term comes first in `segmentPinOf`: a ctx that carries a
+segment and code running for another one disagree only at a kickoff, and the
+kickoff is the one that knows.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
@@ -2643,8 +2656,10 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, through `ctx.use` and through a destructured `use`,
-and for a route whose slot resolves after its handler) and
+slot handed the ctx to, through `ctx.use`, a destructured `use` and a
+`{ ...ctx }` copy, and for a route whose slot resolves after its handler; a
+loader started through a layout's and a slot's ctx; a `"use cache"` HIT's
+replay into the layout's and the slot's segment) and
 `server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
 (test-app and cloudflare-basic, dev and production) checks the message on the
 page.

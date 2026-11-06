@@ -462,25 +462,33 @@ export async function resolveOwnerLoaders<TEnv>(
   // partial replay (matchPartialWithPprReplay) seeds once its doc record hits.
   const bakeLane = owner.bakeLane;
 
+  // The kickoff runs as the owner's code (runAsSegment): the request's one
+  // handler ctx carries the route's `_pushSegmentId`
+  // (resolveEntryHandler), which outranks the pin for every reader
+  // (segmentPinOf), and this owner may be a layout or a slot. A loader a
+  // reader starts later from a scoped ctx reads that ctx's segment instead
+  // (loaderOwner's carried argument).
   const kickoff = (
     loaderEntry: LoaderEntry,
     segmentId: string,
   ): Promise<unknown> =>
-    runInsideLoaderScope(
-      () =>
-        resolveLoaderData(
-          loaderEntry,
-          ctx,
-          ctx.pathname,
-          // The bake key rides for flagged loaders too (`bake`): ssr: "await"
-          // bakes at capture regardless of the entry's loading() lane
-          // (loader-cache.ts capture branch), its HIT-tail seed overlay needs
-          // the same key, and on a navigation it pins exactly as on the
-          // document HIT.
-          bakeLane || loaderEntry.bake === true ? segmentId : null,
-        ),
-      loaderEntry.loader.$$id,
-      loaderEntry.reverseScope,
+    runAsSegment(shortCode, () =>
+      runInsideLoaderScope(
+        () =>
+          resolveLoaderData(
+            loaderEntry,
+            ctx,
+            ctx.pathname,
+            // The bake key rides for flagged loaders too (`bake`): ssr: "await"
+            // bakes at capture regardless of the entry's loading() lane
+            // (loader-cache.ts capture branch), its HIT-tail seed overlay needs
+            // the same key, and on a navigation it pins exactly as on the
+            // document HIT.
+            bakeLane || loaderEntry.bake === true ? segmentId : null,
+          ),
+        loaderEntry.loader.$$id,
+        loaderEntry.reverseScope,
+      ),
     );
 
   // skipLoaders: no loader runs and none is emitted. Each is registered

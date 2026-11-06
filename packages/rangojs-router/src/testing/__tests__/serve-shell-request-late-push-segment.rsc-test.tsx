@@ -15,6 +15,12 @@
  * The route case is the one the pin cannot cover: the route resolves before
  * its orphan layouts and its parallels, so a route with a slot has a slot's
  * segment pinned by the time its component pushes.
+ *
+ * The same ctx decides where everything else that ctx starts files: a loader
+ * a component starts through it (loaderOwner), and the handle values a
+ * "use cache" call made with it replays on a HIT (cache-runtime.ts's caller
+ * segment). Both read the segment off the ctx, not the pin, so a layout's or a
+ * slot's component reaches its own segment after the walker moved on.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -31,12 +37,14 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import { withoutPushedBy } from "../../handles/pushed-by.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -159,12 +167,35 @@ async function serve(url: string, hold: Hold) {
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
 
+/** The handle values a response delivers, by the segment id that owns them. */
+async function bucketOf(
+  result: Awaited<ReturnType<typeof serveShellRequest>>,
+): Promise<Record<string, string[]>> {
+  const handles = withoutPushedBy((await result.readHandles())!.hydration);
+  return Object.fromEntries(
+    Object.values(handles).flatMap((bySegment) =>
+      Object.entries(bySegment).map(
+        ([segmentId, values]) => [segmentId, values as string[]] as const,
+      ),
+    ),
+  );
+}
+
 /** The one LateHandlePushError the response reported, and its segment. */
 function latePushSegment(reported: string[]): string {
   expect(reported).toHaveLength(1);
   const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
   expect(segment).not.toBeNull();
   return segment![1]!;
+}
+
+/** Every reported LateHandlePushError's segment, in order. */
+function latePushSegments(reported: string[]): string[] {
+  return reported.map((message) => {
+    const segment = /for segment "([^"]+)" was pushed after/.exec(message);
+    expect(segment, message).not.toBeNull();
+    return segment![1]!;
+  });
 }
 
 beforeEach(async () => {
@@ -312,5 +343,169 @@ describe("a component an intercept handler handed its ctx to", () => {
     // after the response: the message is the only thing to read.
     expect(latePushSegment([...errors])).toBe("M0L0L0.@modal");
     await result.readHandles();
+  });
+});
+
+/** A loader a component starts through the ctx its handler handed it. */
+const StartedLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("started-loader");
+  return { ok: true };
+});
+
+/** Starts that loader after an await, so its push lands after collection. */
+async function LateStart({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await ctx.use(StartedLoader);
+  return <span>{label}</span>;
+}
+
+/** A "use cache" function pushing with the ctx it is called with. */
+async function cachedCrumb(ctx: HandlerContext): Promise<string> {
+  "use cache";
+  ctx.use(Crumbs)("cached-crumb");
+  return "cached";
+}
+
+/** Calls it after an await, so the replay lands after collection. */
+async function LateCached({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await cachedCrumb(ctx);
+  return <span>cached</span>;
+}
+
+/** Where the cached function is called: the handler, or the component. */
+let cachedFrom: "handler" | "component" = "handler";
+
+/** A layout and a slot whose handler hands its ctx to a component. */
+function startRouter(probe: "loader" | "cached") {
+  const After = probe === "loader" ? LateStart : LateCached;
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            (ctx) => (
+              <div>
+                {probe === "cached" && cachedFrom === "handler"
+                  ? void cachedCrumb(ctx)
+                  : null}
+                {probe === "loader" || cachedFrom === "component" ? (
+                  <After ctx={ctx} label="layout" />
+                ) : null}
+              </div>
+            ),
+            () => [
+              path("/start-layout", () => <p>page</p>, { name: "startLayout" }),
+            ],
+          ),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({
+                "@panel": (ctx) => (
+                  <>
+                    {probe === "cached" && cachedFrom === "handler"
+                      ? void cachedCrumb(ctx)
+                      : null}
+                    {probe === "loader" || cachedFrom === "component" ? (
+                      <After ctx={ctx} label="slot" />
+                    ) : (
+                      <aside>slot</aside>
+                    )}
+                  </>
+                ),
+              }),
+              path("/start-slot", () => <p>page</p>, { name: "startSlot" }),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe("what a layout's or a slot's ctx starts", () => {
+  it("a loader started through the layout's ctx files under the layout", async () => {
+    errors.length = 0;
+    const result = await serveShellRequest(
+      startRouter("loader"),
+      "/start-layout",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+      },
+    );
+    const layout = (await matchedOf(result.flight))
+      .filter((id) => /L\d+$/.test(id))
+      .at(-1)!;
+    // The walker pinned the route before the component pushed.
+    expect(latePushSegment([...errors])).toBe(layout);
+    await result.readHandles();
+  });
+
+  it("a loader started through the slot's ctx files under the slot", async () => {
+    errors.length = 0;
+    const result = await serveShellRequest(
+      startRouter("loader"),
+      "/start-slot",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+      },
+    );
+    const slot = (await matchedOf(result.flight)).find((id) =>
+      id.endsWith(".@panel"),
+    )!;
+    expect(latePushSegment([...errors])).toBe(slot);
+    await result.readHandles();
+  });
+
+  it('a "use cache" HIT replays into the layout\'s segment', async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = startRouter("cached");
+    cachedFrom = "handler";
+    // The handler's call records the push with the entry, under the layout.
+    const miss = await serveShellRequest(router, "/start-layout", {
+      cacheStore,
+    });
+    const layout = (await matchedOf(miss.flight))
+      .filter((id) => /L\d+$/.test(id))
+      .at(-1)!;
+    expect(await bucketOf(miss)).toEqual({ [layout]: ["cached-crumb"] });
+    // The HIT's replay is what the component's call reads.
+    cachedFrom = "component";
+    errors.length = 0;
+    const hit = await serveShellRequest(router, "/start-layout", {
+      cacheStore,
+    });
+    expect(latePushSegments([...errors])).not.toHaveLength(0);
+    expect(new Set(latePushSegments([...errors]))).toEqual(new Set([layout]));
+    await hit.readHandles();
+  });
+
+  it('a "use cache" HIT replays into the slot\'s segment', async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = startRouter("cached");
+    cachedFrom = "handler";
+    const miss = await serveShellRequest(router, "/start-slot", { cacheStore });
+    const slot = (await matchedOf(miss.flight)).find((id) =>
+      id.endsWith(".@panel"),
+    )!;
+    expect(await bucketOf(miss)).toEqual({ [slot]: ["cached-crumb"] });
+    cachedFrom = "component";
+    errors.length = 0;
+    const hit = await serveShellRequest(router, "/start-slot", { cacheStore });
+    expect(latePushSegments([...errors])).not.toHaveLength(0);
+    expect(new Set(latePushSegments([...errors]))).toEqual(new Set([slot]));
+    await hit.readHandles();
   });
 });

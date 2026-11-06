@@ -21,6 +21,21 @@ Each handler's ctx carries its own segment, and its own `use` keeps it when a
 component calls it detached from the ctx. The push is still rejected, at the
 same moment, and production still shows no message.
 
+### Fixed: what a layout's or a slot's ctx starts files under that segment
+
+**Before.** A handle value reached the segment the walker had pinned when it
+arrived, not the segment whose ctx started the work: a loader a component
+started through a layout's or a slot's `ctx` after an `await` filed its pushes
+under the route (or the sibling slot) rendered with it, and a `"use cache"`
+HIT replayed the values the entry recorded into that same segment. A layout's
+breadcrumbs could arrive in the page's segment on a cached navigation and in
+the layout's on a live one.
+
+**Now.** A loader started through a layout's or a slot's `ctx`, and a
+`"use cache"` HIT replayed through it, file under that ctx's segment — the
+route's when the route handler's own ctx was used — before or after an
+`await`, however the component holds the ctx.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

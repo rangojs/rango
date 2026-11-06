@@ -555,14 +555,24 @@ export function startDeferredLoader(
  * The segment a run of `loaderId` files its handle pushes under: the one
  * that registers it when it is registered (registerDeferredLoader), else the
  * segment whose code starts it (segmentPinOf).
+ *
+ * `carried` is the segment of the ctx the reader called `use` on, when that
+ * ctx is a scoped one (withSegmentScope's child): the installed ctx the
+ * executor closes over is the request's one handler ctx, so without it a
+ * loader a layout's or slot's component starts after an await would file its
+ * pushes under the segment the walker pinned since (a sibling slot, the
+ * route). The registration's owner still wins: a deferred loader keeps the
+ * segment that registered it.
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
   loaderId: string,
+  carried?: string,
 ): string | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
   return (
-    internal._deferredLoaders?.get(loaderId)?.owner ?? segmentPinOf(internal)
+    internal._deferredLoaders?.get(loaderId)?.owner ??
+    segmentPinOf(internal, carried)
   );
 }
 

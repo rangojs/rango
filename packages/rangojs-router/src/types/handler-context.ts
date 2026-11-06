@@ -460,17 +460,19 @@ export type InternalHandlerContext<
   _currentSegmentId?: string;
   /**
    * The segment a layout's or parallel slot's ctx belongs to
-   * (withSegmentScope): a handle push made through it files under that
-   * segment, before or after an `await`, however the ctx was called
-   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy). Only
-   * `handlePushSegment` reads it; `segmentPinOf` takes it as an argument.
+   * (withSegmentScope): what a caller does through that ctx afterwards — a
+   * handle push, a loader it starts, a `"use cache"` call it makes — files
+   * under that segment, before or after an `await`, however the ctx was
+   * called (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy). Read by
+   * `segmentPinOf`, which every one of those readers goes through.
    */
   _handleSegmentId?: string;
   /**
    * The matched route's segment on the request's one handler ctx
-   * (`resolveEntryHandler`): a handle push made through that ctx files under
-   * the route, before or after an `await`. Only `handlePushSegment` reads it,
-   * so a loader's owner and a `"use cache"` caller segment keep the live pin.
+   * (`resolveEntryHandler`): the same, for the route's own ctx, which has no
+   * child because its `{ ...ctx }` must copy the ctx's fields for a `"use
+   * cache"` call. Read by `segmentPinOf` after `_handleSegmentId`, so a scoped
+   * child keeps its own segment.
    */
   _pushSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */

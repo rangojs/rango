@@ -1743,19 +1743,39 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 
 /**
  * The segment code here runs for: the innermost runAsSegment scope, else the
- * request ctx's pin (a handler the walker awaits).
+ * segment the ctx object belongs to, else the request ctx's pin (a handler the
+ * walker awaits).
  *
- * `carried` is the segment the ctx a caller was invoked on belongs to, for a
- * reader that asks the object rather than the frame — a handle push through a
- * layout's or slot's ctx, which holds after the walker moved on
- * (handlePushSegment, router/loader-resolution.ts). The other readers pass
- * none and read the pin.
+ * The ctx object wins over the pin because the pin moves on while the object
+ * outlives it: a layout's or parallel slot's ctx carries `_handleSegmentId`
+ * (withSegmentScope), and the request's one handler ctx carries the route's
+ * `_pushSegmentId` (revalidation.ts resolveEntryHandler). Everything a caller
+ * does through that object afterwards — a handle push, a loader it starts, a
+ * "use cache" call it makes — belongs to that segment, however long after the
+ * handler returned and whichever ctx the reader was handed
+ * (handlePushSegment, loader-resolution.ts; loaderOwner, prefetch-deferral.ts;
+ * cache-runtime.ts's caller segment).
+ *
+ * `carried` is for the one reader whose object is not the ctx it must ask —
+ * `ctx.use` called on a copy or detached from a scoped child, where the
+ * receiver, not the installed ctx, knows the segment
+ * (handlePushSegment).
  */
 export function segmentPinOf(
-  ctx: { _currentSegmentId?: string },
+  ctx: {
+    _currentSegmentId?: string;
+    _handleSegmentId?: string;
+    _pushSegmentId?: string;
+  },
   carried?: string,
 ): string | undefined {
-  return segmentPinALS.getStore() ?? carried ?? ctx._currentSegmentId;
+  return (
+    segmentPinALS.getStore() ??
+    carried ??
+    ctx._handleSegmentId ??
+    ctx._pushSegmentId ??
+    ctx._currentSegmentId
+  );
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

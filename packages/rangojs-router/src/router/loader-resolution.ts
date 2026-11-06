@@ -110,25 +110,21 @@ export type LoaderErrorCallback = (
  * call reaches this with the child as the receiver too: the child owns `use`,
  * which supplies it.
  *
- * The request's one handler ctx carries the route's segment instead
- * (`_pushSegmentId`, revalidation.ts resolveEntryHandler): the route handler
- * has no child, because a route handler's `{ ...ctx }` must copy the ctx's
- * fields for a "use cache" call, and its components push after the route's
- * slots and orphan layouts were pinned.
- *
- * Any other receiver reads the ctx `use` was installed on, whose
- * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
- * with `use` copied onto it (a Prerender handler forwarding to a shared page
- * handler) included.
+ * Anything else asks the ctx `use` was installed on, which carries the
+ * route's segment when the walker ran a route on it (`_pushSegmentId`,
+ * revalidation.ts resolveEntryHandler) and the pin otherwise — a handler that
+ * built a smaller ctx with `use` copied onto it (a Prerender handler
+ * forwarding to a shared page handler) included. segmentPinOf reads all of
+ * it; see there.
  */
 function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
-  const carried =
-    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId;
-  return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
+  return segmentPinOf(
+    installed as InternalHandlerContext<any, any>,
+    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId,
+  );
 }
 
 /**
@@ -521,6 +517,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  carried?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -539,6 +536,14 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    /**
+     * The segment of the ctx `use` was called on, when it was called on a
+     * scoped one (withSegmentScope's child, a copy of it): a loader a layout's
+     * or slot's component starts after an await belongs to that segment, not
+     * to whatever the walker pinned since (loaderOwner). Read from the
+     * receiver, so a detached or copied `use` keeps it.
+     */
+    carried?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -636,7 +641,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, carried);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1013,11 +1018,12 @@ export function setupLoaderAccess<TEnv>(
       },
     )(loader, null);
 
-  // A regular function, not an arrow: `ctx.use` resolves the push segment
-  // from the RECEIVER when it carries one (handlePushSegment), so a route's,
-  // layout's or slot's ctx files the push under its own segment however long
-  // after the handler returned. A detached call still arrives with the
-  // scoped ctx as the receiver (withSegmentScope's own `use`).
+  // A regular function, not an arrow: `ctx.use` resolves the segment from the
+  // RECEIVER when it carries one (handlePushSegment, and useLoader's carried
+  // for a loader), so a route's, layout's or slot's ctx files a push or a
+  // started loader under its own segment however long after the handler
+  // returned. A detached call still arrives with the scoped ctx as the
+  // receiver (withSegmentScope's own `use`).
   ctx.use = function (
     this: HandlerContext<any, TEnv> | undefined,
     item: LoaderDefinition<any, any> | Handle<any, any>,
@@ -1082,7 +1088,11 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    return useLoader(
+      loader,
+      null,
+      (this as { _handleSegmentId?: string } | undefined)?._handleSegmentId,
+    );
   } as typeof ctx.use;
 }
 

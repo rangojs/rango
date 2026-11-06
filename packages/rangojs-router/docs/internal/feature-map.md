@@ -272,7 +272,10 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 route's `_pushSegmentId` on the request's one ctx; `router/handler-context.ts`,
 `resolveEntryHandler`) for a push from a component the handler handed that ctx
 to, its own `use` keeping the segment when the call lost the receiver; see
-execution-model.md "A streamed handler keeps its segment".
+execution-model.md "A streamed handler keeps its segment". The same carried
+segment is what a loader the ctx starts (`loaderOwner`,
+`router/segment-resolution/prefetch-deferral.ts`) and a `"use cache"` HIT's
+replay (`cache-runtime.ts`) file under.
 
 ---
 
