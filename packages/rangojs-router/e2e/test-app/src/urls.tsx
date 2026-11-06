@@ -64,6 +64,7 @@ import {
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
+import { dslNestingPatterns } from "./urls/dsl-nesting.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
@@ -979,6 +980,10 @@ export const urlpatterns = urls(
       // Orphan fetchable loader: loader reachable only via a client import,
       // never registered with loader(). Exercises the build-time pre-scan path.
       include("/", orphanFetchablePatterns, { name: "" }),
+
+      // A definition created inside the callback that nests it, and the
+      // declared-outside error from the rejected shape.
+      include("/dsl-nesting", dslNestingPatterns, { name: "" }),
 
       // Blog patterns
       include("/blog", blogPatterns, { name: "blog" }),

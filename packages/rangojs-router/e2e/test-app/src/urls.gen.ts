@@ -219,6 +219,8 @@ export const routes = {
   docStateShellCallback: "/doc-state/shell-callback",
   docStateTarget: "/doc-state/target",
   docStateVerify: "/doc-state/verify",
+  dslNesting: "/dsl-nesting",
+  dslNestingCached: "/dsl-nesting/cached",
   "errors.captureFails": "/errors/capture-fails/:k",
   "errors.clientError": "/errors/client-error",
   "errors.flakyCache": "/errors/flaky-cache",
