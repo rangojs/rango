@@ -243,6 +243,53 @@ describe("parallel slot handlers (revalidation main path)", () => {
   });
 });
 
+/**
+ * The pin is the slot's only while the slot handler runs. The ctx the handler
+ * hands its components carries the slot (withSegmentScope), so the shared pin
+ * goes back to the entry's when the handler returns: a push from a component
+ * the route's handler handed the SHARED ctx to renders after the walk, and it
+ * must name the route, not the slot that ran last.
+ */
+describe("parallel slot handlers (the entry's pin comes back)", () => {
+  const params = { mailboxId: "x", folder: "draft", emailId: "2" };
+  const request = new Request("http://localhost/mailbox/x/emails/draft/2");
+  const url = new URL("http://localhost/mailbox/x/emails/draft/2");
+
+  for (const branch of ["await", "streamed"] as const) {
+    it(`restores it after the slot handler (${branch} branch)`, async () => {
+      const context = makeContext();
+      // What resolveEntryHandler leaves on the route's entry before parallels.
+      context._currentSegmentId = "R0";
+      const layout = makeLayoutWithSlotHandler(
+        (ctx: any) => {
+          // The handler's own ctx carries the slot, not the entry's pin.
+          expect(ctx._handleSegmentId).toBe("L0.@panel");
+          return branch === "streamed" ? Promise.resolve(null) : null;
+        },
+        branch === "streamed" ? () => null : undefined,
+      );
+
+      await resolveParallelSegments(
+        {
+          context,
+          client: new Set(["L0", "L0.@panel"]),
+          params,
+          prevParams: params,
+          request,
+          prevUrl: url,
+          nextUrl: url,
+          routeKey: "mailbox.email",
+          deps: makeDeps(),
+        },
+        layout,
+        false,
+      );
+
+      expect(context._currentSegmentId).toBe("R0");
+    });
+  }
+});
+
 describe("parallel slot handlers (revalidation orphan path)", () => {
   const params = { mailboxId: "x", folder: "draft", emailId: "2" };
   const prevParams = { mailboxId: "x", folder: "draft", emailId: "1" };

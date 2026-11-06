@@ -622,6 +622,54 @@ describe("createReverseFunction", () => {
       // No own reverse: the shared one, as before the scope existed.
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
+
+    // A component handed the ctx may destructure `use` or spread-copy the ctx,
+    // and neither carries the receiver `ctx.use` resolves the push segment
+    // from (handlePushSegment, router/loader-resolution.ts). The child's own
+    // `use` hands the base one this ctx, so every shape files the same.
+    it("withSegmentScope: a detached or spread `use` still pushes through the segment", () => {
+      const receivers: (string | undefined)[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        _currentSegmentId: "M0L0L0R0",
+        use(this: InternalHandlerContext<any, any>) {
+          receivers.push(this?._handleSegmentId ?? this?._currentSegmentId);
+          return (value: unknown) => value;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+
+      scoped.use({} as any);
+      const { use } = scoped;
+      use({} as any);
+      const copy = { ...scoped };
+      copy.use({} as any);
+      const { use: detachedFromCopy } = { ...scoped };
+      detachedFromCopy({} as any);
+
+      expect(receivers).toEqual(["M0L0L0", "M0L0L0", "M0L0L0", "M0L0L0"]);
+    });
+
+    it("withSegmentScope: the child reads the base `use` at call time", () => {
+      const receivers: (string | undefined)[] = [];
+      const ctx = {
+        reverse: routeReverse(),
+        use() {
+          receivers.push("first");
+          return (value: unknown) => value;
+        },
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A cached loader replaces the base `use` for the request
+      // (loader-cache.ts, executeLoaderData): the child must reach the
+      // replacement, not the one it was created with.
+      ctx.use = (() => {
+        receivers.push("second");
+        return (value: unknown) => value;
+      }) as unknown as InternalHandlerContext<any, any>["use"];
+      scoped.use({} as any);
+      expect(receivers).toEqual(["second"]);
+    });
   });
 
   describe("optional params", () => {

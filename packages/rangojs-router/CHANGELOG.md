@@ -14,8 +14,12 @@ handler had run and moved it on.
 **Now.** The message names the layout's or the slot's segment, the one that
 owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-The push is still rejected, at the same moment, and production still shows no
-message.
+It names it however the component calls `ctx.use`: destructured
+(`const { use } = ctx`) and through a `{ ...ctx }` copy as well as
+`ctx.use(Handle)` (a copy used to lose `use` entirely). A component a route
+handler hands the shared ctx to keeps naming the route when the route declares
+a parallel slot, which used to take the name. The push is still rejected, at
+the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 
