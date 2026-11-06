@@ -4,9 +4,16 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import {
+  declineSlugs,
+  failSlugs,
+  goneSlugs,
+  MOVED_TO,
+  movedSlugs,
+} from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -41,13 +48,15 @@ function prerenderResultJson(result: PrerenderResult): Response {
 // ctx.onDemand is true during an on-demand refresh, false during a static build
 // render. od-stamp is captured ONCE per render, so a stored (overlay/baked)
 // entry replays an identical stamp across serves — the frozen-payload proof.
-// "removable" is baked for the removal e2e alone, which removes its page, and
-// "decline-baked" for the decline e2e alone, which toggles its decline.
+// "removable" is baked for the removal e2e alone, which removes its page,
+// "decline-baked" for the decline e2e alone, which toggles its decline, and
+// "moved-baked" for the redirect e2e alone, which moves it to another URL.
 export const OnDemandDetailDef = Prerender<{ slug: string }>(
   async () => [
     { slug: "baked" },
     { slug: "removable" },
     { slug: "decline-baked" },
+    { slug: "moved-baked" },
   ],
   async (ctx) => {
     // A param the build handler declines: the live handler answers for it
@@ -58,6 +67,10 @@ export const OnDemandDetailDef = Prerender<{ slug: string }>(
     ) {
       return ctx.passthrough();
     }
+    // A product that moved: the render answers with a redirect, not a page, so
+    // a refresh stores the "removed" marker and the live handler below issues
+    // the redirect per request.
+    if (movedSlugs.has(ctx.params.slug)) throw redirect(MOVED_TO);
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-detail">
@@ -76,6 +89,7 @@ export const OnDemandDetailDef = Prerender<{ slug: string }>(
 // od-stamp carries per-call entropy so two consecutive live serves differ,
 // proving the live handler re-runs each request.
 export const OnDemandDetail = Passthrough(OnDemandDetailDef, async (ctx) => {
+  if (movedSlugs.has(ctx.params.slug)) throw redirect(MOVED_TO);
   const stamp = `${new Date().toISOString()}-${Math.random().toString(36).slice(2)}`;
   // A live serve is never an on-demand render — onDemand is a BuildContext-only
   // flag, absent from the live HandlerContext — so it is a fixed "false" here.
@@ -113,6 +127,12 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
     else declineSlugs.delete(ctx.params.slug);
     return Response.json({ decline: declineSlugs.has(ctx.params.slug) });
   }
+  const moved = ctx.searchParams.get("moved");
+  if (moved) {
+    if (moved === "1") movedSlugs.add(ctx.params.slug);
+    else movedSlugs.delete(ctx.params.slug);
+    return Response.json({ moved: movedSlugs.has(ctx.params.slug) });
+  }
   const target = `/on-demand/${ctx.params.slug}`;
   const result =
     ctx.searchParams.get("remove") === "1"
@@ -129,8 +149,9 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
 // A slug the e2e deleted from the data source (goneSlugs) is a notFound(): a
 // refresh of it stores the "removed" marker.
 export const OnDemandPlainDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "baked" }],
+  async () => [{ slug: "baked" }, { slug: "moved-baked" }],
   async (ctx) => {
+    if (movedSlugs.has(ctx.params.slug)) throw redirect(MOVED_TO);
     if (goneSlugs.has(ctx.params.slug)) notFound();
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
     const stamp = new Date().toISOString();
@@ -156,9 +177,10 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
 // ?gone=0 (delete / restore the slug in the data source, so the next refresh
 // hits notFound() or renders again), ?fail=1 / ?fail=0 (the data source goes
-// down / comes back: a refresh throws something other than notFound()) and
-// repeated ?target=<path> (prerender.many(targets), the results as a JSON
-// array in target order).
+// down / comes back: a refresh throws something other than notFound()),
+// ?moved=1 / ?moved=0 (the item moved to another URL, so the handler
+// redirects and a refresh has no page to store) and repeated ?target=<path>
+// (prerender.many(targets), the results as a JSON array in target order).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const prerender = router.prerender({ env: ctx.env as AppEnv });
@@ -178,6 +200,12 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const moved = ctx.searchParams.get("moved");
+  if (moved) {
+    if (moved === "1") movedSlugs.add(ctx.params.slug);
+    else movedSlugs.delete(ctx.params.slug);
+    return Response.json({ moved: movedSlugs.has(ctx.params.slug) });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {

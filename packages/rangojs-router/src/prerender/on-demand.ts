@@ -153,12 +153,15 @@ export type PrerenderResult =
        * `ok: true`, so count it in sweep results. Written by
        * `prerender.remove()` (permanent until a refresh without
        * `onlyIfStale`; `tags` empty, no `ttl`), or by a refresh in which a
-       * `notFound()` was the only thing that went wrong, anywhere in the
-       * render: the route handler, a layout or parallel slot handler, any
-       * server component. That marker has the route's `tags` and `ttl` and is
-       * rechecked like a page. `onlyIfStale` finding a fresh marker reports
-       * `removed` too. When the data source may be failing, throw anything
-       * else: that is `render-failed` and keeps the page.
+       * `notFound()` or a `redirect()` was the only thing that went wrong,
+       * anywhere in the render: the route handler, a layout or parallel slot
+       * handler, any server component. That marker has the route's `tags` and
+       * `ttl` and is rechecked like a page. A redirect is not stored: the
+       * marker makes the route's own answer serve, so a `Passthrough` live
+       * handler redirects per request and a plain route answers its no-data
+       * 404. `onlyIfStale` finding a fresh marker reports `removed` too. When
+       * the data source may be failing, throw anything else: that is
+       * `render-failed` and keeps the page.
        */
       status: "rendered" | "already-fresh" | "removed";
       target: string;

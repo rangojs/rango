@@ -6,6 +6,8 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPassthroughPageRunsLiveHandler,
+  expectRedirectedPlainPageAnswers404,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -305,12 +307,15 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "od-plain-slug",
   actionTestId: "od-action-noop",
   bakedSlug: "baked",
+  redirectTarget: "/on-demand/baked",
+  movedBakedSlug: "moved-baked",
   passthrough: {
     pageUrl: (slug) => f.url(`/on-demand/${slug}`),
     triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
     sourceTestId: "od-source",
     bakedSlug: "removable",
     declineBakedSlug: "decline-baked",
+    movedBakedSlug: "moved-baked",
   },
 });
 
@@ -360,6 +365,24 @@ function defineOutcomeTests(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, removeFixture(f));
+  });
+
+  // A render that redirects (a product that moved) has no page to store: the
+  // "removed" marker answers, so a Passthrough route's live handler issues the
+  // redirect per request and a plain route answers its own no-data 404.
+  test("a Passthrough route whose render redirects is served by its live handler's redirect, not the stored or build-time page", async ({
+    page,
+  }) => {
+    await expectRedirectedPassthroughPageRunsLiveHandler(
+      page,
+      removeFixture(f),
+    );
+  });
+
+  test("a plain onDemand route whose render redirects answers 404, not the stored or build-time page", async ({
+    page,
+  }) => {
+    await expectRedirectedPlainPageAnswers404(page, removeFixture(f));
   });
 }
 

@@ -200,7 +200,8 @@ Two timestamps, two meanings. `meta.storedAt` is when the render started: a
 the entry the render stores (#1072). `meta.staleAt` counts the ttl from the
 write, so a render slower than its ttl is not born stale (that would have it
 re-queue itself through `onRevalidate` with no visitor). The same holds for the
-marker of a refresh that hit `notFound()` and for a `ctx.passthrough()` decline.
+marker of a refresh that hit `notFound()`, answered with a `redirect()`, or
+declined with `ctx.passthrough()`.
 A `remove()` marker renders nothing and carries its write time in both. A
 result's `ttl` is the configured one (`meta.ttl`), never `staleAt - storedAt`.
 
@@ -510,6 +511,15 @@ recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
 
+A `redirect()` is the other no-page outcome, and for the same reason. A
+product that moved to another URL answers `redirect()` from its handler, and
+keeping the old entry would serve the old page at a URL that should send the
+visitor elsewhere until the next deploy. The producer reports a thrown
+`Response` as `{ redirect: true, onDemandConfig }` (`prerender-match.ts`),
+the trigger stores the same "removed" marker, and the result is `removed`.
+What is deliberately not stored is the redirect: see "Why the marker, not the
+redirect" below.
+
 ## Stored Payload
 
 The payload the serve path reads is the same shape it already knows:
@@ -691,6 +701,10 @@ back `render-failed` and kept the old entry (the last good page is served,
 which is right for an outage and wrong for a deletion), and nothing called
 `store.delete()`.
 
+The same held for a product that moved: a refresh whose handler answered with
+a `redirect()` was `render-failed` too, so the page it had stored kept
+serving at a URL that should send the visitor to the new one.
+
 You might reach for that `delete()` first. It is the wrong tool, for the reason
 mark-stale exists: under the overlay sits the bundled manifest, and for a param
 the build baked, deleting the overlay entry brings the build-time page back. A
@@ -713,24 +727,34 @@ the same `DataNotFoundError` a miss throws (a 404 through the app's
 `notFound` boundary), and a `Passthrough` route runs its live handler. Pages
 the build baked are covered like pages only a refresh produced.
 
-### Two writers, one mechanism
+### Three writers, one mechanism
 
 1. **A refresh whose render hits `notFound()`.** `await prerender(url)` on a
    deleted product does the right thing: the result is
    `{ ok: true, path: "on-demand", status: "removed", ... }`. It is `ok: true`,
    so a sweep counts it with `rendered` and `already-fresh`.
-2. **`await prerender.remove(target)`**, which renders nothing. A "product
+2. **A refresh whose render answers with a `redirect()`.** A product that moved
+   produces no page: the handler throws (or returns) the `Response`, and the
+   producer reports it as `redirect: true`. Same marker, same `removed`
+   result. A render that redirects _and_ hits a real failure keeps the page:
+   `isNoPageOutcome` (`prerender-match.ts`) puts both a `DataNotFoundError`
+   and a `Response` behind any other collected error, so a flaky data source
+   never removes a page by redirecting.
+3. **`await prerender.remove(target)`**, which renders nothing. A "product
    deleted" webhook fires when the item is gone from the CMS, which is not
    always when it is gone from the read replica the handler queries; a removal
    that needed a render would bring the page back from a lagging data source.
 
-Both end in a `store.set(key, marker)` (`composeStoredTombstone`,
+All three end in a `store.set(key, marker)` (`composeStoredTombstone`,
 `writable-store.ts`; `renderOnDemand` in `create-prerender-trigger.ts`), and a
 later `prerender(url)` that renders overwrites the marker with the page:
 `set()` replaces, whatever was there.
 
 A `notFound()` counts wherever it happens in the render: the route handler, a
 layout handler, a parallel slot handler, any server component, sync or async.
+A `redirect()` counts the same way: a handler that throws the `Response`
+surfaces through segment resolution, a component that throws it surfaces as a
+Flight error row, and both reach the same catch.
 The producer (`matchForPrerender`) turns it into an outcome instead of a
 throw, `{ notFound: true, onDemandConfig }`, because the trigger needs the
 route's `ttl` and `tags` to stamp the marker, and it only had those for a
@@ -755,6 +779,39 @@ removal by one boolean, carries `onlyIfStale`, which means nothing for a
 removal, and a mixed "refresh these, remove those" batch is not something a
 webhook produces.
 
+### Why the marker, not the redirect
+
+The alternative is to store the redirect and replay it: a third stored
+artifact (`{ redirect: { status, location } }`) that the serve path answers
+with a `302` without running a handler. It is rejected for three reasons.
+
+The redirect is a per-request decision. `redirect()` resolves the target
+against the request's basename and can carry location state; an app that picks
+the target from live data would get the `Location` frozen at refresh time for
+every visitor until the next refresh. The marker keeps the decision in the
+handler, which is the only place that knows it.
+
+It costs a second serve path. The prerender store today answers with a
+`StoredSegmentSource` the segment system renders; a stored redirect would need
+a response branch at the request funnel (`readPrerenderSource` in
+`cache-lookup.ts`), its own staleness and tag handling, its own overlay read in
+dev, and a warm that skips the follow-up request. The marker needs none of
+that: `readPrerenderSource` already returns null for it, and the route's own
+answer follows.
+
+It makes `onlyIfStale` lie about freshness. A baked redirect would report
+`already-fresh` from a sweep, which says the page is up to date when what is
+up to date is a URL that may have moved again.
+
+What the marker gives up is the visitor's `302` on a route with no live
+handler: a plain `Prerender(..., { onDemand })` route never runs its handler in
+production (`gateOnDemandProducer`), so it answers the 404 of a param with no
+entry, where a `Passthrough` route's live handler issues the redirect per
+request. That is the same answer the route gives for a param that was never
+prerendered, and the honest one: the router cannot run the handler that knows
+the target. An app that needs the redirect served should make the route a
+`Passthrough`.
+
 ### Rechecked or permanent
 
 The first cut made every marker permanent: never stale, never revalidated,
@@ -764,9 +821,12 @@ its page until someone refreshed it by hand, and no sweep would ever look
 again. Next.js, the precedent for the `notFound()` half, re-checks its 404 for
 the same reason (see "Precedent").
 
-So the two writers stamp different markers, and nothing else tells them apart:
+So the writers stamp different markers, and nothing else tells them apart. A
+refresh that redirects stamps its marker exactly like the `notFound()` one:
+the store records "no page", not why there is none, so a sweep rechecks both
+alike.
 
-|                         | `prerender.remove()`    | a refresh that hit `notFound()`                                               |
+|                         | `prerender.remove()`    | a refresh that hit `notFound()` or redirected                                 |
 | ----------------------- | ----------------------- | ----------------------------------------------------------------------------- |
 | `meta.staleAt`          | none                    | from the route's `onDemand.ttl`, else the router's `prerender.ttl`, else none |
 | `meta.tags`             | `[]`                    | the route's `onDemand.tags`                                                   |
@@ -811,6 +871,12 @@ one entry that most needs a recheck.
   entry of a removed page can serve. The alternative, failing the request
   when the overlay is down, would take every on-demand route down with the
   store.
+- **A `redirect()` stores the marker too**, and for the same reason: a page
+  stored or baked earlier must not answer a URL whose handler now redirects.
+  The producer reports the thrown `Response` as `redirect: true`, the trigger
+  stores the marker, and the result is `removed`. Nothing about the redirect
+  is stored: the route's own answer serves, so a `Passthrough` live handler
+  redirects per request (see "Why the marker, not the redirect").
 - **`ctx.passthrough()` stores the marker too.** A `Passthrough` route's
   build handler can decline a param, and the status for that,
   `skipped-passthrough`, has always said the live handler serves it. That was

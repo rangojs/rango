@@ -821,8 +821,9 @@ will not finish.
 A refresh always renders and replaces; `{ onlyIfStale: true }` (cron sweeps)
 skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
-`already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
-page"), `no-match`, `no-store`, `skipped-personalized`,
+`already-fresh`, `removed` (the render hit `notFound()`, or answered
+with a `redirect()`; see "Remove a page"), `no-match`, `no-store`,
+`skipped-personalized`,
 `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
@@ -841,7 +842,7 @@ refresh is complete as it is, and the result has no `caches`.
 A deleted product's page has to stop serving, and for a param the build baked,
 the older build-time page must not come back in its place. So a removal does
 not delete the entry: it stores a "removed" marker in the prerender store in
-place of the page. There are two ways to write it.
+place of the page. There are three ways to write it.
 
 ```typescript
 // 1. Explicitly, for example from a "product deleted" webhook. Nothing is
@@ -861,16 +862,40 @@ export const ProductPage = Prerender(
   { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
 );
 await prerender("/products/42"); // { ok: true, status: "removed", ... }
+
+// 3. The same refresh, for a page that now answers with a redirect: a product
+//    that moved. The render produces no page, so the marker is stored and the
+//    route's own handler answers from then on.
+export const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => {
+    const product = await getProduct(ctx.params.id);
+    if (product.movedTo) throw redirect(product.movedTo);
+    return <Product data={product} />;
+  },
+  { onDemand: true },
+);
+await prerender("/products/42"); // { ok: true, status: "removed", ... }
 ```
 
-Both return `{ ok: true, path: "on-demand", status: "removed", key, tags }`.
+All three return `{ ok: true, path: "on-demand", status: "removed", key, tags }`.
 The result is `ok: true`: a removal worked, so count `removed` in what a sweep
 reports, next to `rendered` and `already-fresh`. From the next request on, the
 route answers 404 for that param, in dev and in production; a `Passthrough`
 route runs its live handler. A page the build baked is covered too: its
 build-time entry is not served.
 
-The two differ in how long they last:
+A `redirect()` is stored as the marker, never as the redirect itself: the
+marker makes nothing in the prerender store answer, so the route decides per
+request. A `Passthrough` route's live handler issues its own `redirect()`;
+a plain `Prerender(..., { onDemand })` route has no live handler in
+production, so it answers the 404 of a param with no entry. Storing the
+redirect instead would freeze its `Location` at refresh time and serve it
+without a render, which is wrong for a target that depends on live data.
+
+The writers differ in how long they last (`remove()` and a `notFound()`
+below; a refresh that redirects stamps its marker exactly like the
+`notFound()` one):
 
 |                          | `prerender.remove(url)`                    | a refresh that hits `notFound()`                                                   |
 | ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------------------- |
@@ -894,6 +919,12 @@ The two differ in how long they last:
   rendered again by `onRevalidate` or a sweep, like a stale page. `remove()` is
   a decision, not an observation: its marker stays until a
   `prerender(url)` without `onlyIfStale` renders the page.
+- **A `redirect()` anywhere in the render removes the page too**, and the
+  result is `removed`, not `render-failed`: a page kept serving at a URL that
+  should send the visitor elsewhere would be the same bug as a deleted item's
+  page serving. It removes the page only when nothing else went wrong, like a
+  `notFound()`: a render that redirects and also hits an outage is
+  `render-failed` and keeps the page.
 - **`ctx.passthrough()` in a refresh stores the marker too.** A `Passthrough`
   route whose build handler declines a param gets `skipped-passthrough`, and
   the live handler answers from then on, not a page stored or baked earlier.

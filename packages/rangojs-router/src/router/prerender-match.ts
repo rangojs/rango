@@ -110,6 +110,12 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered with a Response (a `redirect()`, or
+   * any Response a handler or component short-circuits with) instead of a
+   * page, and nothing else failed. No page to store, like `notFound`.
+   */
+  redirect?: true;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -394,12 +400,13 @@ export async function matchForPrerender<TEnv = any>(
           flightErrors.push(error);
         };
         // The collected error to rethrow. On an on-demand refresh a failure
-        // goes ahead of a notFound(): a render that hit a missing item AND a
-        // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // goes ahead of a notFound() or a redirect: a render that hit a missing
+        // item (or answered with a redirect) AND a failing data source must
+        // keep the page (render-failed), not remove it because the no-page
+        // outcome happened to be reported first.
         const firstFlightError = (): unknown => {
           const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
+            ? flightErrors.findIndex((e) => !isNoPageOutcome(e))
             : -1;
           return flightErrors[failure === -1 ? 0 : failure];
         };
@@ -634,13 +641,25 @@ export async function matchForPrerender<TEnv = any>(
   );
   // A build or dev render keeps the throw (the caller's onError policy).
   if (!onDemand) return rendered;
-  // An on-demand refresh reports a notFound() anywhere in the render (a
-  // handler's throw, or the only kind of error Flight collected) as an
-  // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // An on-demand refresh reports a no-page outcome anywhere in the render (a
+  // handler's throw, or the only kind of error Flight collected) as a result,
+  // with the route's onDemand config: the trigger stores the "removed" marker
+  // stamped like a page (create-prerender-trigger.ts). A notFound() says the
+  // item is gone; a Response (a redirect()) says this URL answers with it and
+  // has no page. Both keep a page from serving where none should.
   try {
     return await rendered;
   } catch (error) {
+    if (error instanceof Response) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: true,
+        onDemandConfig,
+      };
+    }
     if (!isDataNotFoundError(error)) throw error;
     return {
       segments: [],
@@ -651,6 +670,17 @@ export async function matchForPrerender<TEnv = any>(
       onDemandConfig,
     };
   }
+}
+
+/**
+ * A render outcome that means "no page here", as opposed to a failure: a
+ * `notFound()`, or a Response a handler or component short-circuits with (a
+ * `redirect()`). On an on-demand refresh either one must lose to a real
+ * failure collected in the same render, so a flaky data source never removes a
+ * page.
+ */
+function isNoPageOutcome(error: unknown): boolean {
+  return isDataNotFoundError(error) || error instanceof Response;
 }
 
 /**

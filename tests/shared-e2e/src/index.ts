@@ -3859,13 +3859,21 @@ export async function expectRemovedPassthroughPageRunsLiveHandler(
  *   build handler calls `ctx.passthrough()` for `slug` while it is set. It
  *   always does for a slug that starts with `declined-`. `declineBakedSlug` is
  *   a slug the build bakes on that route, requested by no other test.
+ * - Both triggers take `?moved=1` / `?moved=0`: the route's handlers (build and
+ *   live) answer `redirect(redirectTarget)` for `slug` while it is set, as a
+ *   product that moved to another URL would. `redirectTarget` is a URL the app
+ *   serves, and `movedBakedSlug` (plain) and `passthrough.movedBakedSlug` are
+ *   slugs each build bakes, requested by no other test.
  */
 export interface PrerenderOutcomesFixture extends PrerenderRemoveFixture {
   path: (slug: string) => string;
   stampTestId: string;
   onDemandTestId: string;
+  redirectTarget: string;
+  movedBakedSlug: string;
   passthrough: PrerenderRemoveFixture["passthrough"] & {
     declineBakedSlug: string;
+    movedBakedSlug: string;
   };
 }
 
@@ -4028,6 +4036,108 @@ export async function expectDeclinedBakedParamServedLive(
   await refreshPage(page, triggerUrl(declineBakedSlug));
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
+}
+
+/**
+ * A refresh whose render calls `redirect()` has no page to store: it is
+ * `removed`, like a `notFound()`, and the "removed" marker answers instead of
+ * the page stored before it or the one the build baked. A `Passthrough` route
+ * then serves its live handler's redirect, per request, not a Location baked
+ * at refresh time. Once the item stops moving, a refresh stores a page again.
+ */
+export async function expectRedirectedPassthroughPageRunsLiveHandler(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const { pageUrl, triggerUrl, sourceTestId, movedBakedSlug } =
+    fixture.passthrough;
+  const source = byTestId(page, sourceTestId);
+
+  // A stored page over the baked entry, so the refresh below has one to
+  // replace.
+  await refreshPage(page, triggerUrl(movedBakedSlug));
+  await page.goto(pageUrl(movedBakedSlug));
+  await expect(source).toHaveText("prerender");
+
+  await removeTrigger(page, triggerUrl(movedBakedSlug), "?moved=1");
+  try {
+    const redirected = await removeTrigger(page, triggerUrl(movedBakedSlug));
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+    });
+
+    // The live handler's redirect, not the page stored or baked before it.
+    const moved = await page.request.get(pageUrl(movedBakedSlug), {
+      headers: PUSH_HTML_HEADERS,
+      maxRedirects: 0,
+    });
+    expect(moved.status()).toBe(302);
+    expect(moved.headers()["location"]).toBe(fixture.redirectTarget);
+    expect(await moved.text()).not.toContain(`data-testid="${sourceTestId}"`);
+
+    // The item stops moving, and nothing refreshed it: the marker still
+    // answers, so the live handler renders the page until a refresh stores one.
+    await removeTrigger(page, triggerUrl(movedBakedSlug), "?moved=0");
+    const live = await page.goto(pageUrl(movedBakedSlug));
+    expect(live?.status()).toBe(200);
+    await expect(source).toHaveText("live");
+  } finally {
+    await removeTrigger(page, triggerUrl(movedBakedSlug), "?moved=0");
+  }
+
+  await refreshPage(page, triggerUrl(movedBakedSlug));
+  await page.goto(pageUrl(movedBakedSlug));
+  await expect(source).toHaveText("prerender");
+}
+
+/**
+ * The same on a plain `Prerender(..., { onDemand })` route, which has no live
+ * handler: production never runs its producer, so the marker leaves the route
+ * its own no-data 404, to a document request and in the browser, and neither
+ * the page a refresh stored nor the one the build baked comes back. A refresh
+ * once the item stops moving stores a page again.
+ */
+export async function expectRedirectedPlainPageAnswers404(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = fixture.movedBakedSlug;
+  const trigger = fixture.triggerUrl(slug);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?moved=1");
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "removed",
+      tags: [fixture.tag(slug)],
+    });
+
+    const moved = await page.request.get(fixture.pageUrl(slug), {
+      headers: PUSH_HTML_HEADERS,
+      maxRedirects: 0,
+    });
+    expect(moved.status()).toBe(404);
+    expect(await moved.text()).not.toContain(
+      `data-testid="${fixture.slugTestId}"`,
+    );
+  } finally {
+    await removeTrigger(page, trigger, "?moved=0");
+  }
+
+  // Back to a page, and nothing refreshed it: the marker still answers.
+  await expectPageRemoved(page, fixture, slug);
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
 }
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";

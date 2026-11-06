@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,17 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/**
+ * KV key of a slug the e2e moved to another URL: the handler answers
+ * redirect(MOVED_PLAIN_TO) instead of a page, so a refresh stores the
+ * "removed" marker. Per mode, for the same reason as the keys above.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** Where a moved plain guide redirects: a page this app serves. */
+export const MOVED_PLAIN_TO = "/guides/routing";
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -23,9 +34,17 @@ export const guidePlainFailKey = (slug: string): string =>
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
 // marker. Read only on a refresh, where ctx.env is the live env.
+// A slug that moved (guidePlainMovedKey, set by the trigger's ?moved=1)
+// answers with a redirect instead of a page: the same marker.
 export const GuidePlainDef = Prerender<{ slug: string }>(
-  async () => [{ slug: "intro" }],
+  async () => [{ slug: "intro" }, { slug: "moved-baked" }],
   async (ctx) => {
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug)))
+    ) {
+      throw redirect(MOVED_PLAIN_TO);
+    }
     if (
       ctx.onDemand &&
       (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))

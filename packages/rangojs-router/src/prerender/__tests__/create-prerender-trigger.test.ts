@@ -988,6 +988,42 @@ describe("createPrerenderTrigger", () => {
         expect(store.peek(productKey())).toBe(page);
       });
 
+      it("a render that answered with a Response (a redirect()) stores the marker: no page at a URL that redirects", async () => {
+        // matchForPrerender reports a thrown Response as `redirect: true`
+        // (prerender-match.ts); the trigger treats it as no page, like a
+        // notFound(), so the page stored before it stops serving.
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockResolvedValueOnce(
+          output({
+            redirect: true,
+            onDemandConfig: { ttl: 60, tags: ["product:42"] },
+          }),
+        );
+        expect(await trigger("/products/42")).toEqual({
+          ok: true,
+          path: "on-demand",
+          status: "removed",
+          target: "/products/42",
+          routeName: "products.detail",
+          key: serializePrerenderKey(productKey()),
+          tags: ["product:42"],
+          ttl: 60,
+        });
+        const stored = store.peek(productKey());
+        // Stamped like a page, so the redirect is rechecked like one.
+        expect(stored).toMatchObject({
+          ...tombstone,
+          meta: { tags: ["product:42"], ttl: 60 },
+        });
+        expect(stored).not.toHaveProperty("entry");
+      });
+
       it("ctx.passthrough() declining a refresh stores the marker too: the live handler answers, not a page stored or baked earlier", async () => {
         // A Passthrough route whose build handler declines a param. The
         // status says the live handler serves it, which is only true once

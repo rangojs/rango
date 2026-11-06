@@ -13,3 +13,12 @@ export const failSlugs: Set<string> = new Set();
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();
+
+// And a product that moved to another URL: both handlers of the on-demand
+// routes (build and live) answer redirect(MOVED_TO) for a slug in this set
+// (?moved=1 / ?moved=0 on the triggers), so a refresh of it has no page to
+// store and stores the "removed" marker instead (e2e/on-demand-prerender.test.ts).
+export const movedSlugs: Set<string> = new Set();
+
+/** Where a slug in movedSlugs redirects: a page this app serves. */
+export const MOVED_TO = "/on-demand/baked";

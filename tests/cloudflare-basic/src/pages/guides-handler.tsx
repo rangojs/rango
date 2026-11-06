@@ -1,16 +1,18 @@
-import { Prerender, Passthrough, cookies } from "@rangojs/router";
+import { Prerender, Passthrough, cookies, redirect } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
 // Known slugs that get pre-rendered at build time.
 // Unknown slugs fall through to the Passthrough live handler.
 // "removable" is baked for the removal e2e alone
 // (e2e/prerender-ondemand.test.ts), which removes its page, and
-// "decline-baked" for the decline e2e alone, which toggles its decline.
+// "decline-baked" for the decline e2e alone, which toggles its decline, and
+// "moved-baked" for the redirect e2e alone, which moves it to another URL.
 const knownGuides: Record<string, string> = {
   routing: "Routing Guide",
   caching: "Caching Guide",
   removable: "Removable Guide",
   "decline-baked": "Decline Baked Guide",
+  "moved-baked": "Moved Baked Guide",
 };
 
 /**
@@ -20,6 +22,18 @@ const knownGuides: Record<string, string> = {
  */
 export const guideDeclineKey = (slug: string): string =>
   `guide-decline:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/**
+ * KV key of a slug whose guide moved to another URL, set by the trigger's
+ * ?moved=1: both handlers answer redirect(MOVED_GUIDE_TO) for it, so a refresh
+ * has no page to store and stores the "removed" marker instead. Per mode, for
+ * the same reason as guideDeclineKey.
+ */
+export const guideMovedKey = (slug: string): string =>
+  `guide-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** Where a moved guide redirects: a page this app serves. */
+export const MOVED_GUIDE_TO = "/guides/routing";
 
 export const GuidesDetailDef = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
@@ -32,6 +46,12 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
         (await ctx.env.PRERENDER_KV.get(guideDeclineKey(ctx.params.slug))))
     ) {
       return ctx.passthrough();
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guideMovedKey(ctx.params.slug)))
+    ) {
+      throw redirect(MOVED_GUIDE_TO);
     }
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
     const renderedAt = new Date().toISOString();
@@ -77,6 +97,9 @@ export const GuidesDetailDef = Prerender<{ slug: string }>(
 );
 
 export const GuidesDetail = Passthrough(GuidesDetailDef, async (ctx) => {
+  if (await ctx.env.PRERENDER_KV.get(guideMovedKey(ctx.params.slug))) {
+    throw redirect(MOVED_GUIDE_TO);
+  }
   const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
   const renderedAt = new Date().toISOString();
 

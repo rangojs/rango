@@ -1034,6 +1034,12 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   rethrows any other collected error ahead of it, `firstFlightError`), stores
   the marker too, and so does a Passthrough build handler that returns
   `ctx.passthrough()` (`skipped-passthrough`, so its live handler answers).
+  A render that answers with a Response (a `redirect()`) is a third writer:
+  the producer reports `{ redirect: true }` (`isNoPageOutcome` keeps a
+  `Response` and a `DataNotFoundError` behind any real failure collected in
+  the same render), the result is `removed`, and the redirect itself is never
+  stored, so a Passthrough live handler redirects per request and a plain
+  route answers its no-data 404.
   Those markers are stamped with the route's `ttl` and `tags` like a page: a
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
@@ -1059,8 +1065,8 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   newer than the build artifact; staleness only schedules refresh work.
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
-  leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
+  leave the previous entry intact (a `notFound()` or a `redirect()` is not a
+  failure: it removes the page, above). Its context carries the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the

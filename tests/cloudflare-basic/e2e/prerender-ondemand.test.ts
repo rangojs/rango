@@ -6,6 +6,8 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPassthroughPageRunsLiveHandler,
+  expectRedirectedPlainPageAnswers404,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
@@ -323,12 +325,15 @@ const guideFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "gp-slug",
   actionTestId: "gp-action-noop",
   bakedSlug: "intro",
+  redirectTarget: "/guides/routing",
+  movedBakedSlug: "moved-baked",
   passthrough: {
     pageUrl: (slug) => f.url(`/guides/${slug}`),
     triggerUrl: (slug) => f.url(`/guide-trigger/${slug}`),
     sourceTestId: "guide-source",
     bakedSlug: "removable",
     declineBakedSlug: "decline-baked",
+    movedBakedSlug: "moved-baked",
   },
 });
 
@@ -378,6 +383,21 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, guideFixture(f));
+  });
+
+  // A render that redirects (a guide that moved) has no page to store: the
+  // "removed" marker answers, so a Passthrough route's live handler issues the
+  // redirect per request and a plain route answers its own no-data 404.
+  test("a Passthrough route whose render redirects is served by its live handler's redirect, not the stored or build-time page", async ({
+    page,
+  }) => {
+    await expectRedirectedPassthroughPageRunsLiveHandler(page, guideFixture(f));
+  });
+
+  test("a plain onDemand route whose render redirects answers 404, not the stored or build-time page", async ({
+    page,
+  }) => {
+    await expectRedirectedPlainPageAnswers404(page, guideFixture(f));
   });
 }
 
