@@ -1163,6 +1163,58 @@ e2e describes in `e2e/ssr-shell-error.test.ts`,
 `e2e/ssr-shell-error-mini.test.ts` and
 `tests/cloudflare-basic/e2e/ssr-shell-error.test.ts` (dev + production).
 
+### A component that throws `redirect()` redirects, if the render says so in time
+
+A `redirect()` thrown while React renders a component is not a handler result:
+`handleHandlerResult` never sees it, React reports it to the Flight `onError`
+and renders the nearest boundary. Before, a document answered `200` with that
+boundary and a client navigation rendered it.
+
+The render answers it instead (`render-pipeline.ts` `createRscRenderPlan`).
+The thrown `Response` is in the render's collected errors
+(`RequestContext._renderErrors`, pushed by `createFlightStage`'s `onError`), and
+the plan reads that list back before the status line commits:
+
+- a document: after the html step, which decodes the payload before it can
+  answer, so a redirect thrown in the shell is already collected — a
+  synchronous component's and an async one's alike. The html stage also tells
+  `renderHTML` that the render answers this shell error
+  (`shellErrorAnsweredByRender`), because in dev `renderHTML` otherwise rethrows
+  a shell error to the host and the host's 500 would be the answer;
+- a Flight response (a client navigation, an action's revalidation, an explicit
+  `Accept: text/x-component`): after the body's opening chunk, which the plan
+  holds back and replays (`peekOpeningChunk`) so nothing is lost. Only a caller
+  that passes `RscRenderOptions.redirect` pays that wait; every other Flight
+  response still goes out before its body is touched.
+
+A redirect a component throws is control flow, so `createFlightStage`'s
+`onError` records it and reports/prints nothing: it is not a rendering error.
+
+The answer is converted for the channel (`helpers.ts` `answerRenderRedirect`):
+a document follows a real 3xx (its `redirect(url, { state })` state rides the
+one-shot cookie, `server/document-location-state.ts`), a Flight response gets
+what a handler's redirect already gets (`interceptRedirectForPartial`: 204 +
+`X-RSC-Redirect`, or the Flight payload when it carries state or is external).
+The open-redirect guard still runs once, on the final response
+(`request-stages.ts` `finalizeRequestResponse`).
+
+A redirect that arrives after the body started streaming keeps the error row it
+always had: the status line has committed. That is a route declaring
+`loading()` (the segment streams behind its fallback), a streamed handler (see
+"Limitation: a Response from an async handler under `loading()` is not a
+redirect"), and a PPR tail rendered after a shell HIT. On a client navigation it
+is also an **async** component whose redirect lands in a later Flight chunk: the
+opening chunk that the plan holds is complete only once the shell's own
+components have rendered, and an async component is a task of its own. Waiting
+for its row would mean buffering the whole render, which the streaming contract
+forbids.
+
+Tests: `testing/__tests__/render-component-redirect.rsc-test.tsx` (userland,
+through `serveShellRequest`), `rsc/__tests__/render-pipeline.test.ts` (the
+plan's reading and replaying), and the `component redirect` e2e describes in
+`e2e/component-redirect.test.ts` and
+`tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev + production).
+
 ### Server errors print once, where they originate
 
 The browser gets a masked copy of a server failure (`createErrorInfo`,

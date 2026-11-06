@@ -25,6 +25,7 @@ import type {
 } from "./types.js";
 import {
   actionRenderRequest,
+  answerRenderRedirect,
   createReloadResponse,
   createResponseWithMergedHeaders,
   finalizeResponse,
@@ -1163,18 +1164,29 @@ export function createRSCHandler<
                   },
               tracking: notFoundStageTracking,
             },
-            isNotFoundFlightResponse
-              ? undefined
-              : {
-                  html: createSsrHtmlStage({
-                    ctx: handlerCtx,
-                    request,
-                    env,
-                    url,
-                    metricsStore: getRequestContext()._metricsStore,
-                    render: { nonce },
+            {
+              // A not-found page whose own component redirects answers the
+              // redirect, not a 404 carrying the error page.
+              redirect: (thrown) =>
+                answerRenderRedirect(thrown, {
+                  flight: isNotFoundFlightResponse,
+                  requestOrigin: url.origin,
+                  basename: router.basename,
+                  createRedirectFlightResponse,
+                }),
+              ...(isNotFoundFlightResponse
+                ? undefined
+                : {
+                    html: createSsrHtmlStage({
+                      ctx: handlerCtx,
+                      request,
+                      env,
+                      url,
+                      metricsStore: getRequestContext()._metricsStore,
+                      render: { nonce },
+                    }),
                   }),
-                },
+            },
           );
         }
 

@@ -422,6 +422,7 @@ import {
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
+import { componentRedirectPatterns } from "./pages/component-redirect.js";
 import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
@@ -3338,6 +3339,13 @@ export const urlpatterns = urls(
         // Two pages that redirect to each other (client hop limit).
         include("/redirect-loop", redirectLoopPatterns, {
           name: "redirectLoop",
+        }),
+
+        // A component that throws redirect() while React renders it: answered
+        // as a redirect on a document request and on a client navigation, not
+        // as the nearest errorBoundary()'s page.
+        include("/component-redirect", componentRedirectPatterns, {
+          name: "componentRedirect",
         }),
 
         // Deferred-handle navigation contract + history-cache fixes

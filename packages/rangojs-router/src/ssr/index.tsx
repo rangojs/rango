@@ -166,6 +166,14 @@ export interface SSRRenderOptions {
     status?: number;
     location?: string;
   }) => void;
+
+  /**
+   * Whether the render answers this shell error itself once this step returns.
+   * A redirect a component threw is control flow (rsc/render-pipeline.ts
+   * createRscRenderPlan): in dev, rethrowing it to the host would answer the
+   * host's 500 instead of the redirect, so it is answered as production does.
+   */
+  shellErrorAnsweredByRender?: (error: unknown) => boolean;
 }
 
 /**
@@ -1028,7 +1036,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         console.error(error);
       }
       const originated = !payloadFailed && originatedHere(error);
-      if (shellErrorReachesHost(error)) {
+      if (shellErrorReachesHost(error, options)) {
         onShellError?.({ error, originated });
         throw error;
       }
@@ -1057,8 +1065,13 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
  * This is the one gate: returning false here makes dev answer every shell
  * error as production does.
  */
-function shellErrorReachesHost(error: unknown): boolean {
-  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
+function shellErrorReachesHost(
+  error: unknown,
+  options: SSRRenderOptions | undefined,
+): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (isLoaderSignalError(error)) return false;
+  return options?.shellErrorAnsweredByRender?.(error) !== true;
 }
 
 /**

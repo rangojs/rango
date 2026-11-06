@@ -31,6 +31,7 @@ import type { RequestContext } from "../server/request-context.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import type { PprReplayBypassReason } from "./shell-capture-constants.js";
 import {
+  answerRenderRedirect,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
@@ -1184,19 +1185,32 @@ function renderPreparedRscResponse<TEnv>(
       init: { headers: rscHeaders },
       tracking: stageTracking,
     },
-    isFlightResponse
-      ? undefined
-      : {
-          html: createSsrHtmlStage({
-            ctx,
-            request,
-            env,
-            url,
-            metricsStore,
-            render: { nonce },
-            init: { headers: { "content-type": "text/html;charset=utf-8" } },
+    {
+      // A redirect thrown while React renders is not a handler result: the
+      // boundary renders it as an error page unless the render answers it.
+      redirect: (thrown) =>
+        answerRenderRedirect(thrown, {
+          flight: isFlightResponse,
+          requestOrigin: url.origin,
+          basename: ctx.router.basename,
+          createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+        }),
+      ...(isFlightResponse
+        ? undefined
+        : {
+            html: createSsrHtmlStage({
+              ctx,
+              request,
+              env,
+              url,
+              metricsStore,
+              render: { nonce },
+              init: {
+                headers: { "content-type": "text/html;charset=utf-8" },
+              },
+            }),
           }),
-        },
+    },
   );
   // A prefetch whose render reported an error is not kept (#1170).
   if (!isPrefetchKind(reqCtx._requestKind) || !isPartial) return rendered;

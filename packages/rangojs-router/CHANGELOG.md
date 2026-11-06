@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a component that throws `redirect()` redirects instead of rendering an error page
+
+**Before.** A server component that threw `redirect()` inside its render was
+caught by React and rendered by the nearest `errorBoundary()` (or the client's
+root boundary): a document request answered `200` with the error page, and a
+client navigation rendered the boundary. Only a redirect a _handler_ returned
+or threw was answered.
+
+**Now.** The render answers it. A document request answers the redirect's own
+status with its `Location` (and `redirect(url, { state })` still carries its
+state in the one-shot cookie), and a client navigation answers the 204 +
+`X-RSC-Redirect` (or the Flight payload when it carries state or is external)
+that a handler's redirect already gets. A redirect thrown after the body has
+started streaming is unchanged, because the status line has already been sent:
+a route that declares `loading()`, a streamed handler, and — on a client
+navigation only — an **async** component, whose error row arrives after the
+response's opening chunk.
+
+```tsx
+// This now redirects, on a page load and on a client navigation.
+function Checkout() {
+  if (!hasSession()) throw redirect("/login", 302);
+  return <Cart />;
+}
+
+path("/checkout", () => <Checkout />);
+```
+
+A component that throws `notFound()` is unchanged (it still renders the error
+boundary); it has no Response to read back off the render.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -12,7 +12,9 @@
  * The one stub is the SSR module (the HTML step): `react-dom/server` refuses
  * to load under the react-server condition this project runs with.
  * - `renderHTML` passes the Flight stream through: a document body is its
- *   Flight payload.
+ *   Flight payload. It reads the payload's opening chunk first, as the real
+ *   step decodes the payload before it answers, so what the render threw is
+ *   collected before the document Response is built.
  * - `captureShellHTML` returns, as the prelude, the Flight text the capture
  *   rendered before `quiesce` (plus the post-quiesce task hops the real
  *   capture takes). `postponed` is always null. A capture that does not
@@ -61,6 +63,7 @@ import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
 } from "../rsc/shell-capture-constants.js";
+import { peekOpeningChunk } from "../rsc/render-pipeline.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
 import { PREFETCH_HEADER } from "../prefetch-markers.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
@@ -329,7 +332,13 @@ const SSR_STUB: SSRModule = {
       recorder.formState = options?.formState ?? undefined;
     }
     recordShellKey(recorder);
-    return rscStream;
+    // The real HTML step decodes the Flight payload before it answers, so the
+    // Flight render has produced its opening chunk — and reported what it threw
+    // — by the time the document Response is built. Read that chunk and replay
+    // it, so the stub has the same ordering: a component's redirect() is
+    // answered before the status commits (rsc/render-pipeline.ts). The Flight
+    // text served as the document body is unchanged.
+    return peekOpeningChunk(rscStream).body;
   },
   async captureShellHTML(rscStream, options) {
     const reader = rscStream.getReader();

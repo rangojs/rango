@@ -7,6 +7,7 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
+import { isRedirectResponse } from "../response-utils.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
@@ -99,6 +100,15 @@ export interface RscRenderOptions {
   html?: (
     flight: RscFlightStage,
   ) => RscPreparedHtmlRender | Promise<RscPreparedHtmlRender>;
+  /**
+   * Answer a redirect React caught while rendering it, in the shape the
+   * request's channel can carry. A component's `throw redirect()` is not a
+   * handler's return, so it never reaches handleHandlerResult: React reports it
+   * to the Flight onError and renders the nearest boundary, which answered a
+   * 200 error page. See answerRenderControl. Absent: the thrown Response is
+   * answered as it is.
+   */
+  redirect?: (thrown: Response) => Response;
 }
 
 interface RscFlightCommand<TEnv> {
@@ -114,7 +124,7 @@ interface RscHtmlCommand {
 
 interface RscResponseCommand {
   type: "response";
-  execute: () => Response;
+  execute: () => Response | Promise<Response>;
 }
 
 export type RscRenderCommand<TEnv> =
@@ -163,6 +173,9 @@ function createFlightStage<TEnv>(
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
       renderErrors?.push(error);
+      // A redirect a component threw is control flow, answered before the
+      // status commits (createRscRenderPlan); it is not a rendering error.
+      if (error instanceof Response && isRedirectResponse(error)) return;
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
@@ -226,7 +239,7 @@ function* htmlStep<TEnv>(
 }
 
 function* responseStep<TEnv>(
-  execute: () => Response,
+  execute: () => Response | Promise<Response>,
 ): Generator<RscRenderCommand<TEnv>, Response, RscRenderCommandResult> {
   return expectCommandResult(yield { type: "response", execute }, "response");
 }
@@ -240,6 +253,13 @@ export function* createRscRenderPlan<TEnv>(
   input: RscRenderInput<TEnv>,
   options: RscRenderOptions = {},
 ): RscRenderPlan<TEnv> {
+  // Errors this render collects start here: an earlier pass of the same request
+  // (a prerender warm, a derived capture) may have left its own in the list.
+  const renderErrors = _getRequestContext()?._renderErrors;
+  const errorsBefore = renderErrors?.length ?? 0;
+  const answerRedirect =
+    options.redirect ?? ((thrown: Response): Response => thrown);
+
   const flight = yield* flightStep<TEnv>(
     () => createFlightStage(input, input.init),
     input.recordSerializeMetric ?? true,
@@ -247,7 +267,17 @@ export function* createRscRenderPlan<TEnv>(
 
   if (options.html) {
     const html = options.html;
+    // No held chunk here: the HTML step decodes the payload before it can
+    // answer, so everything the render threw in the shell (a synchronous
+    // component's redirect and an async one's alike) is collected by now.
     const page = yield* htmlStep<TEnv>(() => html(flight));
+    const redirect = options.redirect
+      ? renderRedirectOf(renderErrors, errorsBefore)
+      : undefined;
+    if (redirect) {
+      cancelBody(page.body);
+      return answerRedirect(redirect);
+    }
     return yield* responseStep<TEnv>(() =>
       createResponseWithMergedHeaders(page.body, {
         ...input.init,
@@ -256,9 +286,118 @@ export function* createRscRenderPlan<TEnv>(
     );
   }
 
-  return yield* responseStep<TEnv>(() =>
-    createResponseWithMergedHeaders(flight.stream, input.init),
+  if (!options.redirect) {
+    return yield* responseStep<TEnv>(() =>
+      createResponseWithMergedHeaders(flight.stream, input.init),
+    );
+  }
+
+  // A Flight response has no HTML step to pull its payload, and the client
+  // parses the body as it arrives: hold the opening chunk, which is complete
+  // only once the shell's own components have rendered.
+  return yield* responseStep<TEnv>(async () => {
+    const held = holdOpeningChunk(flight);
+    await held.opened;
+    const redirect = renderRedirectOf(renderErrors, errorsBefore);
+    if (redirect) {
+      await held.discard();
+      return answerRedirect(redirect);
+    }
+    return createResponseWithMergedHeaders(held.stage.stream, input.init);
+  });
+}
+
+/**
+ * The redirect a render threw, if it threw one: a component's `throw
+ * redirect()` is a Flight error row (React's onError, createFlightStage), not a
+ * Response handed back to the router, so the router only sees it here.
+ *
+ * Only errors collected by THIS render are read (from `from` on), and only a
+ * real 3xx with a Location counts: an ordinary boundary error, a notFound() and
+ * a streamed redirect that arrives after the body started all leave the
+ * response as it was.
+ */
+function renderRedirectOf(
+  errors: readonly unknown[] | undefined,
+  from: number,
+): Response | undefined {
+  if (!errors) return undefined;
+  for (let index = from; index < errors.length; index++) {
+    const error = errors[index];
+    if (error instanceof Response && isRedirectResponse(error)) return error;
+  }
+  return undefined;
+}
+
+/**
+ * A render's Flight stage with its opening chunk held back, so a redirect the
+ * render threw can be answered before the status line commits: React reports
+ * the error in the same pass that completes that chunk, so the render's errors
+ * are known once `opened` settles.
+ *
+ * `stage.stream` replays the held chunk, then the rest, in order — the client
+ * sees the same bytes it would without the hold.
+ */
+function holdOpeningChunk(flight: RscFlightStage): {
+  stage: RscFlightStage;
+  opened: Promise<void>;
+  discard: () => Promise<void>;
+} {
+  const { opened, body } = peekOpeningChunk(flight.stream);
+  return {
+    stage: { ...flight, stream: body },
+    opened,
+    discard: () => body.cancel().catch(() => {}),
+  };
+}
+
+/** Abort a render whose body is already streaming (a document's HTML step). */
+function cancelBody(body: BodyInit | null): void {
+  if (body instanceof ReadableStream) body.cancel().catch(() => {});
+}
+
+/**
+ * The stream with its opening chunk held back and replayed, so a caller can
+ * look at what the render reported before handing the body on. A render that
+ * fails before its first chunk hands the same failure to the body, as it did
+ * before the hold existed.
+ */
+export function peekOpeningChunk(stream: ReadableStream<Uint8Array>): {
+  opened: Promise<void>;
+  body: ReadableStream<Uint8Array>;
+} {
+  const reader = stream.getReader();
+  let opening: Uint8Array | undefined;
+  let failure: unknown;
+  let failed = false;
+  const opened = reader.read().then(
+    (result) => {
+      if (!result.done) opening = result.value;
+    },
+    (error: unknown) => {
+      failed = true;
+      failure = error;
+    },
   );
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      await opened;
+      if (failed) {
+        controller.error(failure);
+        return;
+      }
+      if (opening !== undefined) controller.enqueue(opening);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { opened, body };
 }
 
 /**
@@ -427,7 +566,9 @@ export async function driveRscRenderPlan<TEnv>(
           const body = await observePhase(PHASES.ssr, prepared.render);
           commandValue = { body, init: prepared.init };
         } else {
-          commandValue = command.execute();
+          // A response command may await its body's opening chunk
+          // (answerRenderControl); the Flight and HTML commands are synchronous.
+          commandValue = await command.execute();
         }
         const durationMs = measured ? performance.now() - phaseStartedAt : 0;
         appendSerializeMetric(
