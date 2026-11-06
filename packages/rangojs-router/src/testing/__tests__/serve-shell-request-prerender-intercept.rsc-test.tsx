@@ -39,6 +39,7 @@ import {
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import type { ResolvedSegment } from "../../types.js";
+import type { InterceptSelectorContext } from "../../server/context.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -62,7 +63,10 @@ const liveItem = (ctx: HandlerContext<{ id: string }>): React.ReactNode =>
 /** The route an intercept opens over /list: a Prerender() or a live one. */
 type Target = "prerender" | "live";
 
-function makeRouter(target: Target) {
+function makeRouter(
+  target: Target,
+  when?: (ctx: InterceptSelectorContext) => boolean,
+) {
   return createRouter({}).routes(
     urls(({ path, layout, intercept, parallel }) => {
       /** The route's own layout and slot. */
@@ -96,11 +100,16 @@ function makeRouter(target: Target) {
             target === "prerender"
               ? path("/item/:id", PrerenderedItem, { name: "item" }, itemUse)
               : path("/item/:id", liveItem, { name: "item" }, itemUse),
-            intercept("@modal", ".item", (ctx: HandlerContext) => {
-              modalRuns.count += 1;
-              ctx.use(Crumbs)("modal");
-              return <dialog>modal body</dialog>;
-            }),
+            intercept(
+              "@modal",
+              ".item",
+              (ctx: HandlerContext) => {
+                modalRuns.count += 1;
+                ctx.use(Crumbs)("modal");
+                return <dialog>modal body</dialog>;
+              },
+              when ? { when } : undefined,
+            ),
           ],
         ),
       ];
@@ -116,13 +125,15 @@ interface Answer {
   segments: ResolvedSegment[];
   matched: string[];
   diff: string[];
+  resolvedIds: string[];
+  slots?: Record<string, unknown>;
 }
 
 async function answerOf(result: ServeShellRequestResult): Promise<Answer> {
-  const { segments, matched, diff } = (
+  const { segments, matched, diff, resolvedIds, slots } = (
     await deserializeResult<{ metadata: Answer }>(result.flight!)
   ).metadata;
-  return { segments, matched, diff };
+  return { segments, matched, diff, resolvedIds, slots };
 }
 
 async function handlesOf(result: ServeShellRequestResult): Promise<HandleData> {
@@ -269,6 +280,89 @@ describe("an intercept over a Prerender() route, served from the build's variant
             : ["layout", "list", "modal"],
         );
         expect(await shownCrumbs(hit.result, hit.before)).toEqual(shown);
+      });
+    });
+  }
+});
+
+/**
+ * The intercept's `when()` rejects the page the navigation leaves, so the
+ * match selects no intercept at all: `findInterceptForRoute` returns null and
+ * the request reads the main variant of the bake. The `/i` variant holds the
+ * slot regardless (the build cannot evaluate `when()`), and nothing may serve
+ * it.
+ */
+const rejectSource = (): boolean => false;
+
+/**
+ * Navigate from /list to /item/1 with the intercept's `when()` rejecting the
+ * source. Over a Prerender() the second request is the one compared: the
+ * first bakes the artifact.
+ */
+async function navigateClosed(
+  target: Target,
+  shape: Shape,
+): Promise<{ result: ServeShellRequestResult; modalRuns: number }> {
+  const router = makeRouter(target, rejectSource);
+  const cacheStore = new MemorySegmentCacheStore();
+  const { partial } = await visitOf(router, shape);
+  const serve = () =>
+    serveShellRequest(router, "/item/1", { cacheStore, partial });
+  if (target === "prerender") await serve();
+  modalRuns.count = 0;
+  const result = await serve();
+  return { result, modalRuns: modalRuns.count };
+}
+
+describe("a navigation that opens no intercept over a Prerender() route", () => {
+  beforeEach(async () => {
+    modalRuns.count = 0;
+    await resetShellTestState();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  for (const shape of SHAPES) {
+    describe(shape, () => {
+      it("serves the page and no slot", async () => {
+        const { result, modalRuns: runs } = await navigateClosed(
+          "prerender",
+          shape,
+        );
+        const answer = await answerOf(result);
+        expect(routeSegments(answer).length).toBeGreaterThan(0);
+        for (const body of ROUTE_BODIES) expect(result.flight).toContain(body);
+        expect(result.flight).not.toContain("modal body");
+        expect(answer.slots).toBeUndefined();
+        expect(runs).toBe(0);
+      });
+
+      it("sends the page's crumbs and no slot's", async () => {
+        const { result } = await navigateClosed("prerender", shape);
+        const crumbs = await sentCrumbs(result);
+        for (const crumb of ROUTE_CRUMBS) expect(crumbs).toContain(crumb);
+        expect(crumbs).not.toContain("modal");
+      });
+
+      it("sends what a live render of the same navigation sends", async () => {
+        const hit = await navigateClosed("prerender", shape);
+        const live = await navigateClosed("live", shape);
+        const sent = (answer: Answer) =>
+          answer.segments
+            .filter((s) => s.type !== "loader" && s.component !== null)
+            .map((s) => `${s.namespace}:${s.id}`);
+        expect(sent(await answerOf(hit.result))).toEqual(
+          sent(await answerOf(live.result)),
+        );
+        expect((await answerOf(hit.result)).matched).toEqual(
+          (await answerOf(live.result)).matched,
+        );
+      });
+
+      it("serves the page from the bake, running no handler", async () => {
+        const { result } = await navigateClosed("prerender", shape);
+        expect((await answerOf(result)).resolvedIds).toEqual([]);
       });
     });
   }
