@@ -720,6 +720,7 @@ export type PrerenderResult =
         | "skipped-unsupported-target"
         | "skipped-no-origin"
         | "skipped-personalized"
+        | "skipped-redirect"
         | "skipped-passthrough"
         | "skipped-store-not-shared"
         | "shell-not-stored"
@@ -795,7 +796,7 @@ refuses its warm targets, each reported.
 4. **Result statuses.** `skipped-not-on-demand` is removed; the warm adds
    `warmed`, `skipped-store-not-shared`, `skipped-no-origin`, `shell-not-stored`,
    `skipped-uncached`, reuses `already-fresh`, `skipped-personalized`,
-   `render-failed`, `no-store`, and every result past matching carries
+   `skipped-redirect`, `render-failed`, `no-store`, and every result past matching carries
    `path: "on-demand" | "warm"`. Per-cache outcomes go in `caches`
    (`writes` by family, `shell`, `refusal`, `document`). Why: a status a caller
    can branch on, detail a log can show, and `path` disambiguates `no-store`

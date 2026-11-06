@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render answers `redirect()` keeps the stored page
+
+**Before.** `router.prerender()` on an on-demand route whose render answered
+`redirect()` — a route, layout or parallel-slot handler, a `Passthrough` route's
+build handler, or a handler behind `loading()` — reported
+`{ ok: false, status: "render-failed" }`, the same result as a crash, and a
+sweep counted a failure on every pass for a page that was fine. Nothing was
+written, so the stored page kept serving; only the result was wrong. A
+parallel-slot handler that _returned_ the redirect (rather than throwing it)
+was worse: the `Response` went into the Flight encoder and the result carried
+a serialization error instead.
+
+**Now.** Such a refresh returns
+`{ ok: false, path: "on-demand", status: "skipped-redirect" }`, next to
+`skipped-personalized`: a redirect can depend on the request (a session or auth
+check), so it says nothing about whether the page is gone. Nothing is stored,
+neither a page nor a `notFound()` marker, and the page stored before keeps
+serving to documents and client navigations and revalidates on its own schedule
+(its `ttl` and `tags`, a later refresh, a sweep). A render that renders a page
+later replaces the entry as before, and `markStale(tags)` followed by an
+`onlyIfStale` refresh still renders it again. A render that redirects **and**
+fails some other way stays `render-failed` and keeps the page.
+
+```ts
+const result = await router.prerender({ env })("/account/settings");
+// Before: { ok: false, status: "render-failed", error: Response }
+// Now:    { ok: false, status: "skipped-redirect" }
+```
+
+A build-time render that redirects is unchanged: it is a render error to the
+build, so `prerender.onError` decides (`"fail"` fails the build naming the URL,
+`"warn"` logs a warning and bakes nothing for it).
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

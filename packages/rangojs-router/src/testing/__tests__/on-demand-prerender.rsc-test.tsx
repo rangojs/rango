@@ -241,9 +241,14 @@ function makeRouter(
           }),
         ],
       ),
-      path("/redir-loading/:slug", RedirectLoadingDef, {
-        name: "redirectLoading",
-      }, () => [loading(<p>loading spinner</p>)]),
+      path(
+        "/redir-loading/:slug",
+        RedirectLoadingDef,
+        {
+          name: "redirectLoading",
+        },
+        () => [loading(<p>loading spinner</p>)],
+      ),
       // A streamed handler that redirects while the layout's own child fails:
       // the redirect is the render's answer, the failure is the render's
       // failure, and the failure is what a refresh reports.
@@ -257,9 +262,14 @@ function makeRouter(
             <main>failing</main>
           ),
         () => [
-          path("/redir-failing/:slug", FailingPageDef, {
-            name: "redirectFailing",
-          }, () => [loading(<p>failing spinner</p>)]),
+          path(
+            "/redir-failing/:slug",
+            FailingPageDef,
+            {
+              name: "redirectFailing",
+            },
+            () => [loading(<p>failing spinner</p>)],
+          ),
         ],
       ),
     ]),

@@ -9,6 +9,12 @@ export const goneSlugs: Set<string> = new Set();
 // slug in this set (?fail=1 / ?fail=0), so a refresh is `render-failed`.
 export const failSlugs: Set<string> = new Set();
 
+// The same for a render that answers redirect() instead of a page (a session
+// or auth check): the plain producer throws redirect() for a slug in this set
+// (?redirect=1 / ?redirect=0), so a refresh is `skipped-redirect` and stores
+// nothing (e2e/on-demand-prerender.test.ts).
+export const redirectSlugs: Set<string> = new Set();
+
 // And a Passthrough build handler that declines a baked param on demand: the
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.

@@ -395,6 +395,7 @@ type PrerenderResult =
         | "no-match"
         | "no-store"
         | "skipped-personalized"
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         | "skipped-passthrough"
         | "skipped-not-on-demand" // prerender.remove() only
@@ -405,6 +406,10 @@ type PrerenderResult =
       error?: unknown;
     };
 ```
+
+`skipped-redirect` is `ok: false` like `skipped-personalized`, and for the
+same reason: neither says anything about the page, so neither is a failure to
+count against a route. See "A Redirect" below.
 
 A target with search params or a hash is `skipped-unsupported-target` on this
 path (the key is route + params). The check runs after the route match: the
@@ -682,6 +687,50 @@ encoded id holds no `/`, so the split is unambiguous) and have no expiry. An
 entry without a `ttl` never goes stale by itself, so an expired marker would
 silently drop an invalidation; the cost of keeping them is one tiny KV value
 per router and tag. Marker lifetime is left to entry lifecycle (#1060).
+
+## A Redirect
+
+A render can answer `redirect()` instead of a page. The common reason is an
+auth or session check: the request the refresh runs for is not allowed to see
+this page. That answer is about the request, not about the page, and the
+producer is requestless by design ("Producer Semantics"), so the answer says
+nothing reliable about whether the page still exists. It must not be mistaken
+for either a page or a removal.
+
+The refresh therefore stores nothing at all: no page, and no "removed" marker.
+The page stored before keeps serving to documents and client navigations, and
+revalidates on its own schedule (its `ttl` and `tags`, a later refresh, a
+sweep). The result is `skipped-redirect`, `ok: false` like
+`skipped-personalized`, so a sweep can tell a request-dependent answer from a
+failure (`render-failed`) and from a stored outcome (`rendered`, `removed`).
+
+Which handler kinds this covers, and how each one's answer arrives:
+
+| handler kind                           | how the answer arrives                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| a route handler                        | the segment pass throws a handler's Response (`handleHandlerResult`)                                 |
+| a layout handler                       | the same throw (`resolveLayoutComponent`)                                                            |
+| a parallel-slot handler, thrown        | the same, from `resolveParallelSlotComponent`                                                        |
+| a parallel-slot handler, returned      | a slot's raw result is kept as the segment component, so the producer throws it before serialization |
+| a `Passthrough` route's build handler  | the same throw as a route handler                                                                    |
+| a handler streaming behind `loading()` | the Response rejects inside the stream; the trigger classifies the error that surfaces               |
+
+Two rules keep a real failure from being swallowed by a redirect:
+
+- A render that redirects **and** fails some other way stays `render-failed`
+  and keeps the page. An error another segment reported wins over a redirect
+  in the same pass, including when a streamed handler's redirect rejects the
+  serialization before the other segments finish.
+- A redirect that short-circuits segment resolution stops the render there, as
+  a handler throw does: nothing later in the tree ran, so nothing later failed.
+
+A build-time render that redirects is unchanged. The Response reaches the
+build loop (`expandPrerenderRoutes`), which applies `prerender.onError`: the
+default `"fail"` fails the build naming the URL, and `"warn"` logs a warning
+and skips baking the URL (`resolvePrerenderError`,
+`vite/utils/prerender-utils.ts`). A redirect belongs in middleware, a loader,
+or a `throw new Skip()` if a build-time render cannot run; the build-time
+answer is never stored.
 
 ## Removing A Page
 
@@ -1054,6 +1103,7 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
+  +-- answered redirect() --> skipped-redirect (no write at all)
   +-- render failed --> render-failed (also when a notFound() happened too)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
@@ -1076,6 +1126,9 @@ app cache store shared, and an origin resolves?
 
 If a write fails, keep the previous durable entry and the bundled manifest
 fallback. The refresh operation should be replace-on-success.
+
+A redirect is not a page outcome ("A Redirect" below): it writes nothing, so
+it stops here instead of reaching the write.
 
 `prerender.remove(target)` takes the same steps up to the store and then
 writes the marker (no ttl, no tags) instead of running the producer. A route

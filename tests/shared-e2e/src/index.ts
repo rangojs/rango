@@ -4029,6 +4029,54 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+/**
+ * A refresh whose render answers `redirect()` stores nothing and reports
+ * `skipped-redirect`: a redirect can depend on the request (a session or auth
+ * check), so it does not show the page is gone. The page stored before keeps
+ * serving, and a refresh once the render stops redirecting replaces it.
+ *
+ * The fixture's trigger takes `?redirect=1` / `?redirect=0`: the plain
+ * producer throws `redirect()` for the slug while it is set.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: fixture.path(slug),
+    });
+    // Nothing was written, neither a page nor a "removed" marker: the same
+    // stamp is served, from the store, on demand.
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+
+    // A sweep's next pass reports the same, and still writes nothing.
+    const again = await removeTrigger(page, trigger);
+    expect(again, JSON.stringify(again)).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  // A refresh that renders a page again replaces the entry.
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";

@@ -1034,6 +1034,18 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   rethrows any other collected error ahead of it, `firstFlightError`), stores
   the marker too, and so does a Passthrough build handler that returns
   `ctx.passthrough()` (`skipped-passthrough`, so its live handler answers).
+- A refresh whose render answers `redirect()` stores nothing, neither a page
+  nor a marker, and reports `skipped-redirect`
+  (`isRedirectResponseValue`, `response-utils.ts`): a redirect can depend on
+  the request, so it does not show the page is gone, and the stored page keeps
+  serving. Covered for a route, layout or parallel-slot handler, a Passthrough
+  build handler and a handler behind `loading()`; the producer throws a
+  Response found as a segment component (a parallel slot's returned one,
+  `prerender-match.ts`) so one classification stays in the trigger. An error
+  another segment reported wins over a redirect in the same pass, including a
+  streamed redirect that rejects `serializeSegments`: such a render stays
+  `render-failed`. A build-time render that redirects is unchanged and reaches
+  `prerender.onError`.
   Those markers are stamped with the route's `ttl` and `tags` like a page: a
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has

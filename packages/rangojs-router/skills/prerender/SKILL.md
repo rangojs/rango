@@ -823,7 +823,8 @@ skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
 page"), `no-match`, `no-store`, `skipped-personalized`,
-`skipped-unsupported-target` (a target with `?search` or `#hash`),
+`skipped-redirect` (the render answered `redirect()`, see "A redirect keeps
+the page"), `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
 live handler. A `markStale()` that lands while a refresh renders marks the entry that
@@ -835,6 +836,38 @@ both: after the store write, the runner sends one warm request so the route's
 loaders' own `cache()` and the document cache are rebuilt on the new entry.
 That request needs a shared app cache store and an origin; without them the
 refresh is complete as it is, and the result has no `caches`.
+
+### A redirect keeps the page
+
+A render can answer `redirect()` instead of a page, most often from an auth or
+session check. The refresh then stores nothing at all: no page, and no
+"removed" marker. The answer is about the request, and a redirect during a
+requestless refresh does not show the page is gone, so the page stored before
+keeps serving to documents and client navigations and revalidates on its own
+schedule (its `ttl` and `tags`, a later refresh, a sweep). The result is
+`{ ok: false, status: "skipped-redirect" }`, next to `skipped-personalized`:
+`ok: false` because nothing was stored, and its own status so a sweep does not
+count a failure for a page that is fine.
+
+```typescript
+const result = await prerender("/account/settings");
+if (!result.ok && result.status === "skipped-redirect") {
+  // Expected for a page some visitors are redirected away from: the stored
+  // page is still served, and its ttl still applies.
+}
+```
+
+It holds for every handler kind that can redirect: a route handler, a layout
+or parallel-slot handler, a `Passthrough` route's build handler, and a handler
+streaming behind `loading()`. A render that redirects **and** fails some other
+way is `render-failed` and keeps the page, so a real failure is never mistaken
+for a redirect.
+
+At build time a redirect is unchanged: it is a render error to the build, so
+`prerender.onError` decides. The default `"fail"` fails the build naming the
+URL; `"warn"` logs a warning and bakes nothing for it. A build-time render
+that cannot run should `throw new Skip()` instead, and a request-dependent
+redirect belongs in middleware or a loader.
 
 ### Remove a page
 
@@ -1013,7 +1046,8 @@ in dev. A removed page is the exception: its marker answers 404 in dev too.
   from webhooks before refreshing them.
 - **A throw in a refresh keeps the old entry** (`render-failed`). A
   `notFound()` on its own is not a failure: it removes the page (see "Remove
-  a page").
+  a page"). A `redirect()` is not a failure either: it stores nothing and the
+  page keeps serving (see "A redirect keeps the page").
 - **Intercepted navigations are not refreshed.** A refresh writes the main
   variant only; an intercept navigation still serves the build's intercept
   variant, and an on-demand route used as an intercept target 404s on a param
@@ -1270,6 +1304,7 @@ if (!result.ok) console.warn(result.status, result.caches);
 | `skipped-personalized`       | `false` | an identity guard refused a read                                                                |
 | `shell-not-stored`           | `false` | a `ppr` route whose shell was not stored; `caches.shell` and `caches.refusal` say why           |
 | `skipped-uncached`           | `false` | the request rendered and no cache wrote (the route caches nothing, or every write was refused)  |
+| `skipped-redirect`           | `false` | the render answered `redirect()`: nothing was stored, the page keeps serving                    |
 | `render-failed`              | `false` | the handler threw, the response was not 200 (`responseStatus`), or the render reported an error |
 | `skipped-unsupported-target` | `false` | a hash or a reserved parameter                                                                  |
 | `no-match`                   | `false` | no route matches the path                                                                       |

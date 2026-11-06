@@ -4,9 +4,15 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import {
+  declineSlugs,
+  failSlugs,
+  goneSlugs,
+  redirectSlugs,
+} from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -133,6 +139,9 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async (ctx) => {
     if (goneSlugs.has(ctx.params.slug)) notFound();
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
+    // A render that answers redirect() instead of a page: nothing is stored and
+    // the stored page keeps serving (skipped-redirect).
+    if (redirectSlugs.has(ctx.params.slug)) throw redirect("/login");
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-plain-detail">
@@ -178,6 +187,12 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const redirectAnswer = ctx.searchParams.get("redirect");
+  if (redirectAnswer) {
+    if (redirectAnswer === "1") redirectSlugs.add(ctx.params.slug);
+    else redirectSlugs.delete(ctx.params.slug);
+    return Response.json({ redirect: redirectSlugs.has(ctx.params.slug) });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {
