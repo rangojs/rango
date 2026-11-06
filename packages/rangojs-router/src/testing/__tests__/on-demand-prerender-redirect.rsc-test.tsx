@@ -445,6 +445,12 @@ describe("on-demand prerender: a redirecting refresh stores nothing", () => {
     const router = makeRouter({ store });
     const prerender = router.prerender({ env: {} });
 
+    // A page stored before is kept by the failure, not replaced and not removed.
+    await prerender("/route/a");
+    const before = servedStamp(
+      (await serveShellRequest(router, "/route/a")).flight,
+    );
+
     for (const url of ["/deep-both/a", "/deep-both-rev/a"]) {
       const failed = await prerender(url);
       expect(failed).toMatchObject({
@@ -457,7 +463,10 @@ describe("on-demand prerender: a redirecting refresh stores nothing", () => {
         new Error("upstream 500"),
       );
     }
-    expect(store.size).toBe(0);
+    expect(store.size).toBe(1);
+    expect(
+      servedStamp((await serveShellRequest(router, "/route/a")).flight),
+    ).toBe(before);
   });
 
   it("a redirect beside a notFound() stores nothing: neither removes the page", async () => {
