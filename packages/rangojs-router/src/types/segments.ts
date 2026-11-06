@@ -203,11 +203,13 @@ export interface ResolvedSegment {
   clientGroup?: string;
   /**
    * @internal Server-side marker: true when the segment's handler layer is
-   * served this request — its handler ran, or a stored copy of it is served
-   * in place of running (cache-lookup.ts serveStoredSegments). Used by
+   * served this request — its handler ran (an intercept's slot included,
+   * intercept-resolution.ts resolveInterceptEntry), or a stored copy of it is
+   * served in place of running (cache-lookup.ts serveStoredSegments). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
-   * handle-bucket cleanup. Stripped from the wire payload before serialization
-   * — never reaches the client.
+   * handle-bucket cleanup. Stripped from the wire payload before
+   * serialization, from `MatchResult.slots` as well as from its segments —
+   * never reaches the client.
    */
   _handlerRan?: boolean;
 }

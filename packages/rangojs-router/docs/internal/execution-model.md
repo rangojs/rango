@@ -782,10 +782,18 @@ See "Rewrite" below for what moves and what stays.
   the ones the response delivers, none when the record holds none, as for a
   handler that ran (`mergePartialHandleData`). A record carries no
   `_handlerRan` (`serializeSegments` copies named fields), so the list is
-  derived from the send decision on serve, not persisted. Pinned for a
-  `cache()` record, a `Prerender()` entry and a replay HIT by
-  `testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx` and, across the
+  derived from the send decision on serve, not persisted. An intercept's slot
+  is a handler-run segment like any other: its handler owns its pushes
+  (`resolveInterceptEntry`, `runAsSegment`), so a live intercept navigation
+  lists it and the HIT of the same navigation lists the stored copy, matching
+  ids. Pinned for a `cache()` record, a `Prerender()` entry and a replay HIT
+  by `testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx` and, across the
   three sources, by `match-middleware/__tests__/stored-source.rsc-test.tsx`.
+  `_handlerRan` is server-only: `buildMatchResult` strips it from the
+  segments it returns _and_ from the segments inside `MatchResult.slots`,
+  which hold the pipeline's own objects rather than those copies (the slot
+  container leaked it on every HIT of an open intercept while only the
+  segment list was stripped).
   Production may use
   a fresh local build manifest; dev never blocks navigation on `/__rsc_shell`. Fresh
   and stale-within-SWR runtime generations replay via a non-claiming passive

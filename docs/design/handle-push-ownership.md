@@ -1268,7 +1268,9 @@ which run made each one.
    is listed the same way (`cache-lookup.ts` `serveStoredSegments`): the
    browser replaces its pushes with the record's, none when the record holds
    none. A record does not carry the marker, so the list is derived from the
-   send decision on serve.
+   send decision on serve. An intercept's slot is listed like any other
+   handler-run segment, on the live navigation and on the cache hit of it
+   (`intercept-resolution.ts` `resolveInterceptEntry`, `cache-lookup.ts`).
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment

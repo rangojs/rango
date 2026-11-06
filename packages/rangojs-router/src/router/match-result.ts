@@ -111,6 +111,7 @@ import type {
   InternalHandlerContext,
   MatchResult,
   ResolvedSegment,
+  SlotState,
 } from "../types.js";
 import { isPlaceholder } from "../types/segments.js";
 import { interceptMatched } from "../browser/intercept-utils.js";
@@ -203,12 +204,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutInternalFields(s));
     diff.push(s.id);
   }
 
@@ -227,7 +223,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: clientSlots(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -237,6 +233,40 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/**
+ * A segment as it may reach the client: the internal `_handlerRan` marker
+ * removed (ResolvedSegment._handlerRan). The field is server-only and the
+ * client must never see it, in any container.
+ */
+function withoutInternalFields(s: ResolvedSegment): ResolvedSegment {
+  if (s._handlerRan === undefined) return s;
+  const { _handlerRan: _drop, ...rest } = s;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * The named slots with the internal marker stripped from their segments, or
+ * undefined when there are none. A slot holds the very segment objects the
+ * pipeline yielded (intercept-resolution.ts, cache-lookup.ts), not the copies
+ * the strip pass above makes, so a marker set after that pass rides into the
+ * payload through here: a cache() HIT of an open intercept listed its slot's
+ * `_handlerRan` on the wire until this mapped it too.
+ */
+function clientSlots(
+  slots: Record<string, SlotState>,
+): Record<string, SlotState> | undefined {
+  const names = Object.keys(slots);
+  if (names.length === 0) return undefined;
+  const out: Record<string, SlotState> = {};
+  for (const name of names) {
+    const slot = slots[name]!;
+    out[name] = slot.segments
+      ? { ...slot, segments: slot.segments.map(withoutInternalFields) }
+      : slot;
+  }
+  return out;
 }
 
 /**

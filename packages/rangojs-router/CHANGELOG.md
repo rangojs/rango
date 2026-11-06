@@ -18,6 +18,20 @@ handle values with the ones the response delivers (none when the record holds
 none). A segment the client keeps is still left out, as on a live navigation.
 Nothing else on the wire changes.
 
+### Fixed: an intercept's slot clears the handle values its handler stopped pushing, so a modal no longer shows the previous item's title
+
+**Before.** `resolvedIds` lists the segments whose handler ran, so the
+browser replaces their handle values with the ones the response delivers,
+none when the handler pushed none. An intercept's slot was never listed, on
+a live intercept navigation or on a cache hit: a modal whose handler pushed
+the item's title showed the previous item's title after a navigation that
+pushed none.
+
+**Now.** An intercept navigation lists its slot in `resolvedIds`, on the
+live render and on the cache hit of the same navigation alike, so the slot's
+handle values are the ones its handler delivered. A slot the browser keeps
+(a fill's held slot) is still left out.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -48,6 +48,9 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 /** Whether the chain layout pushes its crumb on this request. */
 let chainPushes = true;
 
+/** Whether the intercept's slot pushes its crumb on this request. */
+let modalPushes = true;
+
 /** Handler runs per page, to tell a stored serve from a fresh render. */
 const runs = { list: 0, a: 0, b: 0, baked: 0, shelled: 0 };
 
@@ -187,6 +190,54 @@ interface Answer {
 }
 
 /**
+ * An intercept over a cache() route: the slot is the segment whose handler
+ * owns its pushes, and the stored copy of it is what a HIT serves.
+ */
+const interceptRouter = createRouter({}).routes(
+  urls(({ path, cache, layout, revalidate, intercept }) => [
+    cache({ ttl: 600 }, () => [
+      layout(
+        (ctx: HandlerContext) => {
+          ctx.use(Crumbs)("root");
+          return <main>shell</main>;
+        },
+        () => [
+          layout(
+            (ctx: HandlerContext) => {
+              if (chainPushes) ctx.use(Crumbs)("chain");
+              return <section>chain</section>;
+            },
+            () => [
+              revalidate(() => true),
+              intercept("@modal", ".item", (ctx: HandlerContext) => {
+                if (modalPushes) ctx.use(Crumbs)("modal");
+                return <dialog>modal</dialog>;
+              }),
+              path(
+                "/list",
+                (ctx: HandlerContext) => {
+                  ctx.use(Crumbs)("list");
+                  return <ul>list</ul>;
+                },
+                { name: "list" },
+              ),
+              path(
+                "/item/:id",
+                (ctx: HandlerContext<{ id: string }>) => {
+                  ctx.use(Crumbs)("item");
+                  return <p>item</p>;
+                },
+                { name: "item" },
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  ]),
+);
+
+/**
  * A response's metadata and the handle state the browser merges: the last
  * streamed yield, which holds everything the response pushed so far, or the
  * document snapshot when nothing streamed.
@@ -200,7 +251,9 @@ async function readAnswer(
   return {
     answer: metadata,
     handles: handles?.late.at(-1) ?? handles?.hydration ?? {},
-    payload,
+    payload: [result.flight, result.prelude, result.body]
+      .filter(Boolean)
+      .join("\n"),
   };
 }
 
@@ -264,6 +317,7 @@ async function documentOf(
 
 beforeEach(async () => {
   chainPushes = true;
+  modalPushes = true;
   for (const page of Object.keys(runs) as (keyof typeof runs)[]) {
     runs[page] = 0;
   }
@@ -418,5 +472,94 @@ describe("a ppr shell replay lists the segments it serves in resolvedIds", () =>
     expect((await after(back.handles, nav)).crumbs).toEqual(["root"]);
     // The chain layout is the one that pushed nothing: it is listed.
     expect(answer.resolvedIds).toContain(idPushing(list.handles, "chain"));
+  });
+});
+
+describe("an intercept over a cache() route lists its slot", () => {
+  /** The page the browser is on, and the intercept opened from it. */
+  async function openModal(cacheStore: MemorySegmentCacheStore): Promise<{
+    list: Awaited<ReturnType<typeof documentOf>>;
+    miss: ServeShellRequestResult;
+    hit: ServeShellRequestResult;
+  }> {
+    const list = await documentOf(interceptRouter, "/list", cacheStore);
+    const partial = {
+      from: "/list",
+      interceptSource: "/list",
+      segments: list.matched,
+    };
+    const miss = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore,
+      partial,
+    });
+    const hit = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore,
+      partial,
+    });
+    return { list, miss, hit };
+  }
+
+  it("a slot whose handler pushed nothing clears its crumb, on the MISS and on the HIT", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const { list, miss } = await openModal(cacheStore);
+    const missPage = await after(list.handles, miss);
+    // The intercepted route's handler does not run for an intercept: the page
+    // it lands over keeps its route's values, and the slot pushes its own.
+    expect(missPage.crumbs).toEqual(["root", "chain", "modal", "list"]);
+
+    // Moving the open intercept re-runs the slot's handler, which pushes
+    // nothing this time: its values replace the ones the page holds.
+    modalPushes = false;
+    const moved = await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore,
+      partial: {
+        from: "/list",
+        interceptSource: "/list",
+        segments: list.matched,
+      },
+    });
+    expect((await after(missPage.handles, moved)).crumbs).toEqual([
+      "root",
+      "chain",
+      "list",
+    ]);
+
+    // The record that MISS wrote, served again: the same crumbs.
+    const movedHit = await serveShellRequest(interceptRouter, "/item/2", {
+      cacheStore,
+      partial: {
+        from: "/list",
+        interceptSource: "/list",
+        segments: list.matched,
+      },
+    });
+    expect((await after(missPage.handles, movedHit)).crumbs).toEqual([
+      "root",
+      "chain",
+      "list",
+    ]);
+  });
+
+  it("a HIT reports the ids its MISS reported", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const { miss, hit } = await openModal(cacheStore);
+    const missRead = await readAnswer(miss);
+    const hitRead = await readAnswer(hit);
+    const slotId = idPushing(missRead.handles, "modal");
+    // The slot's handler ran for the MISS that wrote the record and a stored
+    // copy of it is served here: both list it.
+    expect(missRead.answer.resolvedIds).toContain(slotId);
+    expect(hitRead.answer.resolvedIds).toEqual(missRead.answer.resolvedIds);
+  });
+
+  it("carries no internal field, in the slot container too", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const { miss, hit } = await openModal(cacheStore);
+    // The slot carries the pipeline's own segment objects, not the copies the
+    // segment list is built from, so the marker driving resolvedIds must be
+    // stripped there as well: it reached the client on every HIT of an open
+    // intercept while the slot container went unstripped.
+    expect((await readAnswer(miss)).payload).not.toContain("_handlerRan");
+    expect((await readAnswer(hit)).payload).not.toContain("_handlerRan");
   });
 });

@@ -372,6 +372,7 @@ export async function resolveInterceptEntry<TEnv>(
   const slotSegment = (
     component: ReactNode,
     layout: ReactNode | undefined,
+    handlerRan: boolean,
   ): ResolvedSegment => ({
     id: slotSegmentId,
     namespace: `intercept:${interceptEntry.routeName}`,
@@ -384,13 +385,18 @@ export async function resolveInterceptEntry<TEnv>(
     slot: interceptEntry.slotName,
     belongsToRoute,
     parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
+    // The slot's handler owns its handle pushes (runAsSegment above), so a run
+    // that pushed nothing replaces the client's values with none, as the
+    // chain and parallel walks mark theirs. A slot the browser keeps is not
+    // marked: nothing ran for it.
+    _handlerRan: handlerRan,
   });
 
   // A fill keeps a slot the client holds: neither its handler nor its layout
   // runs, only the loaders the client lacks (match-result.ts leaves the null
   // slot out of the response).
   if (fillSends(context, slotSegmentId, pass.client) === false) {
-    return [slotSegment(null, undefined), ...loaderSegments];
+    return [slotSegment(null, undefined, false), ...loaderSegments];
   }
 
   let handlerResult: ReactNode;
@@ -487,7 +493,7 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  return [slotSegment(component, layoutElement, true), ...loaderSegments];
 }
 
 /**
