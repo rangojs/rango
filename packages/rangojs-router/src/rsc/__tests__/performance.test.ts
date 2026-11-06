@@ -47,7 +47,15 @@ function createHandlerContext(matchResult = createMatchResult()) {
       prefetchCacheTTL: 300_000,
     },
     version: "test-version",
-    renderToReadableStream: vi.fn(() => new ReadableStream()),
+    renderToReadableStream: vi.fn(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:{}\n"));
+            controller.close();
+          },
+        }),
+    ),
   } as any;
 }
 

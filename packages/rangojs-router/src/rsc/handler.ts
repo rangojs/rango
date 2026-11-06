@@ -1166,14 +1166,19 @@ export function createRSCHandler<
             },
             {
               // A not-found page whose own component redirects answers the
-              // redirect, not a 404 carrying the error page.
-              redirect: (thrown) =>
-                answerRenderRedirect(thrown, {
-                  flight: isNotFoundFlightResponse,
-                  requestOrigin: url.origin,
-                  basename: router.basename,
-                  createRedirectFlightResponse,
-                }),
+              // redirect, not a 404 carrying the error page. Same channels as
+              // the matched render (rsc-rendering.ts renderPreparedRscResponse).
+              ...((!isNotFoundFlightResponse ||
+                isPartial ||
+                url.searchParams.has(WIRE.action)) && {
+                redirect: (thrown: Response) =>
+                  answerRenderRedirect(thrown, {
+                    flight: isNotFoundFlightResponse,
+                    requestOrigin: url.origin,
+                    basename: router.basename,
+                    createRedirectFlightResponse,
+                  }),
+              }),
               ...(isNotFoundFlightResponse
                 ? undefined
                 : {

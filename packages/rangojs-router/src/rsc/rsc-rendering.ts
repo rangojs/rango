@@ -1187,14 +1187,22 @@ function renderPreparedRscResponse<TEnv>(
     },
     {
       // A redirect thrown while React renders is not a handler result: the
-      // boundary renders it as an error page unless the render answers it.
-      redirect: (thrown) =>
-        answerRenderRedirect(thrown, {
-          flight: isFlightResponse,
-          requestOrigin: url.origin,
-          basename: ctx.router.basename,
-          createRedirectFlightResponse: ctx.createRedirectFlightResponse,
-        }),
+      // boundary renders it as an error page unless the render answers it. Only
+      // the channels a client parses as Flight (a navigation, an action) convert
+      // it; a document follows a 3xx. An explicit Accept: text/x-component
+      // document keeps the error row it had (a handler's redirect answers a raw
+      // 3xx there), so nothing is held back for it.
+      ...((!isFlightResponse ||
+        isPartial ||
+        url.searchParams.has(WIRE.action)) && {
+        redirect: (thrown: Response) =>
+          answerRenderRedirect(thrown, {
+            flight: isFlightResponse,
+            requestOrigin: url.origin,
+            basename: ctx.router.basename,
+            createRedirectFlightResponse: ctx.createRedirectFlightResponse,
+          }),
+      }),
       ...(isFlightResponse
         ? undefined
         : {
