@@ -76,7 +76,7 @@ function makeRouter() {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, intercept }) => [
       layout(
         () => <main>shell</main>,
         () => [
@@ -136,6 +136,18 @@ function makeRouter() {
               }),
             ],
           ),
+          // An intercept renders into a parallel slot of the route it targets.
+          path("/list", () => <p>list</p>, { name: "list" }),
+          path("/item", () => <p>item</p>, { name: "item" }),
+          intercept(
+            "@modal",
+            ".item",
+            (ctx) => <LatePush ctx={ctx} label="intercept" />,
+            {
+              when: (ctx) => ctx.from.url.pathname === "/list",
+            },
+            () => [],
+          ),
         ],
       ),
     ]),
@@ -150,10 +162,14 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string) {
+async function serve(
+  url: string,
+  options?: { partial?: { from: string; segments: string[] } },
+) {
   errors.length = 0;
   const result = await serveShellRequest(makeRouter(), url, {
     cacheStore: new MemorySegmentCacheStore(),
+    ...options,
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
@@ -206,6 +222,14 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
   it("the slot's, for a loader a component the slot handler handed its ctx to starts", async () => {
     const { errors: reported, matched } = await serve("/component-loader-slot");
     const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the intercept slot's, for a component the intercept's handler handed its ctx to", async () => {
+    const { errors: reported, matched } = await serve("/item", {
+      partial: { from: "/list", segments: [] },
+    });
+    const slot = matched.find((id) => id.endsWith(".@modal"))!;
     expect(latePushSegment(reported)).toBe(slot);
   });
 });

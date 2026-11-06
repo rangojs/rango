@@ -27,6 +27,7 @@ import {
 import { fillSends } from "./segment-resolution/prefetch-deferral.js";
 import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
 import { getRouterContext, type InterceptResult } from "./router-context.js";
+import { withSegmentScope } from "./handler-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
   RangoContext,
@@ -393,6 +394,14 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The intercept renders into its slot, so its handler and layout get the
+  // ctx a parallel slot's does (withSegmentScope): it carries the slot's
+  // segment, and a component either hands the ctx to that pushes a handle
+  // after an await files under the slot, not whatever the walker pinned
+  // since. No reverse scope: an intercept's `.name` resolves from the route
+  // (dsl-helpers.ts clears its temporary parent's scope).
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
+
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +409,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +434,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

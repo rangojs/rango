@@ -2631,11 +2631,12 @@ the await (`const push = ctx.use(Handle)`) was always filed right; a `use`
 destructured off the ctx (`const { use } = ctx`) still reads the pin, since
 no receiver is left to ask.
 
-An intercept's handler still gets the shared ctx: its `loading()` case is
-covered by its `runAsSegment` scope, and a component it hands the ctx to
-reads the pin, which the intercept phase leaves on the slot's id (it
-resolves last in the pass). Its own scoped ctx would make that hold without
-relying on the order.
+An intercept's handler and its modal layout get the same scoped ctx
+(`withSegmentScope`, intercept-resolution.ts): an intercept renders into a
+parallel slot of the route it targets, so a component either hands the ctx
+to names the slot, whether or not another segment pins after the intercept
+resolves. No reverse scope rides it: an intercept's `.name` resolves from the
+route (the DSL clears its temporary parent's scope).
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader
@@ -2643,9 +2644,9 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, a route with a parallel slot included, and for a
-loader a component starts through the layout's or the slot's ctx) and
-`server/__tests__/segment-pin.test.ts`. The e2e
+slot handed the ctx to, a route with a parallel slot included, an intercept
+slot, and for a loader a component starts through the layout's or the slot's
+ctx) and `server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 
