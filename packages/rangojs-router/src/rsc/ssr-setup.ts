@@ -25,7 +25,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import { WIRE } from "../wire-params.js";
-import { isRedirectResponse } from "../response-utils.js";
+import { renderRedirectOf } from "./render-pipeline.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -149,9 +149,7 @@ export function createSsrHtmlStage<TEnv>(
           // dev would otherwise rethrow the shell error to the host and answer
           // its 500 instead.
           shellErrorAnsweredByRender: () =>
-            renderErrors?.some(
-              (error) => error instanceof Response && isRedirectResponse(error),
-            ) === true,
+            renderRedirectOf(renderErrors, 0) !== undefined,
           // Reported once, phase "rendering", only when the error started in
           // the SSR render: a copy (a loader's masked rebuild, a Flight error,
           // a payload failure) was reported with its original where it started,

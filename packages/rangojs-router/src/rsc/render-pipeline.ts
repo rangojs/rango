@@ -317,7 +317,7 @@ export function* createRscRenderPlan<TEnv>(
  * a streamed redirect that arrives after the body started all leave the
  * response as it was.
  */
-function renderRedirectOf(
+export function renderRedirectOf(
   errors: readonly unknown[] | undefined,
   from: number,
 ): Response | undefined {
