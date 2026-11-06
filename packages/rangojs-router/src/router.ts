@@ -823,6 +823,7 @@ export function createRouter<TEnv = any>(
         {
           ...prerenderDeps,
           versions: resolveRouterVersions(routerId),
+          basename,
         },
         undefined,
         isPassthrough,

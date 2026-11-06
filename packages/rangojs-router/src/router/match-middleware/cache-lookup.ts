@@ -67,7 +67,9 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type StoredRedirectTarget,
 } from "../../prerender/writable-store.js";
+import { markExternalRedirect } from "../../redirect-origin.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
   PrerenderTargetObject,
@@ -792,8 +794,25 @@ export function scheduleOverlayRevalidation<TEnv>(
 }
 
 /**
+ * The Response a stored redirect answers with, built per request and branded
+ * again for `redirect(url, { external: true })`: that opt-in is an
+ * out-of-band brand on the Response object (redirect-origin.ts), which the
+ * store keeps as `external`. The outgoing guard (rsc/redirect-guard.ts)
+ * judges its Location as it judges a live handler's.
+ */
+function storedRedirectResponse(redirect: StoredRedirectTarget): Response {
+  const response = new Response(null, {
+    status: redirect.status,
+    headers: { Location: redirect.location },
+  });
+  if (redirect.external === true) markExternalRedirect(response);
+  return response;
+}
+
+/**
  * The prerendered (build-time cached) entry for the current route, or null on
- * a miss. Intercept navigations consult only the intercept-specific entry
+ * a miss. Throws the redirect a refresh stored in the overlay in place of the
+ * page. Intercept navigations consult only the intercept-specific entry
  * (`paramHash + "/i"`); a miss there falls through to the normal pipeline so
  * intercept-resolution can run. Callers run `ensurePrerenderDeps()` first.
  */
@@ -824,9 +843,10 @@ async function readPrerenderSource<TEnv>(
       ctx.matched.params,
     );
     if (stored) {
-      // A stale "removed" marker is rechecked like a stale page: only a
-      // refresh that hit notFound() (or declined) stamps one with a ttl or
-      // tags. A prerender.remove() marker has neither and never gets here.
+      // A stale "removed" marker or redirect is rechecked like a stale page:
+      // only a refresh that hit notFound() (or declined, or redirected)
+      // stamps one with a ttl or tags. A prerender.remove() marker has
+      // neither and never gets here.
       const stale = isStoredEntryStale(stored, Date.now());
       if (overlay.config.onRevalidate && reqCtx && stale) {
         scheduleOverlayRevalidation(
@@ -849,6 +869,13 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if (stored.redirect !== undefined) {
+        // The refresh's render answered a redirect: the request is answered
+        // with it, as a handler's thrown redirect is (a 3xx for a document,
+        // the soft redirect for a navigation or an action). The handler does
+        // not run and step 2 is skipped, on a Passthrough route too.
+        throw storedRedirectResponse(stored.redirect);
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }

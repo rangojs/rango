@@ -6,10 +6,12 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectMovedBakedPageRedirects,
+  expectMovedPageRedirects,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
-  type PrerenderOutcomesFixture,
+  type PrerenderMoveFixture,
 } from "@shared/e2e";
 
 // On-demand (ISR-style) prerender: a Passthrough + `{ onDemand }` route serves
@@ -293,9 +295,10 @@ async function exerciseRefreshInsideAction(f: Fixture, page: Page) {
 // Removing a refreshed page (#1060). Each baked slug belongs to one test here
 // and to no other test: the plain route's "baked", and the Passthrough
 // route's "removable" (its "baked" is exerciseKnownPrerender's), and
-// "decline-baked" for the decline case. The bodies are shared with
+// "decline-baked" for the decline case, and the plain route's "movable" for
+// a page that moved. The bodies are shared with
 // tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
-const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
+const removeFixture = (f: Fixture): PrerenderMoveFixture => ({
   path: (slug) => `/on-demand-plain/${slug}`,
   stampTestId: "od-plain-stamp",
   onDemandTestId: "od-plain-ondemand",
@@ -305,6 +308,7 @@ const removeFixture = (f: Fixture): PrerenderOutcomesFixture => ({
   slugTestId: "od-plain-slug",
   actionTestId: "od-action-noop",
   bakedSlug: "baked",
+  movableSlug: "movable",
   passthrough: {
     pageUrl: (slug) => f.url(`/on-demand/${slug}`),
     triggerUrl: (slug) => f.url(`/od-trigger/${slug}`),
@@ -331,6 +335,18 @@ function defineRemoveTests(f: Fixture) {
     page,
   }) => {
     await expectRemovedPassthroughPageRunsLiveHandler(page, removeFixture(f));
+  });
+
+  test("a refresh whose handler now redirects stores the redirect: the page is redirected, to a request and to a server action, until a refresh renders it", async ({
+    page,
+  }) => {
+    await expectMovedPageRedirects(page, removeFixture(f));
+  });
+
+  test("a baked page that moved is redirected, not served from its build-time entry", async ({
+    page,
+  }) => {
+    await expectMovedBakedPageRedirects(page, removeFixture(f));
   });
 }
 

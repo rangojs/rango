@@ -1038,11 +1038,25 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
   neither and is permanent until a refresh without `onlyIfStale`.
+- A page that moved: a refresh whose route or layout handler throws
+  `redirect()` stores the redirect in place of the page (`matchForPrerender`
+  reports `{ redirect }` for a redirect the segment walk rethrows;
+  `composeStoredRedirect`, `prerender/writable-store.ts`), stamped with the
+  route's `ttl` and `tags`, result status `redirected`. A request that finds
+  it is answered with it: `readPrerenderSource` throws a rebuilt redirect
+  Response (the `external` opt-in branded again), ahead of the bundled
+  manifest and of a Passthrough route's live handler, and the request takes a
+  handler redirect's path (3xx document, soft redirect for a navigation or an
+  action). A Passthrough route's action re-render does not read the overlay
+  and stays live, as over a stored page. A redirect Flight collects (a
+  streamed handler's) or a Response
+  that is not a redirect stays `render-failed`. The producer's context
+  carries the router's basename (`PrerenderMatchDeps.basename`).
 - `remove()` and a refresh are two writes to one key: last write wins, except
-  that a page is not written over a marker stored after its render started
-  (`renderOnDemand` re-reads the key). No warm request follows `removed`. A
-  removal does not reach the document cache or a Passthrough route's live
-  caches: remove first, then `updateTag()`.
+  that a page or a redirect is not written over a marker stored after its
+  render started (`renderOnDemand` re-reads the key). No warm request follows
+  `removed` or `redirected`. A removal does not reach the document cache or a
+  Passthrough route's live caches: remove first, then `updateTag()`.
 - `Prerender(..., { onDemand })` is the explicit route opt-in
   (`onDemand: true | { ttl?, tags?: string[] | (target) => string[] }`). Any
   truthy spelling works: producer retention and the runtime `od` trie flag are
@@ -1060,7 +1074,8 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
   leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
+  the page, above; nor is a handler's `redirect()`: it is stored). Its context
+  carries the router's cache
   versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
   a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the
@@ -1077,7 +1092,9 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   (`@rangojs/router/testing/flight`) serves the refreshed entry through the
   production handler (`testing/__tests__/on-demand-prerender.rsc-test.tsx`);
   after `runner.remove(url)` the same request is a 404
-  (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`).
+  (`testing/__tests__/on-demand-prerender-remove.rsc-test.tsx`); after a
+  refresh that threw `redirect()` it is redirected
+  (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`).
 
 ### Warming Any Route (router.prerender() for every route)
 

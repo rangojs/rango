@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: an on-demand refresh whose handler now throws `redirect()` redirects the page instead of serving the old one
+
+**Before.** A `router.prerender()` refresh of a
+`Prerender(..., { onDemand })` route whose handler threw `redirect()` (the
+page moved) came back `{ ok: false, status: "render-failed" }` and kept the
+entry stored before it. The old page kept serving until the next deploy, and
+for a param the build baked, so did its build-time entry: the redirect never
+took effect for a URL that had been prerendered.
+
+**Now.** The refresh stores the redirect in the prerender store in place of
+the page and returns `{ ok: true, path: "on-demand", status: "redirected" }`.
+From the next request on, the URL is answered with that redirect, as a live
+handler's `redirect()` is answered: a 3xx with its `Location` for a document
+request, the soft redirect for a client navigation or a server action's
+re-render, in dev and production. It answers ahead of the page or build-time
+entry below it and of a `Passthrough` route's live handler, except where that
+route renders live over a stored page too: its server-action re-renders. The stored
+redirect has the route's `ttl` and `tags`, so it is rechecked like a page
+(`onRevalidate` on a stale one, `onlyIfStale`, `markStale()`), and a refresh
+that renders the page again replaces it.
+
+```tsx
+export const ProductPage = Prerender(
+  async () => [{ slug: "featured" }],
+  async (ctx) => {
+    const product = await ctx.env.PRODUCTS.get(ctx.params.slug);
+    if (product?.movedTo) throw redirect(`/products/${product.movedTo}`, 301);
+    if (!product) notFound();
+    return <Product data={product} />;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.slug}`] } },
+);
+
+// Before: { ok: false, status: "render-failed" }, and /products/old kept serving
+// Now:    { ok: true, status: "redirected" }, and /products/old answers 301
+await router.prerender({ env, ctx })("/products/old");
+```
+
+The redirect keeps its status, its `Location` (a root-relative one carries
+the router's `basename`) and the `{ external: true }` opt-in; the location
+state of `redirect(url, { state })` is not stored. A redirect that reaches
+the render through Flight (a handler whose result streams behind
+`loading()`, a server component) and a thrown Response that is not a
+redirect stay `render-failed`, as before. `PrerenderResult`'s on-demand
+status union gains `"redirected"`, and `PrerenderStoredEntry` a third
+variant, `{ v, redirect: { location, status, external? }, meta }`: a custom
+`WritablePrerenderStore` that persists the JSON it is given needs no change.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

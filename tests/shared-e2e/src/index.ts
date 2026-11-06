@@ -4029,6 +4029,177 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+
+// ---------------------------------------------------------------------------
+// A page that moved: a refresh whose handler throws `redirect()` stores the
+// redirect in place of the page, so requests are redirected, not served the
+// old page or its build-time entry. Shared by the same two suites.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the outcomes fixture has, plus a page that moves.
+ * - `triggerUrl(slug)` also takes `?moved=<other>`: the plain route's handler
+ *   throws `redirect()` to `path(other)` for `slug` on its next refresh, and
+ *   `?moved=` (empty) restores it.
+ * - `movableSlug`: a slug `getParams()` lists, which a production build
+ *   bakes, requested by no other test: these tests move its page.
+ */
+export interface PrerenderMoveFixture extends PrerenderOutcomesFixture {
+  movableSlug: string;
+}
+
+/**
+ * The page is redirected to `to`: a document request is answered with a 3xx
+ * whose Location is `to`'s path, and the browser lands on `to`'s page.
+ */
+async function expectPageRedirected(
+  page: Page,
+  fixture: PrerenderMoveFixture,
+  slug: string,
+  to: string,
+): Promise<void> {
+  const res = await page.request.get(fixture.pageUrl(slug), {
+    headers: PUSH_HTML_HEADERS,
+    maxRedirects: 0,
+  });
+  expect(res.status(), await res.text()).toBe(302);
+  expect(res.headers()["location"]).toBe(fixture.path(to));
+
+  const response = await page.goto(fixture.pageUrl(slug));
+  expect(response?.status()).toBe(200);
+  expect(page.url()).toBe(fixture.pageUrl(to));
+  await waitForShellHydration(page);
+  await expect(byTestId(page, fixture.slugTestId)).toHaveText(to);
+}
+
+/** `?moved=<to>` (or `?moved=` to restore) on the trigger. */
+async function moveSlug(
+  page: Page,
+  fixture: PrerenderMoveFixture,
+  slug: string,
+  to: string,
+): Promise<void> {
+  await removeTrigger(
+    page,
+    fixture.triggerUrl(slug),
+    `?moved=${encodeURIComponent(to)}`,
+  );
+}
+
+/**
+ * A refresh of `slug` after it moved to `to` is `redirected`, with the
+ * route's tags, and the page is redirected from then on.
+ */
+async function refreshMoved(
+  page: Page,
+  fixture: PrerenderMoveFixture,
+  slug: string,
+  to: string,
+): Promise<void> {
+  await moveSlug(page, fixture, slug, to);
+  const moved = await removeTrigger(page, fixture.triggerUrl(slug));
+  expect(moved, JSON.stringify(moved)).toMatchObject({
+    ok: true,
+    path: "on-demand",
+    status: "redirected",
+    tags: [fixture.tag(slug)],
+  });
+  await expectPageRedirected(page, fixture, slug, to);
+}
+
+/**
+ * A param only a refresh produced, then moved: the refresh stores the
+ * redirect and the page is redirected, to a request and to a server action's
+ * re-render on a page left open. Moved back, it stays redirected until a
+ * refresh: a sweep leaves the fresh redirect (`redirected`), and once
+ * `markStale` reaches it through the route's tag the sweep renders the page
+ * again.
+ */
+export async function expectMovedPageRedirects(
+  page: Page,
+  fixture: PrerenderMoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const to = pushProbe("moved-to");
+  const trigger = fixture.triggerUrl(slug);
+  // The page it moves to serves from the store, in production too.
+  await refreshPage(page, fixture.triggerUrl(to));
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    // The action is sent from the page as it was before the move: its
+    // re-render of the page is answered with the soft redirect.
+    await moveSlug(page, fixture, slug, to);
+    expect(await removeTrigger(page, trigger)).toMatchObject({
+      status: "redirected",
+    });
+    const answered = page.waitForResponse(
+      (res) =>
+        res.request().method() === "POST" &&
+        res.url().startsWith(`${fixture.pageUrl(slug)}?`),
+    );
+    await byTestId(page, fixture.actionTestId).click();
+    const action = await answered;
+    expect(action.headers()["x-rsc-redirect"]).toBe(fixture.pageUrl(to));
+    await expect(page).toHaveURL(fixture.pageUrl(to));
+
+    await refreshMoved(page, fixture, slug, to);
+  } finally {
+    await moveSlug(page, fixture, slug, "");
+  }
+  // Moved back, not refreshed: the stored redirect still answers.
+  await expectPageRedirected(page, fixture, slug, to);
+
+  const left = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(left, JSON.stringify(left)).toMatchObject({
+    ok: true,
+    status: "redirected",
+  });
+  await expectPageRedirected(page, fixture, slug, to);
+
+  await removeTrigger(
+    page,
+    trigger,
+    `?markStale=${encodeURIComponent(fixture.tag(slug))}`,
+  );
+  const rechecked = await removeTrigger(page, trigger, "?onlyIfStale=1");
+  expect(rechecked, JSON.stringify(rechecked)).toMatchObject({
+    ok: true,
+    status: "rendered",
+  });
+  await expectPageServed(page, fixture, slug);
+}
+
+/**
+ * A param the build baked, then moved: the refresh's redirect answers ahead
+ * of the build-time entry, and a refresh once it is back brings the page
+ * back.
+ */
+export async function expectMovedBakedPageRedirects(
+  page: Page,
+  fixture: PrerenderMoveFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = fixture.movableSlug;
+  const to = pushProbe("baked-moved-to");
+  const trigger = fixture.triggerUrl(slug);
+  // A run stopped midway leaves the slug moved: start from its page.
+  await moveSlug(page, fixture, slug, "");
+  await refreshPage(page, fixture.triggerUrl(to));
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+
+  try {
+    await refreshMoved(page, fixture, slug, to);
+  } finally {
+    await moveSlug(page, fixture, slug, "");
+  }
+
+  await refreshPage(page, trigger);
+  await expectPageServed(page, fixture, slug);
+}
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
