@@ -760,11 +760,38 @@ export function buildEntryRevalidateMap(
 }
 
 /**
+ * Pin the shared handler ctx to `segmentId` while `fn` runs, then put the
+ * entry's pin back.
+ *
+ * The pin names the segment whose handler is running; the walker moves it on
+ * as it walks. A handler's ctx carries its own segment (withSegmentScope), so
+ * nothing needs the pin once the handler returns — and a push that reads it
+ * later (a component the route's handler handed the shared ctx to, which React
+ * renders after the walk) must name the entry that pinned it, not the last
+ * child resolved. `resolveOrphanLayout` and `resolveParallelSlotComponent`
+ * both rely on that.
+ */
+async function runWithSegmentPin<TEnv, T>(
+  context: HandlerContext<any, TEnv>,
+  segmentId: string,
+  fn: () => T,
+): Promise<T> {
+  const internal = context as InternalHandlerContext<any, TEnv>;
+  const pinned = internal._currentSegmentId;
+  internal._currentSegmentId = segmentId;
+  try {
+    return await fn();
+  } finally {
+    internal._currentSegmentId = pinned;
+  }
+}
+
+/**
  * Resolve the component for a single parallel slot. Pure component resolution
  * shared by the main path and the orphan path of
  * resolveParallelSegments: try the static slot cache, else run
- * the slot handler (pinning _currentSegmentId to the slot id so handle pushes
- * land in the slot's own bucket, and wrapping a streamed handler). Returns the
+ * the slot handler (pinned to the slot id so handle pushes land in the slot's
+ * own bucket, and wrapping a streamed handler). Returns the
  * resolved component and whether the handler actually ran, or undefined when
  * there is nothing to render: the handler was evicted (production static
  * slot) and the static lookup missed. Does NOT touch the revalidate-default
@@ -815,15 +842,9 @@ async function resolveParallelSlotComponent<TEnv>(
     } else {
       // Slot-keyed pushes — slot owns its own bucket, parent layout owns its
       // own. On slot-only revalidations the partial merge updates only the
-      // slot's bucket; the parent's bucket stays intact. Pinned only while the
-      // handler runs, as resolveOrphanLayout does: the ctx the handler hands
-      // its components carries the slot (withSegmentScope), so the shared pin
-      // belongs to the entry below again once this returns — a push from a
-      // component the route's handler handed the shared ctx to renders after
-      // the walk and must name the route, not the last slot.
-      const internal = context as InternalHandlerContext<any, TEnv>;
-      const pinned = internal._currentSegmentId;
-      internal._currentSegmentId = parallelId;
+      // slot's bucket; the parent's bucket stays intact. The pin is the slot's
+      // only while the handler runs (runWithSegmentPin): the ctx it hands its
+      // components carries the slot, and the entry's pin comes back after.
       handlerRan = true;
       const slotContext = withSegmentScope(
         context,
@@ -842,34 +863,34 @@ async function resolveParallelSlotComponent<TEnv>(
             );
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
-        if (hasLoadingFallback) {
-          const result = runAsSegment(parallelId, run);
-          if (result instanceof Promise) {
-            warnOnStreamedResponse(result, parallelId);
-            result.finally(doneHandler).catch(() => {});
-            component = trackStreamedHandler(deps, result, {
-              boundaryEntry,
-              segmentId: parallelId,
-              segmentType: "parallel",
-              context,
-              routeKey,
-              params,
-              isPartial: reportsPartial(pass),
-              recover: !pass.throwOnError,
-            });
+        await runWithSegmentPin(context, parallelId, async () => {
+          if (hasLoadingFallback) {
+            const result = runAsSegment(parallelId, run);
+            if (result instanceof Promise) {
+              warnOnStreamedResponse(result, parallelId);
+              result.finally(doneHandler).catch(() => {});
+              component = trackStreamedHandler(deps, result, {
+                boundaryEntry,
+                segmentId: parallelId,
+                segmentType: "parallel",
+                context,
+                routeKey,
+                params,
+                isPartial: reportsPartial(pass),
+                recover: !pass.throwOnError,
+              });
+            } else {
+              doneHandler();
+              component = result as ReactNode;
+            }
           } else {
+            // A static value (a Promise included) goes to render as is.
+            component = typeof handler === "function" ? await run() : handler;
             doneHandler();
-            component = result as ReactNode;
           }
-        } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
-          doneHandler();
-        }
+        });
       } catch (error) {
         throw noteThrower(error, parallelId, "parallel");
-      } finally {
-        internal._currentSegmentId = pinned;
       }
     }
   }
@@ -1546,17 +1567,14 @@ export async function resolveOrphanLayout<TEnv>(
       // under loading() streams its handler, whose pushes after an await
       // read the pin after this returns where a runtime lost its
       // runAsSegment scope (segmentPinOf).
-      const internal = context as InternalHandlerContext<any, TEnv>;
-      const pinned = internal._currentSegmentId;
-      internal._currentSegmentId = orphan.shortCode;
       const doneHandler = track(`handler:${orphan.id}`, 2);
       try {
-        component = await resolveLayoutComponent(orphan, context);
+        component = await runWithSegmentPin(context, orphan.shortCode, () =>
+          resolveLayoutComponent(orphan, context),
+        );
       } catch (error) {
         // Its owning entry's boundary catches it.
         throw noteThrower(error, orphan.shortCode, orphan.type);
-      } finally {
-        internal._currentSegmentId = pinned;
       }
       doneHandler();
     }

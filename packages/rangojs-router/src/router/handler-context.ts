@@ -207,8 +207,8 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's, parallel slot's or route's handler gets: a prototype
- * child of the request's one handler ctx that carries its own segment.
+ * The ctx a layout's or parallel slot's handler gets: a prototype child of
+ * the request's one handler ctx that carries its own segment.
  *
  * The segment rides the object because the walker moves the shared
  * `_currentSegmentId` on while an async component the handler handed this ctx
