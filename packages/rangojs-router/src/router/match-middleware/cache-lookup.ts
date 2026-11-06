@@ -591,21 +591,19 @@ async function* serveStoredSegments<TEnv>(
     ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
-  const sentIds = restoreHandles && new Set<string>();
+  // Ids of the stored segments this response sends: a partial answer lists
+  // them in `resolvedIds` (match-result.ts), the record's handle values
+  // replacing the client's or clearing them, exactly as a re-run handler's
+  // do; and a cache() record replays its values for them (restoreHandles). A
+  // kept segment is absent: the client keeps its values, as on a live walk.
+  // Recorded here, where the send decision is made, rather than marked on the
+  // segment: the same object travels to the wire through containers
+  // `buildMatchResult` does not strip (an intercept's slot, `state.slots`), so
+  // a marker on it leaks to the client.
+  const sentIds = ctx.isFullMatch ? undefined : new Set<string>();
+  if (sentIds) state.cachedSentIds = sentIds;
 
   yield* liveSegments;
-
-  // A partial answer lists a stored segment it sends in `resolvedIds`
-  // (match-result.ts): the record's handle values replace the client's, or
-  // clear them when it carries none, exactly as a re-run handler's do. A
-  // segment kept below is not listed: the client keeps its values, as on a
-  // live walk. Collected here, where the send decision is made, rather than
-  // marked on the segment: the same object travels to the wire through
-  // containers `buildMatchResult` does not strip (an intercept's slot,
-  // `state.slots`), so a marker on it leaks to the client.
-  const storedSentIds = ctx.isFullMatch
-    ? undefined
-    : (state.cachedSentIds ??= new Set<string>());
 
   for (const segment of segments) {
     if (interceptFillSkips(ctx, segment)) continue;
@@ -628,7 +626,6 @@ async function* serveStoredSegments<TEnv>(
       keepClientSegment(segment);
     } else {
       sentIds?.add(segment.id);
-      storedSentIds?.add(segment.id);
     }
     yield segment;
   }
@@ -637,7 +634,7 @@ async function* serveStoredSegments<TEnv>(
   // only, decided above after the live entries: a kept segment keeps the
   // client's, as on a live walk (handle-snapshot.ts restoreHandles;
   // decodeStoredEntry for a bake).
-  if (sentIds) await restoreHandles!(sentIds);
+  if (sentIds && restoreHandles) await restoreHandles(sentIds);
 
   // The stored handler values stand where the MISS's handlers pushed them:
   // behind what a segment's loaders push before the walk reaches its handler
