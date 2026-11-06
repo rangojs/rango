@@ -18,6 +18,7 @@ import {
   buildLoaderErrorContext,
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
+import { withSegmentScope } from "./handler-context.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
 import { findInOrphans } from "./error-handling.js";
 import {
@@ -363,11 +364,13 @@ export async function resolveInterceptEntry<TEnv>(
     parentEntry,
     belongsToRoute,
   );
-  // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
-  // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
-  // it when called).
-  (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-    slotSegmentId;
+  // The handler and chrome layout get a ctx that carries the slot's segment
+  // (withSegmentScope), as a layout's or parallel slot's does: a component
+  // either hands it to pushes under the slot however late, and the shared
+  // _currentSegmentId stays whatever the walk left it at. A loader the handler
+  // starts takes the same segment (receiverSegment, loader-resolution.ts); the
+  // slot's own loaders pinned the ctx before this (resolveInterceptLoaders).
+  const slotContext = withSegmentScope(context, slotSegmentId, undefined);
 
   const slotSegment = (
     component: ReactNode,
@@ -400,7 +403,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +428,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

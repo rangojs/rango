@@ -2550,11 +2550,12 @@ Limits:
   first (outer entries resolve first).
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
-- A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, and `reverse` and `_reverseScope` when the
-  segment has a scope, so `{ ...ctx }` there copies only those. A getter keyed
-  by its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+- A layout's, slot's or intercept handler's ctx is a different object from
+  the route's. Its own fields are `_handleSegmentId`, and `reverse` and
+  `_reverseScope` when the segment has a scope, so `{ ...ctx }` there copies
+  only those. A getter keyed by its holder resolves through the prototype
+  chain (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol
+  the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2626,9 +2627,12 @@ its own segment for that wait and puts the previous pin back after it
 way. A push function bound before the await (`const push = ctx.use(Handle)`)
 was always filed right.
 
-An intercept's handler still gets the shared ctx: a component it hands the
-ctx to names the slot because the pin is still the slot's when that push
-lands, not because the ctx carries it. Nothing enforces that order.
+An intercept's handler and chrome layout get a ctx that carries the slot's
+segment too (`withSegmentScope(context, slotSegmentId, undefined)`,
+intercept-resolution.ts), so a component either hands it to names the slot
+however late, and the shared pin is left as the walk had it: before, the
+intercept pinned the shared ctx for its handler and a push from a component
+named the slot only while nothing resolved after it.
 
 Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.tsx`
 (document and navigation; microtask and timer awaits; a handle push, a loader

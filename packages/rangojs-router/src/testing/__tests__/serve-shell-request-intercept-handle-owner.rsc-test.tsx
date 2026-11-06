@@ -3,11 +3,12 @@
  * serveShellRequest's partial navigation (the request the browser sends when
  * a link opens the modal).
  *
- * resolveInterceptEntry (router/intercept-resolution.ts) pins
- * `_currentSegmentId` to the slot's id before its loaders' kickoff and its
- * handler, as the parallel-slot funnels (segment-resolution/revalidation.ts)
- * and the build-time intercept bake (router/prerender-match.ts)
- * do. Without the pin, a handler's `ctx.use(Handle)` and a loader's push
+ * The slot's loaders pin `_currentSegmentId` to the slot before their kickoff
+ * (resolveInterceptLoaders), and its handler and chrome layout get a ctx that
+ * carries the slot (withSegmentScope, router/intercept-resolution.ts), as the
+ * parallel-slot funnels (segment-resolution/revalidation.ts) and the
+ * build-time intercept bake (router/prerender-match.ts) do for theirs.
+ * Without it, a handler's `ctx.use(Handle)` and a loader's push
  * (`loaderOwner`, segment-resolution/prefetch-deferral.ts) read whatever
  * segment was pinned last:
  *   - a layout the navigation re-ran: the push landed in the LAYOUT's bucket,

@@ -16,8 +16,11 @@ owns the ctx the push went through:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 A route handler's ctx is still the request's one ctx, so a push through it
 names the route: the walker puts the route's segment back once the route's own
-parallel slots resolved, where before it named the last slot. The push is
-still rejected, at the same moment, and production still shows no message.
+parallel slots resolved, where before it named the last slot. An intercept
+handler's and chrome layout's ctx carries the slot's segment too, as a
+layout's does: `{ ...ctx }` there now copies that field instead of the whole
+shared ctx. The push is still rejected, at the same moment, and production
+still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

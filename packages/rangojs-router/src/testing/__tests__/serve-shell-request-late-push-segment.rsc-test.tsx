@@ -69,7 +69,7 @@ function makeRouter() {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, intercept }) => [
       layout(
         () => <main>shell</main>,
         () => [
@@ -113,6 +113,15 @@ function makeRouter() {
               }),
             ],
           ),
+          path("/component-plain", () => <p>plain</p>, {
+            name: "componentPlain",
+          }),
+          path("/component-intercept/:id", () => <p>page</p>, {
+            name: "componentIntercept",
+          }),
+          intercept("@modal", ".componentIntercept", (ctx) => (
+            <LatePush ctx={ctx} label="intercept" />
+          )),
         ],
       ),
     ]),
@@ -131,6 +140,25 @@ async function serve(url: string) {
   errors.length = 0;
   const result = await serveShellRequest(makeRouter(), url, {
     cacheStore: new MemorySegmentCacheStore(),
+  });
+  return { errors: [...errors], matched: await matchedOf(result.flight) };
+}
+
+/** A partial navigation that opens the intercept slot, from a held page. */
+async function serveIntercept(url: string) {
+  const router = makeRouter();
+  const cacheStore = new MemorySegmentCacheStore();
+  const from = await serveShellRequest(router, "/component-plain", {
+    cacheStore,
+    partial: true,
+  });
+  errors.length = 0;
+  const result = await serveShellRequest(router, url, {
+    cacheStore,
+    partial: {
+      from: "/component-plain",
+      segments: await matchedOf(from.flight),
+    },
   });
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
@@ -182,5 +210,13 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     // The loader's own pushes read its owner (loaderOwner), which the calling
     // ctx's carried segment decides.
     expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the intercept slot's, for a component the intercept handler handed its ctx to", async () => {
+    const { errors: reported, matched } = await serveIntercept(
+      "/component-intercept/1",
+    );
+    const slot = matched.find((id) => id.endsWith(".@modal"))!;
+    expect(latePushSegment(reported)).toBe(slot);
   });
 });
