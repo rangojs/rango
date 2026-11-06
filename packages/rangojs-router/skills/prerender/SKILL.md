@@ -995,6 +995,8 @@ await prerender("/products/42");
 - **A render that redirects and fails another way stays `render-failed`**,
   whichever the two came first. A render that both redirects and hits
   `notFound()` stores nothing either.
+- **A removed page stays removed**: a redirecting refresh leaves the
+  "removed" marker in place, so the URL keeps answering 404.
 - **At build time nothing changed**: a `Prerender` render that redirects is a
   render error under `prerender.onError` — `"fail"` fails the build, `"warn"`
   skips that URL.

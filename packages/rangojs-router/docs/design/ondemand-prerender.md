@@ -999,6 +999,8 @@ half had before any error that is not a `DataNotFoundError` went first.
   next sweep looks again; a render that answers with a page replaces it.
 - A `Passthrough` route keeps the stored page, so its live handler does not
   take over for a page that is still there.
+- A "removed" marker stays as well: a redirecting refresh does not bring a
+  removed page back, and the URL keeps answering 404.
 - `throwOnError: true` throws a `PrerenderError` naming `skipped-redirect`, as
   it does for `skipped-personalized`; `.many()` returns one result per target
   and does not stop.

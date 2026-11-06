@@ -489,6 +489,25 @@ describe("on-demand prerender: a redirecting refresh stores nothing", () => {
     );
   });
 
+  it('a redirecting refresh leaves a "removed" marker: it does not bring a removed page back', async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    await prerender("/route/a");
+
+    redirecting.route = true;
+    await prerender.remove("/route/a");
+    expect(store.entries()[0]?.[1].removed).toBe(true);
+    expect(await prerender("/route/a")).toMatchObject({
+      ok: false,
+      status: "skipped-redirect",
+    });
+
+    expect(store.entries()[0]?.[1].removed).toBe(true);
+    expect((await serveShellRequest(router, "/route/a")).response.status).toBe(
+      404,
+    );
+  });
+
   it("a basename and an off-host redirect leave the page too", async () => {
     const router = makeRouter({ store }, { basename: "/app" });
     const prerender = router.prerender({ env: {} });
