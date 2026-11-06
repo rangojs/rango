@@ -40,6 +40,7 @@ import {
 import type {
   MemoryPrerenderStore,
   PrerenderConfig,
+  PrerenderTargetObject,
 } from "../../prerender/index.js";
 
 /** Every producer entry, whichever handler kind ran it. */
@@ -362,6 +363,39 @@ describe("a redirecting on-demand refresh", () => {
       });
     });
   }
+
+  it("is the same result for a URL and for an object target", async () => {
+    const router = makeRouter({ store });
+    redirecting.route = true;
+    const prerender = router.prerender({ env: {} });
+
+    // The object target as a queue message carries it (a JSON round trip).
+    const queued = JSON.parse(
+      JSON.stringify({ route: "route", params: { slug: "a" } }),
+    ) as PrerenderTargetObject;
+    for (const target of [new URL("http://shop.example/route/a"), queued]) {
+      expect(await prerender(target)).toMatchObject({
+        ok: false,
+        path: "on-demand",
+        status: "skipped-redirect",
+        routeName: "route",
+      });
+    }
+    expect(store.size).toBe(0);
+  });
+
+  it("many() reports one skipped-redirect per target and keeps the batch going", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+    redirecting.route = true;
+
+    const results = await prerender.many(["/route/a", "/plain/b"]);
+    expect(results.map((r) => [r.ok, r.status])).toEqual([
+      [false, "skipped-redirect"],
+      [false, "no-match"],
+    ]);
+    expect(store.size).toBe(0);
+  });
 
   it("throws a PrerenderError under throwOnError, like any other refusal", async () => {
     const router = makeRouter({ store });
