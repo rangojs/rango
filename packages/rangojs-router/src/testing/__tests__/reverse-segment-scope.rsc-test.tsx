@@ -25,6 +25,7 @@ import {
   createLoader,
   createRouter,
   rewrite,
+  Static,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
@@ -187,12 +188,68 @@ const cachedRouter = createRouter({}).routes(
   ]),
 );
 
+/**
+ * Static() layouts and slots take the same live path when no baked artifact
+ * serves them (dev, and a store miss): the scope comes from the entry, so
+ * `.name` resolves in the module that declared the segment — the same value
+ * the build bakes (router/__tests__/static-reverse-scope.test.ts).
+ */
+const staticScopedRouter = createRouter({}).routes(
+  urls(({ path, layout, include, parallel }) => [
+    path("/", () => <p>home</p>, { name: "staticHome" }),
+    include(
+      "/:accountId",
+      urls(({ path, layout, include, parallel }) => [
+        layout(
+          Static((ctx) => (
+            <div>{`static-account-layout:${ctx.reverse(".settings")}`}</div>
+          )),
+          () => [
+            parallel({
+              "@aside": Static((ctx) => (
+                <aside>{`static-account-slot:${ctx.reverse(".settings")}`}</aside>
+              )),
+            }),
+            path("/settings", () => <article>account settings</article>, {
+              name: "settings",
+            }),
+            include(
+              "/:projectId",
+              urls(({ path, layout }) => [
+                layout(
+                  Static((ctx) => (
+                    <section>{`static-project-layout:${ctx.reverse(".settings")}`}</section>
+                  )),
+                  () => [
+                    path("/issues", () => <article>issues</article>, {
+                      name: "issues",
+                    }),
+                    path(
+                      "/settings",
+                      () => <article>project settings</article>,
+                      {
+                        name: "settings",
+                      },
+                    ),
+                  ],
+                ),
+              ]),
+              { name: "project" },
+            ),
+          ],
+        ),
+      ]),
+      { name: "account" },
+    ),
+  ]),
+);
+
 beforeEach(() => resetShellTestState());
 
 async function render(
   url: string,
   partial?: { from: string },
-  app: typeof router = router,
+  app: Parameters<typeof serveShellRequest>[0] = router,
 ): Promise<string> {
   const result = await serveShellRequest(app, url, {
     cacheStore: new MemorySegmentCacheStore(),
@@ -262,6 +319,17 @@ describe("ctx.reverse('.name') resolves in the module that defines the segment",
       rootLayoutRouter,
     );
     expect(flight).toContain('"root-layout:/"');
+  });
+
+  it("a Static() layout and slot resolve in their module live, like the bake", async () => {
+    const flight = await render(
+      "/acme/web/issues",
+      undefined,
+      staticScopedRouter,
+    );
+    expect(flight).toContain("static-project-layout:/acme/web/settings");
+    expect(flight).toContain("static-account-layout:/acme/settings");
+    expect(flight).toContain("static-account-slot:/acme/settings");
   });
 
   it('a "use cache" function taking ctx keys by the segment\'s scope', async () => {

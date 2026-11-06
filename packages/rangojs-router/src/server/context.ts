@@ -858,18 +858,32 @@ export function scopeReverse(
  * evaluation scope and used to iterate the registry first-non-null, so these
  * are the ONLY reliable carriers of the def's owning router, root-scope, and
  * full route name — a name-keyed registry lookup at bake time reproduces the
- * cross-router collision #757/#762 fixed (and the collector's historical
- * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
- * never contains, silently degrading to the dot-heuristic).
+ * cross-router collision #757/#762 fixed.
+ *
+ * `mount` is the segment kind the def was mounted as, and the bake resolves
+ * dot-local names the way that kind does live: a `path()` mount carries its
+ * full route name (a route handler resolves from it), a `layout()` or
+ * `parallel()` mount carries its ReverseScope (structural entries resolve from
+ * it — `withReverseScope`, router/handler-context.ts).
  * A definition mounted more than once is stamped each time; the last mount wins.
  */
 export function stampStaticDefScope(
   handler: unknown,
-  routeName?: string,
+  mount: { routeName?: string; reverseScope?: ReverseScope },
 ): void {
   const store = RangoContext.getStore();
   const def = handler as Record<string, unknown>;
-  if (routeName !== undefined) def.$$routeName = routeName;
+  // One kind per mount, so a def mounted more than once bakes as its last
+  // mount (above): the other kind's stamp would otherwise win for dot-local
+  // names while the last mount owns the route name.
+  if (mount.routeName !== undefined) {
+    def.$$routeName = mount.routeName;
+    delete def.$$reverseScope;
+  }
+  if (mount.reverseScope !== undefined) {
+    def.$$reverseScope = mount.reverseScope;
+    delete def.$$routeName;
+  }
   def.$$rootScoped = getRootScoped();
   if (store?.routerId !== undefined) def.$$routerId = store.routerId;
 }

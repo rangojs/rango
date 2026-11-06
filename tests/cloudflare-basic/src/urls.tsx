@@ -308,6 +308,7 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { reverseSegmentScopePatterns } from "./pages/reverse-segment-scope.js";
+import { staticReverseScopePatterns } from "./pages/static-reverse-scope.js";
 import { guidesPatterns } from "./pages/guides.js";
 import {
   GuidePlainDef,
@@ -3149,6 +3150,13 @@ export const urlpatterns = urls(
         // A segment's ctx.reverse(".name") resolves in the module defining it
         // (account layout above a nested project module).
         include("/rss", reverseSegmentScopePatterns, { name: "rss" }),
+
+        // The same for Static() layouts and slots: what the build bakes must
+        // equal what the same layout resolves live. Transparent { name: "" }
+        // on purpose: the root Static layout has to sit at root scope (no name
+        // segment of its own), where `.name` resolves through the bare-name
+        // fallback.
+        include("/static-reverse", staticReverseScopePatterns, { name: "" }),
 
         // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
         include("/guides", guidesPatterns, { name: "guides" }),

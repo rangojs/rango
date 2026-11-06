@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or parallel slot resolves `ctx.reverse(".name")` in its own module at build time
+
+**Before.** A `Static()` layout or slot baked `ctx.reverse(".name")` from a
+route name derived from its include prefix. Resolution drops a route name's
+last segment, so a layout two includes deep resolved one module too high: in
+`include("/:projectId", ..., { name: "project" })` under `{ name: "account" }`
+its `.settings` baked the account's `/acme/settings`, while the same layout
+rendered live linked `/acme/web/settings`. A root-level `Static()` layout had
+no route name at all, so the build failed with `Unknown route: ".home"` even
+though the live root layout resolved it.
+
+**Now.** The bake resolves dot-local names in the include scope of the
+`layout()` or `parallel()` position that mounted the handler — the same
+`ReverseScope` the live handler gets — at every nesting depth, the root
+included. A `path()`-mounted `Static()` handler is unchanged: it still
+resolves from its route's name, like its live handler.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -444,12 +444,14 @@ export async function renderStaticHandlers(
           const result = await routerInstance.renderStaticSegment(
             def.handler,
             def.$$id,
-            // Full route name when stamped; the historical $$routePrefix is a
-            // name PREFIX (never in the root-scope registry) kept as fallback.
-            (def as any).$$routeName ?? (def as any).$$routePrefix,
+            // Mount stamps (stampStaticDefScope): a path() mount bakes as a
+            // route handler, a layout()/parallel() mount as its structural
+            // entry, so `.name` resolves in the module that declared it.
+            (def as any).$$routeName,
             state.resolvedBuildEnv,
             !state.isBuildMode,
             (def as any).$$rootScoped,
+            (def as any).$$reverseScope,
           );
           if (result) {
             // result.handles is the pre-encoded handle string ("" when none).

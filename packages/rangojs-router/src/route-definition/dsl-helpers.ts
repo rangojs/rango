@@ -638,11 +638,9 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       unwrappedSlots[slotName] = slotHandler.handler;
       if (slotHandler.$$id) {
         staticSlotIds[slotName] = slotHandler.$$id;
-        // Capture namespace prefix for build-time reverse() resolution
-        if (ctx.namePrefix) {
-          (slotHandler as any).$$routePrefix = ctx.namePrefix;
-        }
-        stampStaticDefScope(slotHandler);
+        // The slot's include scope, so the bake resolves `.name` in the
+        // module that declares the slot, as the live slot ctx does.
+        stampStaticDefScope(slotHandler, { reverseScope: getReverseScope() });
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -1187,12 +1185,10 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
       : {}),
   } satisfies EntryData;
 
-  // Capture namespace prefix on static handler for build-time reverse() resolution
+  // The layout's include scope, so the bake resolves `.name` in the module
+  // that declares the layout, as the live layout ctx does.
   if (isStatic && handler.$$id) {
-    if (ctx.namePrefix) {
-      (handler as any).$$routePrefix = ctx.namePrefix;
-    }
-    stampStaticDefScope(handler);
+    stampStaticDefScope(handler, { reverseScope: getReverseScope() });
   }
 
   // Merge handler.use defaults with explicit use

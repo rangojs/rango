@@ -28,12 +28,12 @@ import { generateManifestFull } from "../../build/generate-manifest.js";
 // GLOBAL registry, and the static collector compounds it two ways:
 // (1) it swept the RouterRegistry first-non-null, handing the FIRST router's
 // id and route map to every Static handler regardless of ownership; (2) it
-// passes `$$routePrefix` — a name PREFIX ("scope"), never present in the
-// root-scope registry — so even a router-scoped registry lookup degrades to
-// the `!prefix.includes(".")` heuristic. The fix stamps the definitive values
-// on the Static definition at mount time (stampStaticDefScope: $$routerId,
-// $$routeName, $$rootScoped) and the collector selects the owning router and
-// passes the stamped root-scope through.
+// passed a name PREFIX ("scope"), never present in the root-scope registry, so
+// even a router-scoped registry lookup degraded to the `!prefix.includes(".")`
+// heuristic. The fix stamps the definitive values on the Static definition at
+// mount time (stampStaticDefScope: $$routerId, $$routeName, $$rootScoped) and
+// the collector selects the owning router and passes the stamped root-scope
+// through.
 let resolved: string | undefined;
 let reverseError: unknown;
 
@@ -81,29 +81,31 @@ describe("bake-time root-scope isolation (issue #762)", () => {
     await generateManifestFull(patternsB, 1, { routerId: "bake-admin" });
 
     // Replicate the collector's EXACT production call on the OWNING router
-    // (prerender-collection.ts): full route name with the prefix fallback,
-    // and the def-stamped root-scope. Pre-fix this shape leaked "/foo": the
-    // stamps did not exist, the prefix-shaped fallback name is never in the
-    // root-scope registry, and the lookup fell to the no-dot heuristic.
+    // (prerender-collection.ts): the def's route name and its root-scope.
+    // Pre-fix this shape leaked "/foo": the stamps did not exist, the
+    // prefix-shaped argument was never in the root-scope registry, and the
+    // lookup fell to the no-dot heuristic.
     const def = staticDef as any;
     await routerA
       .renderStaticSegment(
         def.handler,
         def.$$id,
-        def.$$routeName ?? def.$$routePrefix,
+        def.$$routeName,
         undefined,
         undefined,
         def.$$rootScoped,
+        def.$$reverseScope,
       )
       .catch(() => {});
 
     expect(resolved).toBeUndefined();
     expect(reverseError).toBeTruthy();
 
-    // Mount-time stamps: the collector's ownership + scoping inputs.
+    // Mount-time stamps: the collector's ownership + scoping inputs. A path()
+    // mount carries its route name, never a segment scope.
     expect(def.$$routerId).toBe("bake-site");
     expect(def.$$routeName).toBe("scope.shared");
     expect(def.$$rootScoped).toBe(false);
-    expect(def.$$routePrefix).toBe("scope");
+    expect(def.$$reverseScope).toBeUndefined();
   });
 });

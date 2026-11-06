@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withReverseScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -23,7 +24,11 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -658,6 +663,13 @@ export async function matchForPrerender<TEnv = any>(
  * Creates a minimal BuildContext, calls the handler, and RSC-serializes
  * the component. Returns the encoded Flight string (or null on failure).
  * Used by the Vite plugin to collect static segment data at build time.
+ *
+ * `routeName` and `reverseScope` are the def's mount stamps: a `path()` mount
+ * bakes as a route handler (dot-local names resolve from `routeName`), a
+ * `layout()`/`parallel()` mount bakes as that structural entry does live
+ * (`withReverseScope`). Baking a structural def from a route name resolves one
+ * include too high — the name is not the route's, so dropping its last segment
+ * lands on the parent module.
  */
 export async function renderStaticSegment<TEnv = any>(
   handler: Function,
@@ -668,6 +680,7 @@ export async function renderStaticSegment<TEnv = any>(
   devMode?: boolean,
   routerId?: string,
   rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -736,11 +749,9 @@ export async function renderStaticSegment<TEnv = any>(
 
   return runWithRequestContext(minimalRequestContext, async () => {
     // Static handlers get only reverse, use(handle), and optionally env.
-    const buildCtx = createStaticContext<TEnv>(
-      mergedRouteMap,
-      routeName,
-      buildEnv,
-      devMode,
+    const buildCtx = withReverseScope(
+      createStaticContext<TEnv>(mergedRouteMap, routeName, buildEnv, devMode),
+      reverseScope,
     );
 
     // Set segment ID so handle pushes are keyed correctly

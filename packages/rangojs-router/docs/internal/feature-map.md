@@ -420,7 +420,7 @@ Internal API (`RangoInternal`, not exported):
 
 - `route()` macro expansion, `href()`, `href.<format>()`, `reverse()`, scoped reverse APIs
 - `AutofillAwareReverseFunction` (`types/handler-context.ts`): the `reverse` type of handlers, `LoaderContext` and `RequestContext` (global-name params optional; the runtime fills them from the matched route, none before the match)
-- Segment-scoped dot-local `ctx.reverse(".name")`: a layout, parallel slot or their loader resolves in the module that declares it, not the matched route's (`ReverseScope`, `server/context.ts`; the handler gets `withReverseScope(ctx, scope)`, `router/handler-context.ts`; see execution-model.md "Dot-local `ctx.reverse` follows the defining module"; `runLoader({ declaredIn })` in `@rangojs/router/testing` runs a loader in one)
+- Segment-scoped dot-local `ctx.reverse(".name")`: a layout, parallel slot or their loader resolves in the module that declares it, not the matched route's (`ReverseScope`, `server/context.ts`; the handler gets `withReverseScope(ctx, scope)`, `router/handler-context.ts`; see execution-model.md "Dot-local `ctx.reverse` follows the defining module"; `runLoader({ declaredIn })` in `@rangojs/router/testing` runs a loader in one). A `Static()` layout or slot bakes in the same scope (`stampStaticDefScope` stamps `$$reverseScope` on the def, `renderStaticSegment` applies it); a `path()`-mounted `Static()` keeps its route name
 - `GlobalReverseFunction`: the global-only `ctx.reverse` type of middleware and response-route handlers (no `include()` scope, no param auto-fill; `.name` is a type error)
 - `ProblemDetails` (RFC 9457) error type and response-route type extraction
 
