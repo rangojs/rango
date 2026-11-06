@@ -5,6 +5,7 @@ import {
   expectDeclinedBakedParamServedLive,
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
+  expectRedirectingRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
@@ -366,6 +367,12 @@ function defineOutcomesFlow(f: Fixture) {
     page,
   }) => {
     await expectFailedRefreshKeepsStoredPage(page, guideFixture(f));
+  });
+
+  test("a refresh whose render redirects is skipped-redirect, and the stored page keeps serving", async ({
+    page,
+  }) => {
+    await expectRedirectingRefreshKeepsStoredPage(page, guideFixture(f));
   });
 
   test("a Passthrough param the build handler declines is skipped-passthrough, and the live handler serves it", async ({

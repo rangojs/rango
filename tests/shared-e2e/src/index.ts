@@ -3960,6 +3960,43 @@ export async function expectFailedRefreshKeepsStoredPage(
 }
 
 /**
+ * A refresh whose render answers `redirect()` is `skipped-redirect`: a
+ * redirect can depend on the request (a session or auth check), so it does not
+ * show the page is gone. Nothing is written, neither a redirect nor a
+ * "removed" marker, so the page stored before keeps serving with the same
+ * stamp; a refresh that renders a page again replaces it.
+ */
+export async function expectRedirectingRefreshKeepsStoredPage(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("redirect");
+  const trigger = fixture.triggerUrl(slug);
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(page, trigger, "?redirect=1");
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+    });
+    // Not a failure: no error rides along, and the stored page is the one
+    // written before (same stamp, not re-rendered).
+    expect(redirected).not.toHaveProperty("error");
+    expect(await readStoredStamp(page, fixture, slug)).toBe(stamp);
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
+/**
  * A `Passthrough` build handler that calls `ctx.passthrough()` for a param:
  * the refresh is `skipped-passthrough`, the next request is served by the
  * live handler, and a second refresh answers the same.

@@ -58,6 +58,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", async () => {
 
 import { createRouter } from "../../router.js";
 import { Prerender } from "../../prerender.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { createHandle } from "../../handle.js";
 import { Skip } from "../../errors.js";
 import { hashParams } from "../../prerender/param-hash.js";
@@ -127,6 +128,13 @@ const router: any = createRouter<Record<string, never>>({
         loading(<p>loading</p>),
         errorBoundary(() => <p>declared error fallback</p>),
       ],
+    ),
+    path(
+      "/handler-redirects",
+      Prerender(() => {
+        throw redirect("/login");
+      }),
+      { name: "handlerRedirects" },
     ),
     path(
       "/photo",
@@ -285,6 +293,31 @@ describe("the build's prerender.onError policy treats it like a handler throw", 
     ["handler throw", "handlerThrows", "/handler-throws", "handler failed"],
     ["async child throw", "product", "/product", "reviews upstream down"],
   ] as const;
+
+  // A build-time render that redirects is unchanged: the Response is thrown
+  // out of the render, so prerender.onError decides, as for a handler throw.
+  it("a redirecting render: 'fail' (default) fails the build with the Response", async () => {
+    await expect(
+      build("handlerRedirects", "/handler-redirects", "fail"),
+    ).rejects.toBeInstanceOf(Response);
+    // A Response carries no message: notifyOnError wraps it in
+    // Error(String(response)) and the build rethrows the Response itself.
+    expect(onErrorCalls).toEqual([
+      { message: "[object Response]", phase: "prerender", meta: undefined },
+    ]);
+  });
+
+  it("a redirecting render: 'warn' skips the URL and bakes nothing", async () => {
+    const state = await build("handlerRedirects", "/handler-redirects", "warn");
+    expect(state.prerenderManifestEntries).toBeUndefined();
+    expect(onErrorCalls).toEqual([
+      {
+        message: "[object Response]",
+        phase: "prerender",
+        meta: { skipped: true },
+      },
+    ]);
+  });
 
   for (const [label, routeName, pattern, message] of cases) {
     it(`${label}: "fail" (default) fails the build with the original error`, async () => {

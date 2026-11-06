@@ -34,6 +34,7 @@ import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
+import { isRedirectThrow } from "../response-utils.js";
 import { isDataNotFoundError } from "../errors.js";
 
 /**
@@ -393,20 +394,42 @@ export async function matchForPrerender<TEnv = any>(
         const onFlightError = (error: unknown): void => {
           flightErrors.push(error);
         };
-        // The collected error to rethrow. On an on-demand refresh a failure
-        // goes ahead of a notFound(): a render that hit a missing item AND a
-        // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
-        const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+        // The outcome an on-demand refresh reports, out of everything the
+        // render reported: a failure ahead of a redirect ahead of a notFound().
+        // A render that redirected AND failed some other way must keep the page
+        // (render-failed), and one that redirected and hit a notFound() stores
+        // nothing (skipped-redirect): a redirect can depend on the request (a
+        // session or auth check), so it does not show the page is gone. A build
+        // or dev render keeps its throw (the caller's onError policy).
+        const preferOutcome = (outcomes: readonly unknown[]): unknown => {
+          if (!onDemand) return outcomes[0];
+          const failure = outcomes.find(
+            (e) => !isDataNotFoundError(e) && !isRedirectThrow(e),
+          );
+          if (failure !== undefined) return failure;
+          return outcomes.find((e) => isRedirectThrow(e)) ?? outcomes[0];
         };
+        // The collected error to rethrow.
+        const firstFlightError = (): unknown => preferOutcome(flightErrors);
+        // A streamed handler's rejection is settled before serialization: step
+        // 9 awaited every thenable component, and the segment it sits on awaits
+        // it again. Decide on all of them together, so segment order cannot
+        // pick which outcome a render reports.
+        if (onDemand) {
+          const settled = await Promise.allSettled(
+            nonLoaderSegments.map((segment) => segment.component),
+          );
+          const rejected = settled.flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+          );
+          if (rejected.length > 0) throw preferOutcome(rejected);
+        }
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
           onFlightError,
-        );
+        ).catch((error: unknown) => {
+          throw preferOutcome([error, ...flightErrors]);
+        });
         const personalized = flightErrors.find((e) =>
           isPrerenderPersonalizationError(e),
         );

@@ -62,6 +62,18 @@ export function isRedirectResponse(response: Response): boolean {
 }
 
 /**
+ * True when a thrown value is a redirect Response: the control-flow throw a
+ * handler uses to short-circuit (`redirect()`, or any 3xx carrying a Location,
+ * which `handleHandlerResult` throws). The prerender producer reports it as
+ * `skipped-redirect` rather than `render-failed` (create-prerender-trigger.ts).
+ * A Response from another realm is not recognized, as everywhere else the
+ * router tests `instanceof Response`.
+ */
+export function isRedirectThrow(value: unknown): value is Response {
+  return value instanceof Response && isRedirectResponse(value);
+}
+
+/**
  * Set a header on a response the router hands to the host, skipping a
  * WebSocket upgrade (its headers are not to be touched) and swallowing the
  * TypeError of immutable headers (a passed-through platform Response):

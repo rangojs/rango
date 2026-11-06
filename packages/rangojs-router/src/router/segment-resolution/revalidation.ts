@@ -836,8 +836,13 @@ async function resolveParallelSlotComponent<TEnv>(
           const result = runAsSegment(parallelId, run);
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
-            result.finally(doneHandler).catch(() => {});
-            component = trackStreamedHandler(deps, result, {
+            // A Response the handler resolves with (redirect()) is control
+            // flow, not a component to render: handleHandlerResult turns it
+            // into a rejection, which the boundary lane rethrows as it does
+            // for a route or layout handler's.
+            const handled = handleHandlerResult(result) as Promise<ReactNode>;
+            handled.finally(doneHandler).catch(() => {});
+            component = trackStreamedHandler(deps, handled, {
               boundaryEntry,
               segmentId: parallelId,
               segmentType: "parallel",
@@ -849,11 +854,19 @@ async function resolveParallelSlotComponent<TEnv>(
             });
           } else {
             doneHandler();
-            component = result as ReactNode;
+            component = handleHandlerResult(result);
           }
         } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
+          // A static value (a Promise included) goes to render as is. A
+          // handler's Response (redirect()) is control flow, as it is for
+          // every other handler kind: handleHandlerResult throws it, so the
+          // request short-circuits instead of rendering the Response into
+          // the tree (a Flight serialization error, #640's refresh would
+          // report it as render-failed).
+          component =
+            typeof handler === "function"
+              ? handleHandlerResult(await run())
+              : handler;
           doneHandler();
         }
       } catch (error) {

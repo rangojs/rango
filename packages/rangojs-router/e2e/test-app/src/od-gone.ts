@@ -13,3 +13,8 @@ export const failSlugs: Set<string> = new Set();
 // handler calls ctx.passthrough() for a slug in this set (?decline=1 /
 // ?decline=0 on /od-trigger), so a refresh is `skipped-passthrough`.
 export const declineSlugs: Set<string> = new Set();
+
+// And a render that answers redirect() for a slug in this set (?redirect=1 /
+// ?redirect=0): a request-dependent answer, so a refresh is `skipped-redirect`
+// and writes nothing.
+export const redirectSlugs: Set<string> = new Set();

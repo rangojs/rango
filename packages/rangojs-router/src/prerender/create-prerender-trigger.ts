@@ -26,6 +26,11 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
+ * - A render that answers a redirect Response stores nothing and reports
+ *   `skipped-redirect`: a redirect can depend on the request (a session or
+ *   auth check), so it does not show the page is gone. The stored page keeps
+ *   serving, like `skipped-personalized`; a render that redirected and also
+ *   failed some other way is `render-failed` and keeps it too.
  * - A page and a render's marker (a `notFound()` or a decline) carry the
  *   render's start as `storedAt`, so a `markStale()` that lands during the
  *   render marks the result; `staleAt` counts the ttl from the write. A
@@ -44,6 +49,7 @@ import { createCollectingExecutionContext } from "../cache/background-task.js";
 import { composeWarmResult, runWarmRequest } from "./warm.js";
 import { hashParams } from "./param-hash.js";
 import { isPrerenderPersonalizationError } from "./producer-guard.js";
+import { isRedirectThrow } from "../response-utils.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
@@ -558,6 +564,20 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
           ok: false,
           path: "on-demand",
           status: "skipped-personalized",
+          target: display,
+          routeName: match.routeName,
+        };
+      }
+      // A redirect is request-dependent control flow, not a failure of the
+      // page (the render short-circuits on it): store nothing, as for a
+      // personalized read, and leave the stored page serving. A render that
+      // also failed some other way never gets here: the producer rethrows the
+      // failure in preference to the redirect (prerender-match.ts).
+      if (isRedirectThrow(err)) {
+        return {
+          ok: false,
+          path: "on-demand",
+          status: "skipped-redirect",
           target: display,
           routeName: match.routeName,
         };

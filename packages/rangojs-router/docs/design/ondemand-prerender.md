@@ -41,7 +41,10 @@ adapters are in-memory + CF KV). One status was added beyond the original
 result union: `skipped-passthrough`, returned when a `Passthrough + onDemand`
 route's build handler returns `ctx.passthrough()` for the refreshed param (no
 shared payload to persist; the "removed" marker is stored so that the live
-handler serves it).
+handler serves it). A second, `skipped-redirect`, came with the rule that a
+redirecting render stores nothing (Producer Semantics); it replaced
+`render-failed` for that case, which made a sweep log a failure on every pass
+for a page that was fine.
 
 On-demand routes stay off the separate PPR shell lane in v1. A refresh can
 replace the durable segment payload, but it cannot atomically replace a cached
@@ -395,6 +398,10 @@ type PrerenderResult =
         | "no-match"
         | "no-store"
         | "skipped-personalized"
+        // The render answered redirect(): request-dependent, so nothing is
+        // written and the stored page keeps serving. `ok: false` like
+        // skipped-personalized, and distinct from render-failed.
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         | "skipped-passthrough"
         | "skipped-not-on-demand" // prerender.remove() only
@@ -509,6 +516,39 @@ the next deploy. On an on-demand run the producer reports a
 recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
+
+A redirect is not a failure either, and it is not a removal. A render that
+answers `redirect()` — from a route handler, a layout or parallel-slot handler,
+a `Passthrough` route's build handler, or a handler streaming behind
+`loading()` — is request-dependent control flow: the render short-circuited on
+an auth or session check, and the same URL renders a page for another visitor.
+So it says nothing about whether the page still exists. The refresh stores
+nothing, neither a redirect nor the "removed" marker, and reports
+`skipped-redirect`. The stored page keeps serving, and revalidates on its own
+schedule: its `ttl` and `tags`, a later refresh, or a sweep.
+
+One outcome wins when a render reports several. The producer decides from
+everything it saw: a failure (a real throw, or a personalization error) ahead
+of a redirect, and a redirect ahead of a `notFound()`. So a render that
+redirected and also failed some other way is `render-failed` and keeps the
+page, and one that redirected and hit a `notFound()` elsewhere stores nothing
+rather than a marker. Segment order never picks the outcome: every streamed
+handler's rejection is settled before the producer decides (`preferOutcome` in
+`prerender-match.ts`).
+
+The warm path is unchanged. A route that is not on-demand is refreshed by a
+request through the router, so a middleware redirect there is the answer an
+anonymous visitor gets: `render-failed` with `responseStatus: 302`
+(`prerender-every-route.md`).
+
+Build-time prerender is unchanged: a render that redirects at build time
+throws the Response out of `matchForPrerender`, so `prerender.onError`
+decides, as for a handler throw (#587). With the default `"fail"` the build
+fails with that Response (its console line reads `undefined`, since a Response
+has no `message`, and `onError` gets `Error("[object Response]")` with no
+`metadata`); with `"warn"` the URL is skipped, nothing is baked for it, and
+`onError` gets `metadata: { skipped: true }`. Only the on-demand refresh path
+reports `skipped-redirect`.
 
 ## Stored Payload
 
@@ -806,6 +846,14 @@ one entry that most needs a recheck.
   page's marker must not remove this one. Readers test `removed === true`, as
   the validator does; an envelope with an `entry` and any other `removed`
   value is a page.
+- **A redirect writes no marker.** Only `notFound()` (and a Passthrough
+  decline, below) says the page is gone. A `redirect()` from a handler is
+  request-dependent: an auth check sends one visitor to `/login` and renders
+  the page for another. Storing a marker on it would delete a live page for
+  everyone because one refresh happened to be anonymous, and the next
+  deploy's build-time entry would be masked too. The refresh returns
+  `skipped-redirect` and leaves the entry alone. A failure in the same render
+  wins over the redirect (`render-failed`, keeping the page).
 - **A store that cannot be read is a miss**, as for a page
   (`readVerifiedStoredEntry`). While the store is failing, the build-time
   entry of a removed page can serve. The alternative, failing the request
@@ -1054,7 +1102,10 @@ resolve env-scoped writable store
 run requestless prerender producer
   |
   +-- personalized --> skipped-personalized
-  +-- render failed --> render-failed (also when a notFound() happened too)
+  +-- render failed --> render-failed (a failure wins over a redirect and
+  |                     over a notFound() in the same render)
+  +-- redirect() --> nothing written --> skipped-redirect (no warm; the
+  |                  stored page keeps serving)
   +-- notFound() only --> write the "removed" marker, stamped with the
   |                       route's ttl and tags --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,

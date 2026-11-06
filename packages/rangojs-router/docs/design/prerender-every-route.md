@@ -720,6 +720,10 @@ export type PrerenderResult =
         | "skipped-unsupported-target"
         | "skipped-no-origin"
         | "skipped-personalized"
+        // On-demand only: the render answered redirect(), so nothing was
+        // written (ondemand-prerender.md, "Producer Semantics"). A warm that
+        // middleware redirects stays render-failed with responseStatus 302.
+        | "skipped-redirect"
         | "skipped-passthrough"
         | "skipped-store-not-shared"
         | "shell-not-stored"

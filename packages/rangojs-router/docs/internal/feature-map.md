@@ -1060,9 +1060,15 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
 - The producer reuses `matchForPrerender` without inheriting request state.
   Personalized reads map to `skipped-personalized`; failed renders and writes
   leave the previous entry intact (a `notFound()` is not a failure: it removes
-  the page, above). Its context carries the router's cache
-  versions (`_versions`), so `getCacheVersions()` inside a refresh answers like
-  a live request.
+  the page, above). A render that answers a redirect Response (`redirect()`,
+  `isRedirectThrow`) is `skipped-redirect`: it is request-dependent, so it
+  stores nothing, neither a page nor a marker, and the stored page keeps
+  serving. `preferOutcome` (`prerender-match.ts`) picks one outcome when a
+  render reports several: a failure ahead of a redirect ahead of a
+  `notFound()`, over every streamed handler's settled rejection and the
+  Flight-collected errors, so segment order never decides. Its context carries
+  the router's cache versions (`_versions`), so `getCacheVersions()` inside a
+  refresh answers like a live request.
 - Stores are plain get/set (`WritablePrerenderStore`): the trigger composes the
   `PrerenderStoredEntry` envelope and the serve path and `onlyIfStale` read
   verify every answer (shape, `key.version`, params collision guard on the

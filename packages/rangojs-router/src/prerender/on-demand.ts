@@ -195,6 +195,13 @@ export type PrerenderResult =
         // No prerender store (on-demand), or no `createRouter({ cache })` (warm).
         | "no-store"
         | "skipped-personalized"
+        // The render answered a redirect Response (redirect(), or any 3xx with
+        // a Location): a redirect can depend on the request (a session or auth
+        // check), so it says nothing about the page being gone. Nothing is
+        // written and the stored page keeps serving; a refresh that renders a
+        // page replaces it as usual. A render that redirected AND failed some
+        // other way is render-failed. On-demand path only.
+        | "skipped-redirect"
         | "skipped-unsupported-target"
         // The route (a Passthrough + onDemand route) returned ctx.passthrough()
         // for this param set: no shared payload to persist. The "removed"

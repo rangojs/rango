@@ -4,9 +4,15 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import {
+  declineSlugs,
+  failSlugs,
+  goneSlugs,
+  redirectSlugs,
+} from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -133,6 +139,9 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async (ctx) => {
     if (goneSlugs.has(ctx.params.slug)) notFound();
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
+    // A request-dependent answer (an auth check, say): the refresh stores
+    // nothing and reports skipped-redirect.
+    if (redirectSlugs.has(ctx.params.slug)) throw redirect("/login");
     const stamp = new Date().toISOString();
     return (
       <div data-testid="od-plain-detail">
@@ -156,8 +165,9 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
 // ?gone=0 (delete / restore the slug in the data source, so the next refresh
 // hits notFound() or renders again), ?fail=1 / ?fail=0 (the data source goes
-// down / comes back: a refresh throws something other than notFound()) and
-// repeated ?target=<path> (prerender.many(targets), the results as a JSON
+// down / comes back: a refresh throws something other than notFound()),
+// ?redirect=1 / ?redirect=0 (the render answers redirect() / renders again)
+// and repeated ?target=<path> (prerender.many(targets), the results as a JSON
 // array in target order).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
@@ -178,6 +188,12 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const redirectNow = ctx.searchParams.get("redirect");
+  if (redirectNow) {
+    if (redirectNow === "1") redirectSlugs.add(ctx.params.slug);
+    else redirectSlugs.delete(ctx.params.slug);
+    return Response.json({ redirect: redirectSlugs.has(ctx.params.slug) });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {

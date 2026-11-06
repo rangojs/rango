@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a redirecting on-demand prerender refresh keeps the page and reports `skipped-redirect`
+
+**Before.** `router.prerender()` on a `Prerender(..., { onDemand })` route whose
+render answered `redirect()` returned `render-failed`, the same result as a
+crash: a sweep logged a failure on every pass for a page that was fine. A
+parallel-slot handler's `Response` was not control flow at all: it was
+serialized into the segment, so it surfaced as a Flight serialization error
+("Only plain objects…") on a refresh, and as an error instead of a redirect on
+a live request.
+
+**Now.** A render that answers a redirect Response — from a route handler, a
+layout or parallel-slot handler, a `Passthrough` route's build handler, or a
+handler streaming behind `loading()` — stores nothing, neither a redirect nor
+a "removed" marker, and returns
+`{ ok: false, path: "on-demand", status: "skipped-redirect" }` with no
+`error`. A redirect can depend on the request (a session or auth check), so it
+says nothing about whether the page is gone. The page stored before keeps
+serving to documents and client navigations and revalidates on its own
+schedule (its `ttl` and tags, a later refresh, a sweep); a refresh that renders
+a page replaces it as usual. A render that redirects and also fails some other
+way is still `render-failed` and keeps the page, and one that also hits
+`notFound()` elsewhere stores nothing rather than a marker. Build-time
+prerender is unchanged: a redirecting build render still throws the Response,
+so `prerender.onError` decides. `PrerenderResult` gains the `skipped-redirect`
+status, and a slot handler's returned `Response` now short-circuits like every
+other handler kind's.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

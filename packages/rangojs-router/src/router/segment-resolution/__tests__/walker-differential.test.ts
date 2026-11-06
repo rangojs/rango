@@ -666,16 +666,34 @@ async function walk(
         store,
         requestContext,
         async (): Promise<Omit<Walk, "recorded">> => {
-          let result: { segments: ResolvedSegment[]; matchedIds: string[] };
           try {
-            if (walker === "fresh") {
-              const segments = await inStore(() => walkFresh(pass));
-              result = { segments, matchedIds: segments.map((s) => s.id) };
-            } else {
-              result = await inStore(() => walkRevalidating(pass));
-            }
+            const result =
+              walker === "fresh"
+                ? await inStore(() => walkFresh(pass)).then((segments) => ({
+                    segments,
+                    matchedIds: segments.map((s) => s.id),
+                  }))
+                : await inStore(() => walkRevalidating(pass));
+            const { segments, matchedIds } = result;
+            // Settling a segment's promise is part of the walk: a streamed
+            // handler's rejection (a slot handler's redirect()) surfaces
+            // here, not from resolveAllSegments.
+            return {
+              segments: await Promise.all(segments.map(project)),
+              delivered: await Promise.all(
+                delivered(walker, pass, segments, matchedIds).map(project),
+              ),
+              matchedIds,
+              lines: await Promise.all(segments.map(line)),
+            };
           } catch (error) {
-            const threw = (error as Error).message;
+            // A thrown Response (a handler's redirect(), which the walker
+            // short-circuits on) has no message: name its status, so the case
+            // that expects it reads.
+            const threw =
+              error instanceof Error
+                ? error.message
+                : `Response(${(error as Response).status})`;
             return {
               segments: [],
               delivered: [],
@@ -684,15 +702,6 @@ async function walk(
               threw,
             };
           }
-          const { segments, matchedIds } = result;
-          return {
-            segments: await Promise.all(segments.map(project)),
-            delivered: await Promise.all(
-              delivered(walker, pass, segments, matchedIds).map(project),
-            ),
-            matchedIds,
-            lines: await Promise.all(segments.map(line)),
-          };
         },
       );
       return { ...walked, recorded };
@@ -1278,16 +1287,14 @@ const CASES: Case[] = [
     metered: ["M0L0", "M0L0L0"],
   },
   {
-    name: "streamed slot handler returning a Response",
+    // A slot handler's Response is control flow (redirect()), as it is for a
+    // route or layout handler: settling the segment's promise throws it, in
+    // both passes. The harness counts any throw as a difference, and the two
+    // passes throw the same value.
+    name: "streamed slot handler returning a Response: both walks throw it",
     pathname: "/slot-response",
-    fresh: [
-      "M0L0 layout",
-      'M0L0L0 layout "root"',
-      'M0L0L0L4 layout "response slot"',
-      "M0L0L0L4.@response parallel",
-      'M0L0L0L4R0 route "slot response"',
-    ],
-    expected: {},
+    fresh: ["threw: Response(204)"],
+    expected: { unnamed: ["threw: Response(204) | Response(204)"] },
   },
 ];
 

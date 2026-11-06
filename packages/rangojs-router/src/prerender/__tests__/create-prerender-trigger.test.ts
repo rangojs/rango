@@ -18,6 +18,7 @@ import type { PrerenderConfig } from "../on-demand.js";
 import { readWarmMark, type PrerenderWarmRecord } from "../warm-request.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
 import type { SegmentCacheStore } from "../../cache/types.js";
+import { redirect } from "../../route-definition/redirect.js";
 
 // A minimal producer output for a route named "products.detail" with { id }.
 function output(overrides: Partial<ProducerOutput> = {}): ProducerOutput {
@@ -233,6 +234,64 @@ describe("createPrerenderTrigger", () => {
       status: "skipped-personalized",
     });
     expect(store.size).toBe(0);
+  });
+
+  it("maps a redirect throw to skipped-redirect and writes nothing", async () => {
+    let redirecting = false;
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        if (redirecting) throw redirect("/login");
+        return output();
+      },
+    });
+    expect(await trigger("/products/42")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const stored = JSON.stringify(store.entries());
+
+    redirecting = true;
+    const result = await trigger("/products/42");
+    expect(result).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+      target: "/products/42",
+      routeName: "products.detail",
+    });
+    // Not a failure, so nothing carries an error, and the stored page is
+    // untouched (not rewritten, not replaced by a marker).
+    expect(result).not.toHaveProperty("error");
+    expect(JSON.stringify(store.entries())).toBe(stored);
+
+    // throwOnError surfaces the status, as it does for a personalized render.
+    await expect(
+      trigger("/products/42", { throwOnError: true }),
+    ).rejects.toMatchObject({ result: { status: "skipped-redirect" } });
+  });
+
+  it("keeps a non-redirect Response a render-failed", async () => {
+    const { trigger, store } = harness({
+      runProducer: async () => {
+        throw new Response("upstream", { status: 500 });
+      },
+    });
+    expect(await trigger("/products/42")).toMatchObject({
+      ok: false,
+      status: "render-failed",
+    });
+    expect(store.size).toBe(0);
+
+    // A 3xx with no Location is not a redirect either.
+    const { trigger: bare } = harness({
+      runProducer: async () => {
+        throw new Response(null, { status: 302 });
+      },
+    });
+    expect(await bare("/products/42")).toMatchObject({
+      ok: false,
+      status: "render-failed",
+    });
   });
 
   it("maps a passthrough sentinel to skipped-passthrough", async () => {

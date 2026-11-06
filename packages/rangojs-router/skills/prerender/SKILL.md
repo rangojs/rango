@@ -823,11 +823,13 @@ skips a fresh entry and returns `already-fresh`. The result is inspectable
 (`{ ok, path: "on-demand", status, key, tags, ttl }`); statuses are `rendered`,
 `already-fresh`, `removed` (the render hit `notFound()`, see "Remove a
 page"), `no-match`, `no-store`, `skipped-personalized`,
-`skipped-unsupported-target` (a target with `?search` or `#hash`),
+`skipped-redirect` (the render answered `redirect()`, see "A redirect is not a
+removal"), `skipped-unsupported-target` (a target with `?search` or `#hash`),
 `skipped-passthrough`, `render-failed` and `store-failed`. Every failure keeps
 the previous entry, except `skipped-passthrough`, which hands the page to the
-live handler. A `markStale()` that lands while a refresh renders marks the entry that
-refresh stores.
+live handler. `skipped-redirect` writes nothing at all: the stored page keeps
+serving, as it does for `skipped-personalized`. A `markStale()` that lands while
+a refresh renders marks the entry that refresh stores.
 
 A route that is not on-demand is not refused: the same call warms its runtime
 caches instead (see "Warm any route before traffic"). An on-demand route gets
@@ -963,6 +965,51 @@ user-generated content getting removed by its author. Note, `notFound`
 follows the same `revalidate` behavior described here."
 ([getStaticProps](https://nextjs.org/docs/pages/api-reference/functions/get-static-props))
 
+### A redirect is not a removal
+
+A render that answers `redirect()` says nothing about whether the page exists.
+An auth or session check sends one visitor to the login page and renders it for
+another, and a refresh runs requestless, so it is the anonymous visitor. The
+handler kind does not matter: a route handler, a layout or parallel-slot
+handler, a `Passthrough` route's build handler and a handler streaming behind
+`loading()` all reach the same rule.
+
+So a redirecting refresh stores nothing: no page, and no "removed" marker. The
+result is `{ ok: false, path: "on-demand", status: "skipped-redirect" }`, with
+no `error` (a redirect is control flow, not a failure of the page). The page
+stored before keeps serving, to documents and to client navigations, until its
+`ttl` and `tags`, a later refresh or a sweep revalidates it. That is
+`skipped-personalized`'s rule, for the same reason: a request-dependent answer
+must not decide what every visitor is served.
+
+```typescript
+const ProductPage = Prerender(
+  async () => [{ id: "featured" }],
+  async (ctx) => {
+    // A session or auth check: request-dependent, so it answers differently
+    // for a refresh (requestless) than for a visitor.
+    if (!(await isPublic(ctx.env, ctx.params.id))) throw redirect("/login");
+    return <Product data={await loadProduct(ctx)} />;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`product:${params.id}`] } },
+);
+
+await prerender("/products/42"); // { ok: false, status: "skipped-redirect" }
+```
+
+One outcome wins when a render reports several: a failure ahead of a redirect,
+a redirect ahead of a `notFound()`. So a render that redirects and also fails
+some other way is `render-failed` and keeps the page, and one that redirects
+and also hits `notFound()` elsewhere stores nothing rather than a marker.
+
+At build time nothing changes: a `Prerender` render that redirects throws the
+Response out of the build, so `prerender.onError` decides, as for any other
+render error. The default `"fail"` fails the build with that Response (the
+console line reads `undefined`, because a Response has no `message`, and
+`onError` gets `Error("[object Response]")`); `"warn"` skips that URL, bakes
+nothing for it and calls `onError` with `metadata: { skipped: true }`. Only the
+on-demand refresh reports `skipped-redirect`.
+
 ### What is served
 
 | Request finds                     | `Prerender(..., { onDemand })`                              | `Passthrough(def, live)`                   |
@@ -1013,7 +1060,10 @@ in dev. A removed page is the exception: its marker answers 404 in dev too.
   from webhooks before refreshing them.
 - **A throw in a refresh keeps the old entry** (`render-failed`). A
   `notFound()` on its own is not a failure: it removes the page (see "Remove
-  a page").
+  a page"). A `redirect()` on its own is neither: it is request-dependent, so
+  the refresh returns `skipped-redirect` and writes nothing (see "A redirect is
+  not a removal"). A failure in the same render wins over a redirect, and a
+  redirect wins over a `notFound()`.
 - **Intercepted navigations are not refreshed.** A refresh writes the main
   variant only; an intercept navigation still serves the build's intercept
   variant, and an on-demand route used as an intercept target 404s on a param
