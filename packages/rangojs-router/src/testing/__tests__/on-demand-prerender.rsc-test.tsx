@@ -25,7 +25,9 @@ import {
   cookies,
   createLoader,
   createRouter,
+  Passthrough,
   Prerender,
+  redirect,
   urls,
 } from "../../index.rsc.js";
 import { getCacheVersions } from "../../cache/index.js";
@@ -37,7 +39,14 @@ import type {
 } from "../../prerender/index.js";
 
 /** Producer renders and loader runs, to tell a stored payload from a render. */
-const counts = { producer: 0, loader: 0 };
+const counts = { producer: 0, loader: 0, moved: 0, live: 0 };
+
+/**
+ * The pages whose URL changed: slug -> the slug the app redirects to. A slug
+ * in here makes the producer answer `redirect()` instead of a page, which is
+ * how an app sends a visitor to the page's new address.
+ */
+const moved = new Map<string, string>();
 
 const StampLoader = createLoader(async () => {
   counts.loader += 1;
@@ -85,6 +94,40 @@ const VersionsDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+// A route whose handler may redirect instead of answering a page. A Prerender
+// handler returns a ReactNode, so a redirect is thrown, as notFound() is.
+const MovedDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const target = moved.get(ctx.params.slug);
+    if (target !== undefined) throw redirect(`/article/${target}`, 308);
+    counts.moved += 1;
+    return <h1>{`${ctx.params.slug}:stamp-${counts.moved}`}</h1>;
+  },
+  { onDemand: { ttl: 3600, tags: ({ params }) => [`article:${params.slug}`] } },
+);
+
+// The same answer from a Passthrough route's build handler: the stored
+// redirect answers, and the live handler (which would render per request) is
+// not run.
+const MovedLive = Passthrough(MovedDef, async (ctx) => {
+  counts.live += 1;
+  return <h1>{`live:${ctx.params.slug}`}</h1>;
+});
+
+// An off-host redirect with redirect()'s explicit opt-in: the serve path has
+// to carry it, or the open-redirect guard rewrites the target to the app root.
+const OffHostDef = Prerender<{ slug: string }>(
+  async () => [],
+  async () => {
+    throw redirect("https://accounts.example.com/session", {
+      status: 302,
+      external: true,
+    });
+  },
+  { onDemand: true },
+);
+
 function makeRouter(
   config: PrerenderConfig,
   options: { id?: string; version?: string } = {},
@@ -97,6 +140,9 @@ function makeRouter(
       path("/personalized/:slug", PersonalizedDef, { name: "personalized" }),
       path("/versions/:slug", VersionsDef, { name: "versions" }),
       path("/hot/:slug", HotDef, { name: "hot" }),
+      path("/moved/:slug", MovedDef, { name: "moved" }),
+      path("/moved-live/:slug", MovedLive, { name: "movedLive" }),
+      path("/off-host/:slug", OffHostDef, { name: "offHost" }),
     ]),
   );
 }
@@ -109,6 +155,9 @@ describe("on-demand prerender: router.prerender() then serve", () => {
     store = createMemoryPrerenderStore();
     counts.producer = 0;
     counts.loader = 0;
+    counts.moved = 0;
+    counts.live = 0;
+    moved.clear();
     holdRender = undefined;
   });
 
@@ -174,6 +223,112 @@ describe("on-demand prerender: router.prerender() then serve", () => {
 
     const other = await serveShellRequest(router, "/article/b");
     expect(other.body).not.toContain("a:stamp-1");
+  });
+
+  // A page whose URL changed: the handler answers redirect(), the way an app
+  // sends a visitor (and a crawler) to the page's new address. The refresh
+  // stores that answer, so the URL stops serving the page a previous refresh
+  // stored and answers the redirect without rendering per request.
+  it("a refresh whose handler redirects stores the redirect: the URL answers it, not the page stored before", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    expect(await prerender("/moved/a")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const page = await serveShellRequest(router, "/moved/a");
+    expect(page.response.status).toBe(200);
+    expect(page.flight).toContain("a:stamp-1");
+
+    // The page moved. A refresh now answers redirect() instead of a page.
+    moved.set("a", "b");
+    try {
+      expect(await prerender("/moved/a")).toMatchObject({
+        ok: true,
+        path: "on-demand",
+        status: "redirected",
+        target: "/moved/a",
+        routeName: "moved",
+        redirect: { status: 308, location: "/article/b" },
+      });
+
+      // The visitor gets the redirect: not the page stored a moment ago, and
+      // not a render per request (the producer ran once, for the refresh).
+      // Nothing rides along: no body, no Flight payload.
+      const redirected = await serveShellRequest(router, "/moved/a");
+      expect(redirected.response.status).toBe(308);
+      expect(redirected.response.headers.get("location")).toBe("/article/b");
+      expect(redirected.body).toBe("");
+      expect(redirected.flight).toBeUndefined();
+      expect(counts.moved).toBe(1);
+
+      // A client navigation is answered the same way a handler's redirect is:
+      // a soft redirect the router follows, not a 3xx the fetch would.
+      const partial = await serveShellRequest(router, "/moved/a", {
+        partial: true,
+      });
+      // The soft redirect carries the absolute same-origin target, as it does
+      // for a handler's redirect on a client navigation.
+      expect(partial.response.headers.get("x-rsc-redirect")).toBe(
+        "http://localhost/article/b",
+      );
+      expect(counts.moved).toBe(1);
+    } finally {
+      moved.delete("a");
+    }
+
+    // Moved back: a refresh replaces the redirect with the page.
+    expect(await prerender("/moved/a")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    const back = await serveShellRequest(router, "/moved/a");
+    expect(back.response.status).toBe(200);
+    expect(back.flight).toContain("a:stamp-2");
+  });
+
+  // The other route kind: a Passthrough route's stored redirect answers too,
+  // and the live handler (a render per request) is not run for it.
+  it("a Passthrough route's stored redirect answers, not its live handler", async () => {
+    const router = makeRouter({ store });
+    moved.set("a", "b");
+    try {
+      expect(
+        await router.prerender({ env: {} })("/moved-live/a"),
+      ).toMatchObject({ ok: true, status: "redirected" });
+
+      const redirected = await serveShellRequest(router, "/moved-live/a");
+      expect(redirected.response.status).toBe(308);
+      expect(redirected.response.headers.get("location")).toBe("/article/b");
+      expect(counts.live).toBe(0);
+    } finally {
+      moved.delete("a");
+    }
+  });
+
+  // redirect(url, { external: true }) is an out-of-band opt-in on the Response
+  // object (redirect-origin.ts). The serve path builds its own Response, so it
+  // has to carry the flag or the open-redirect guard sends the visitor to the
+  // app root instead of the off-host target.
+  it("an off-host redirect keeps redirect()'s external opt-in across the store", async () => {
+    const router = makeRouter({ store });
+
+    expect(await router.prerender({ env: {} })("/off-host/a")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: {
+        status: 302,
+        location: "https://accounts.example.com/session",
+        external: true,
+      },
+    });
+
+    const redirected = await serveShellRequest(router, "/off-host/a");
+    expect(redirected.response.status).toBe(302);
+    expect(redirected.response.headers.get("location")).toBe(
+      "https://accounts.example.com/session",
+    );
   });
 
   describe("the trigger and the request handler use one key version", () => {

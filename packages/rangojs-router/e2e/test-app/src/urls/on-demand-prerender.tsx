@@ -4,9 +4,15 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import {
+  declineSlugs,
+  failSlugs,
+  goneSlugs,
+  redirectSlugs,
+} from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -127,11 +133,17 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
 // fall-through. od-plain-stamp is captured once per render (frozen-payload
 // proof); the FreshStampLoader value differs per request (loaders-fresh proof).
 // A slug the e2e deleted from the data source (goneSlugs) is a notFound(): a
-// refresh of it stores the "removed" marker.
+// refresh of it stores the "removed" marker. A slug whose page moved
+// (redirectSlugs) answers redirect(), which a refresh stores in place of the
+// page; a Prerender handler returns a ReactNode, so the redirect is thrown, as
+// notFound() is.
 export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "baked" }],
   async (ctx) => {
     if (goneSlugs.has(ctx.params.slug)) notFound();
+    if (redirectSlugs.has(ctx.params.slug)) {
+      throw redirect(`/on-demand-plain/${ctx.params.slug}-moved`, 308);
+    }
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
     const stamp = new Date().toISOString();
     return (
@@ -156,9 +168,10 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
 // ?gone=0 (delete / restore the slug in the data source, so the next refresh
 // hits notFound() or renders again), ?fail=1 / ?fail=0 (the data source goes
-// down / comes back: a refresh throws something other than notFound()) and
-// repeated ?target=<path> (prerender.many(targets), the results as a JSON
-// array in target order).
+// down / comes back: a refresh throws something other than notFound()),
+// ?redirect=1 / ?redirect=0 (the page moved / moved back: a refresh answers
+// redirect(), or renders the page again) and repeated ?target=<path>
+// (prerender.many(targets), the results as a JSON array in target order).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
   const { router } = await import("../router.js");
   const prerender = router.prerender({ env: ctx.env as AppEnv });
@@ -178,6 +191,12 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const redirecting = ctx.searchParams.get("redirect");
+  if (redirecting) {
+    if (redirecting === "1") redirectSlugs.add(ctx.params.slug);
+    else redirectSlugs.delete(ctx.params.slug);
+    return Response.json({ redirect: redirectSlugs.has(ctx.params.slug) });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {

@@ -6,10 +6,12 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageStopsServing,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
   type PrerenderOutcomesFixture,
+  type PrerenderRedirectFixture,
 } from "@shared/e2e";
 
 test.describe.configure({ mode: "serial" });
@@ -352,10 +354,24 @@ function defineRemoveFlow(f: Fixture) {
   });
 }
 
+// A page that moved: the refresh stores the redirect the handler answers, so
+// the URL stops serving the page a previous refresh stored. The body is shared
+// with packages/rangojs-router/e2e/on-demand-prerender.test.ts.
+const redirectFixture = (f: Fixture): PrerenderRedirectFixture => ({
+  ...guideFixture(f),
+  redirectLocation: (slug) => `/guide-plain/${slug}-moved`,
+});
+
 // Results with no page to show for them (#1060): many(), render-failed and
 // skipped-passthrough, on the KV store. The bodies are shared with
 // packages/rangojs-router/e2e/on-demand-prerender.test.ts.
 function defineOutcomesFlow(f: Fixture) {
+  test("a refresh whose handler redirects: the URL answers the redirect, not the page stored before", async ({
+    page,
+  }) => {
+    await expectRedirectedPageStopsServing(page, redirectFixture(f));
+  });
+
   test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
     page,
   }) => {

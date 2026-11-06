@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh of a page that now redirects answers the redirect instead of serving the page stored before
+
+**Before.** A `Prerender(..., { onDemand })` route whose handler answered
+`redirect()` (a product renamed, a slug moved) failed its refresh:
+`router.prerender("/products/42")` returned `{ ok: false, status:
+"render-failed" }` with the `Response` as its error, and the page stored by an
+earlier refresh kept serving the old URL. Nothing in the prerender store could
+hold a redirect, so the visitor kept seeing the page the handler had just
+moved away from.
+
+**Now.** A requestless render that answers `redirect()` stores the redirect in
+place of the page, and the URL answers it: `{ ok: true, status: "redirected",
+redirect: { status, location } }`, and every request after that is answered
+with that 3xx and `Location` without running the handler. It is stored like a
+page, not as a "removed" marker: a marker answers 404 on a plain on-demand
+route (its producer is gated off the request path), which would turn the move
+into a deletion. The route's `ttl` and `tags` stamp it, so `markStale()`,
+`onRevalidate` and an `onlyIfStale` sweep treat it like a page, and a later
+refresh replaces it with whatever the handler answers then (the page, once the
+move is undone). `redirect(url, { external: true })` keeps its opt-in, so an
+off-host target is not rewritten to the app root. A `Prerender` handler
+returns a `ReactNode`, so the redirect is thrown there, as `notFound()` is:
+
+```tsx
+const ProductDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const product = await db.product(ctx.params.slug);
+    if (!product) notFound();
+    if (product.movedTo) throw redirect(`/products/${product.movedTo}`, 308);
+    return <Product product={product} />;
+  },
+  { onDemand: { ttl: 60, tags: ({ params }) => [`product:${params.slug}`] } },
+);
+
+// A webhook after the rename:
+await router.prerender({ env })("/products/42");
+// { ok: true, status: "redirected", redirect: { status: 308, location: "/products/43" } }
+```
+
+A `Response` that is not a 3xx with a `Location` (a file response, a bare 200)
+is not a page and not a redirect: it stays `render-failed` and keeps the
+stored page, as before. Location state (`redirect(url, { state })`) is not
+carried into the stored redirect, and neither are other headers the handler
+put on its Response: a stored answer is the status and the target.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

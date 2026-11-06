@@ -35,6 +35,9 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
+import type { StoredRedirect } from "../prerender/writable-store.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +113,9 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /** On-demand only: the render answered `redirect()` and nothing else
+   *  failed. The trigger stores it in place of the page. */
+  redirect?: StoredRedirect;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -634,23 +640,64 @@ export async function matchForPrerender<TEnv = any>(
   );
   // A build or dev render keeps the throw (the caller's onError policy).
   if (!onDemand) return rendered;
-  // An on-demand refresh reports a notFound() anywhere in the render (a
-  // handler's throw, or the only kind of error Flight collected) as an
-  // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // An on-demand refresh reports two answers the trigger stores instead of a
+  // page, with the route's onDemand config so it can stamp them like one
+  // (create-prerender-trigger.ts):
+  // - a notFound() anywhere in the render (a handler's throw, or the only kind
+  //   of error Flight collected) -> the "removed" marker;
+  // - a redirect() (a 3xx Response thrown as control flow) -> the redirect.
+  // Anything else keeps the throw: it is render-failed and keeps the page.
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
-    return {
-      segments: [],
-      handles: "",
-      routeName: matched.routeKey,
-      params: matchedParams,
-      notFound: true,
-      onDemandConfig,
-    };
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    const redirect = redirectFromResponse(error);
+    if (redirect) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect,
+        onDemandConfig,
+      };
+    }
+    throw error;
   }
+}
+
+/**
+ * The redirect a thrown Response asks for, or undefined for any other throw.
+ *
+ * A handler, layout or parallel-slot handler that returns a Response has it
+ * thrown as control flow (`handleHandlerResult`, segment-resolution/helpers.ts),
+ * and `resolveWithErrorBoundary` rethrows Responses untouched. Only a 3xx with
+ * a `Location` is a redirect a requestless render can store; a response route's
+ * body, a file response or a bare 200 is not a page and stays render-failed.
+ *
+ * `external` carries `redirect(url, { external: true })`'s out-of-band opt-in
+ * (`redirect-origin.ts`), which the serve path re-applies to the Response it
+ * builds: without it the open-redirect guard rewrites an off-host `Location`
+ * to the app root.
+ */
+function redirectFromResponse(error: unknown): StoredRedirect | undefined {
+  if (!(error instanceof Response) || !isRedirectResponse(error)) {
+    return undefined;
+  }
+  return {
+    status: error.status,
+    location: error.headers.get("Location")!,
+    ...(isExternalRedirect(error) ? { external: true as const } : {}),
+  };
 }
 
 /**

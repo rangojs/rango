@@ -67,7 +67,10 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type StoredRedirect,
 } from "../../prerender/writable-store.js";
+import { markExternalRedirect } from "../../redirect-origin.js";
+import { prefixBasename } from "../basename.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
   PrerenderTargetObject,
@@ -148,6 +151,9 @@ async function ensurePrerenderDeps(): Promise<void> {
  *   newer than the client's copy: one that a refresh (possibly inside this
  *   very action) replaced. `stale`: it is past its soft `staleAt` (serves
  *   while a refresh is due).
+ * - `prerender-redirect`: the overlay holds a redirect, not a page: a refresh
+ *   whose render answered `redirect()`. Nothing is yielded for it; the
+ *   request is answered with that redirect.
  */
 type StoredSegmentSource =
   | {
@@ -158,7 +164,8 @@ type StoredSegmentSource =
       restoreHandles?: (sentIds: ReadonlySet<string>) => Promise<void>;
     }
   | { kind: "prerender-build"; entry: PrerenderEntry }
-  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean };
+  | { kind: "prerender-overlay"; entry: PrerenderEntry; stale: boolean }
+  | { kind: "prerender-redirect"; redirect: StoredRedirect };
 
 /**
  * Decode a prerender entry's segments and replay its handle data into the
@@ -517,6 +524,28 @@ async function* serveStoredSegments<TEnv>(
   }
   const source: StoredSegmentSource = stored;
 
+  // A stored redirect is not a stored page: nothing is rendered or replayed
+  // for it. It leaves as a thrown Response, the same control flow a handler's
+  // redirect() takes (match-handlers.ts absorbs it as a completed request and
+  // rethrows it to the caller that drives the response). `external` re-applies
+  // the opt-in the open-redirect guard reads off the Response object, which a
+  // stored one would otherwise lose (redirect-origin.ts).
+  if (source.kind === "prerender-redirect") {
+    const response = new Response(null, {
+      status: source.redirect.status,
+      // The render was requestless, so redirect() had no basename to prefix
+      // (its `_getRequestContext()?._basename` was unset): this request's
+      // basename is applied here, where redirect() would have applied it.
+      // prefixBasename is idempotent, so a stored path that already carries it
+      // is left alone.
+      headers: {
+        Location: prefixBasename(source.redirect.location, reqCtx?._basename),
+      },
+    });
+    if (source.redirect.external) markExternalRedirect(response);
+    throw response;
+  }
+
   const fromCache = source.kind === "segment-cache";
   const storedSends = fromCache
     ? undefined
@@ -849,6 +878,15 @@ async function readPrerenderSource<TEnv>(
           ctx.handlerContext as InternalHandlerContext<any, TEnv>
         )._prerenderRemoved = true;
         return null;
+      }
+      if (stored.redirect !== undefined) {
+        // The URL redirects: a refresh's render answered redirect(), so this
+        // request is answered with it and step 2 is skipped (the page below
+        // must not come back). Served as the Response the handler would have
+        // thrown (serveStoredSegments): a document request follows it, and the
+        // RSC handler turns the 3xx into a Flight redirect for a client
+        // navigation (interceptRedirectForPartial, rsc/helpers.ts).
+        return { kind: "prerender-redirect", redirect: stored.redirect };
       }
       return { kind: "prerender-overlay", entry: stored.entry, stale };
     }

@@ -6,10 +6,12 @@ import {
   expectDeclinedPassthroughParamServedLive,
   expectFailedRefreshKeepsStoredPage,
   expectManyReturnsOneResultPerTargetInOrder,
+  expectRedirectedPageStopsServing,
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
   type PrerenderOutcomesFixture,
+  type PrerenderRedirectFixture,
 } from "@shared/e2e";
 
 // On-demand (ISR-style) prerender: a Passthrough + `{ onDemand }` route serves
@@ -337,7 +339,22 @@ function defineRemoveTests(f: Fixture) {
 // Results with no page to show for them (#1060): many(), render-failed and
 // skipped-passthrough. The bodies are shared with
 // tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+// A page that moved (#…): the refresh stores the redirect the handler answers,
+// so the URL stops serving the page a previous refresh stored. The bodies are
+// shared with tests/cloudflare-basic/e2e/prerender-ondemand.test.ts.
+const redirectFixture = (f: Fixture): PrerenderRedirectFixture => ({
+  ...removeFixture(f),
+  redirectLocation: (slug) => `/on-demand-plain/${slug}-moved`,
+});
+
 function defineOutcomeTests(f: Fixture) {
+  test("a refresh whose handler redirects: the URL answers the redirect, not the page stored before", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await expectRedirectedPageStopsServing(page, redirectFixture(f));
+  });
+
   test("prerender.many() returns one result per target in order, and each rendered page then serves from the store", async ({
     page,
   }) => {

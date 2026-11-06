@@ -9,7 +9,10 @@
 
 import type { ExecutionContext } from "../types/request-scope.js";
 import type { IsEmptyObject, ParamsFor } from "../reverse.js";
-import type { WritablePrerenderStore } from "./writable-store.js";
+import type {
+  StoredRedirect,
+  WritablePrerenderStore,
+} from "./writable-store.js";
 import type { ShellCaptureRefusal } from "../rsc/shell-capture-constants.js";
 
 declare const prerenderTargetBrand: unique symbol;
@@ -159,8 +162,14 @@ export type PrerenderResult =
        * rechecked like a page. `onlyIfStale` finding a fresh marker reports
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
+       *
+       * `redirected`: the render answered `redirect()`, so the URL now answers
+       * that redirect instead of a page. The redirect is stored in place of
+       * the page, stamped with the route's `ttl` and `tags` and rechecked like
+       * one; `redirect` carries it. `onlyIfStale` finding a fresh one reports
+       * `already-fresh` (nothing was rendered) with `redirect` set.
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
@@ -168,6 +177,12 @@ export type PrerenderResult =
       tags: string[];
       /** Absent = never stale. */
       ttl?: number;
+      /**
+       * The redirect the URL answers with: set when the stored entry is one,
+       * whether this refresh wrote it (`redirected`) or found it fresh
+       * (`already-fresh`). Absent for a page or a "removed" marker.
+       */
+      redirect?: StoredRedirect;
       /**
        * The warm request that followed the store write. Absent when the app
        * store is not shared, no origin resolved, or nothing was rendered.

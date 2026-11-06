@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -14,6 +14,14 @@ export const guidePlainGoneKey = (slug: string): string =>
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
+/** KV key of a slug whose page moved: a refresh answers redirect(). */
+export const guidePlainRedirectKey = (slug: string): string =>
+  `gp-redirect:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/** Where a moved guide's URL sends a visitor. */
+export const guidePlainMovedTo = (slug: string): string =>
+  `/guide-plain/${slug}-moved`;
+
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
 // entry and no baked entry throws DataNotFoundError -> 404 (the retained
@@ -23,6 +31,9 @@ export const guidePlainFailKey = (slug: string): string =>
 // A slug the e2e deleted from the data source (guidePlainGoneKey, set by the
 // trigger's ?gone=1 op) is a notFound(): a refresh of it stores the "removed"
 // marker. Read only on a refresh, where ctx.env is the live env.
+// A slug whose page moved (guidePlainRedirectKey, the trigger's ?redirect=1 op)
+// answers redirect(), which a refresh stores in place of the page. A Prerender
+// handler returns a ReactNode, so the redirect is thrown, as notFound() is.
 export const GuidePlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "intro" }],
   async (ctx) => {
@@ -31,6 +42,12 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
       (await ctx.env.PRERENDER_KV.get(guidePlainGoneKey(ctx.params.slug)))
     ) {
       notFound();
+    }
+    if (
+      ctx.onDemand &&
+      (await ctx.env.PRERENDER_KV.get(guidePlainRedirectKey(ctx.params.slug)))
+    ) {
+      throw redirect(guidePlainMovedTo(ctx.params.slug), 308);
     }
     if (
       ctx.onDemand &&

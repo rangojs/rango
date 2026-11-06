@@ -108,12 +108,16 @@ async function lookup(options: {
   /** A client navigation (`_rsc_partial`), not a document request. */
   partial?: boolean;
   intercept?: boolean;
+  /** The request's router basename, as handler.ts stores it on the context. */
+  basename?: string;
   onRevalidate?: PrerenderConfig["onRevalidate"];
 }): Promise<{
   served: string[];
   state: MatchPipelineState;
   handlerContext: Record<string, unknown>;
   buildReads: number;
+  /** What the pipeline threw, if anything: a stored redirect's Response. */
+  thrown?: unknown;
 }> {
   let buildReads = 0;
   setPrerenderStoreForTests({
@@ -139,6 +143,7 @@ async function lookup(options: {
     url,
     variables: {},
   }) as RequestContext<any>;
+  if (options.basename) reqCtx._basename = options.basename;
   reqCtx._prerender = {
     config: {
       store,
@@ -172,17 +177,22 @@ async function lookup(options: {
     interceptSegments: [],
   } as unknown as MatchPipelineState;
   const served: string[] = [];
+  let thrown: unknown;
   await runWithRouterContext({ evaluateRevalidation: vi.fn() } as any, () =>
     runWithRequestContext(reqCtx, async () => {
-      for await (const segment of withCacheLookup(
-        ctx,
-        state,
-      )(gen([seg("HANDLER")]))) {
-        served.push(segment.id);
+      try {
+        for await (const segment of withCacheLookup(
+          ctx,
+          state,
+        )(gen([seg("HANDLER")]))) {
+          served.push(segment.id);
+        }
+      } catch (error) {
+        thrown = error;
       }
     }),
   );
-  return { served, state, handlerContext, buildReads };
+  return { served, state, handlerContext, buildReads, thrown };
 }
 
 const page = async (now: number, ttl?: number): Promise<PrerenderStoredEntry> =>
@@ -196,6 +206,15 @@ const page = async (now: number, ttl?: number): Promise<PrerenderStoredEntry> =>
 const tombstone = (now: number): PrerenderStoredEntry => ({
   v: 1,
   removed: true,
+  meta: { storedAt: now, tags: [], version: KEY.version, params: PARAMS },
+});
+/** A refresh whose handler answered redirect(), as the store hands it back. */
+const storedRedirect = (
+  now: number,
+  redirect = { status: 308, location: "/products/43" },
+): PrerenderStoredEntry => ({
+  v: 1,
+  redirect,
   meta: { storedAt: now, tags: [], version: KEY.version, params: PARAMS },
 });
 
@@ -214,6 +233,103 @@ describe("withCacheLookup: an on-demand route without a removed marker", () => {
     expect(served).toEqual(["OVERLAY"]);
     expect(state.cacheSource).toBe("prerender");
     expect(buildReads).toBe(0);
+  });
+});
+
+/**
+ * A refresh whose handler redirects stores the redirect: the URL answers it
+ * for every request, without a render, and the page a previous refresh stored
+ * (or the build-time entry) is not served instead.
+ */
+describe("withCacheLookup: a stored redirect answers the request", () => {
+  it("a document request is answered with the redirect, not the build-time entry", async () => {
+    const { served, state, buildReads, thrown } = await lookup({
+      overlay: storedRedirect,
+    });
+
+    expect(thrown).toBeInstanceOf(Response);
+    const response = thrown as Response;
+    expect(response.status).toBe(308);
+    expect(response.headers.get("location")).toBe("/products/43");
+    // Nothing is served from a store, and the bundled manifest is not read.
+    expect(served).toEqual([]);
+    expect(state.cacheHit).toBe(false);
+    expect(buildReads).toBe(0);
+  });
+
+  it("a client navigation is answered the same: the handler turns the 3xx into a Flight redirect", async () => {
+    const { served, thrown } = await lookup({
+      overlay: storedRedirect,
+      partial: true,
+    });
+
+    expect((thrown as Response).status).toBe(308);
+    expect(served).toEqual([]);
+  });
+
+  it("a plain route's server-action re-render is answered with it too", async () => {
+    const { served, thrown } = await lookup({
+      overlay: storedRedirect,
+      action: true,
+    });
+
+    expect((thrown as Response).status).toBe(308);
+    expect(served).toEqual([]);
+  });
+
+  it("a stale redirect schedules onRevalidate like a stale page, and still answers", async () => {
+    const onRevalidate = vi.fn();
+    const { served, thrown } = await lookup({
+      overlay: (now) => {
+        const stored = storedRedirect(now - 5000);
+        stored.meta.staleAt = now - 4000;
+        return stored;
+      },
+      onRevalidate,
+    });
+
+    await vi.waitFor(() => expect(onRevalidate).toHaveBeenCalledTimes(1));
+    expect(onRevalidate.mock.calls[0]![0]).toEqual({
+      route: "product",
+      params: PARAMS,
+    });
+    expect((thrown as Response).status).toBe(308);
+    expect(served).toEqual([]);
+  });
+
+  it("the Location carries this request's basename: the requestless render had none to prefix", async () => {
+    const { thrown } = await lookup({
+      overlay: storedRedirect,
+      basename: "/docs",
+    });
+
+    expect((thrown as Response).headers.get("location")).toBe(
+      "/docs/products/43",
+    );
+  });
+
+  it("a stored Location that already carries the basename is not prefixed twice", async () => {
+    const { thrown } = await lookup({
+      overlay: (now) =>
+        storedRedirect(now, { status: 302, location: "/docs/products/43" }),
+      basename: "/docs",
+    });
+
+    expect((thrown as Response).headers.get("location")).toBe(
+      "/docs/products/43",
+    );
+  });
+
+  it("a redirect stored for other params under the same key is a miss", async () => {
+    const { served, thrown } = await lookup({
+      overlay: (now) => ({
+        ...storedRedirect(now),
+        meta: { ...storedRedirect(now).meta, params: { id: "99" } },
+      }),
+    });
+
+    expect(thrown).toBeUndefined();
+    expect(served).toEqual(["BUILD"]);
   });
 });
 

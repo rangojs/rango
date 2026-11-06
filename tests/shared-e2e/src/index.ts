@@ -4029,6 +4029,83 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+
+/**
+ * What the redirect case needs on top of the outcome fixture:
+ * - `?redirect=1` / `?redirect=0` on the plain trigger make the producer answer
+ *   `throw redirect(redirectLocation(slug), 308)` / stop doing so, on an
+ *   on-demand render only (a build render must never see it).
+ * - `redirectLocation(slug)`: the pathname it redirects to.
+ */
+export interface PrerenderRedirectFixture extends PrerenderOutcomesFixture {
+  redirectLocation: (slug: string) => string;
+}
+
+/**
+ * A refresh whose handler answers `redirect()`: the page moved, and the URL
+ * says so instead of serving the page a previous refresh stored.
+ *
+ * The redirect is stored like a page (a visitor gets the 3xx, and the handler
+ * does not run per request), not as a "removed" marker: a marker answers 404
+ * on a plain on-demand route, whose producer is gated off the request path, so
+ * it would drop the redirect the handler asked for. A sweep with
+ * `onlyIfStale` leaves a fresh one and renders again once it is stale, and a
+ * refresh after the move is undone replaces it with the page.
+ */
+export async function expectRedirectedPageStopsServing(
+  page: Page,
+  fixture: PrerenderRedirectFixture,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const slug = pushProbe("moved");
+  const trigger = fixture.triggerUrl(slug);
+  const location = fixture.redirectLocation(slug);
+
+  // The page is stored, and serving.
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  try {
+    // The page moved. A refresh now answers redirect() instead of a page.
+    await removeTrigger(page, trigger, "?redirect=1");
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      target: fixture.path(slug),
+      redirect: { status: 308, location },
+    });
+
+    // The visitor gets the redirect, not the page stored a moment ago: a
+    // document request is answered 308 with the handler's Location, and no
+    // render of the page rides along.
+    const res = await page.request.get(fixture.pageUrl(slug), {
+      headers: PUSH_HTML_HEADERS,
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(308);
+    expect(res.headers()["location"]).toBe(location);
+    expect(await res.text()).not.toContain(
+      `data-testid="${fixture.slugTestId}"`,
+    );
+
+    // A sweep leaves the fresh redirect alone: nothing was rendered.
+    const swept = await removeTrigger(page, trigger, "?onlyIfStale=1");
+    expect(swept, JSON.stringify(swept)).toMatchObject({
+      ok: true,
+      status: "already-fresh",
+      redirect: { status: 308, location },
+    });
+  } finally {
+    await removeTrigger(page, trigger, "?redirect=0");
+  }
+
+  // Moved back: a refresh replaces the redirect with the page.
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
+
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
