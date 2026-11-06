@@ -1743,19 +1743,26 @@ export function runAsSegment<R>(segmentId: string | undefined, fn: () => R): R {
 
 /**
  * The segment code here runs for: the innermost runAsSegment scope, else the
- * request ctx's pin (a handler the walker awaits).
+ * segment `ctx` belongs to (`_handleSegmentId`), else `ctx`'s pin (a handler
+ * the walker awaits).
  *
- * `carried` is the segment the ctx a caller was invoked on belongs to, for a
- * reader that asks the object rather than the frame — a handle push through a
- * layout's or slot's ctx, which holds after the walker moved on
- * (handlePushSegment, router/loader-resolution.ts). The other readers pass
- * none and read the pin.
+ * The ctx answers before its pin because the code holding it can run after
+ * the walker moved the pin on: an async component a handler handed its ctx
+ * to pushes, starts a loader or calls "use cache" after the handler returned.
+ * A layout's, slot's or intercept's ctx carries its own segment
+ * (withSegmentScope, router/handler-context.ts) and the request's one handler
+ * ctx the route's once the route handler ran (resolveEntryHandler,
+ * revalidation.ts). So code that runs for another segment through the
+ * request's ctx runs inside that segment's scope: the walker's DSL loader
+ * starts (resolveOwnerLoaders) and every loader body (createLoaderExecutor).
  */
-export function segmentPinOf(
-  ctx: { _currentSegmentId?: string },
-  carried?: string,
-): string | undefined {
-  return segmentPinALS.getStore() ?? carried ?? ctx._currentSegmentId;
+export function segmentPinOf(ctx: {
+  _currentSegmentId?: string;
+  _handleSegmentId?: string;
+}): string | undefined {
+  return (
+    segmentPinALS.getStore() ?? ctx._handleSegmentId ?? ctx._currentSegmentId
+  );
 }
 
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).

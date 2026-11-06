@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -207,24 +208,24 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a route's, layout's or parallel slot's handler gets: a prototype
- * child of the request's one handler ctx that carries its own segment.
+ * The ctx a layout's, parallel slot's or intercept's handler gets: a
+ * prototype child of the request's one handler ctx that carries its own
+ * segment. (The route handler gets the request's ctx itself, which carries
+ * the route's segment: resolveEntryHandler, revalidation.ts.)
  *
- * The segment rides the object for the same reason the scope does: the walker
- * moves the shared `_currentSegmentId` on while an async component the handler
- * handed this ctx to is still rendering, so a push made through this ctx after
- * an `await` would otherwise file under (and a LateHandlePushError name)
- * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
- * router/loader-resolution.ts), which holds after an `await` and in a
- * component the ctx is handed to.
+ * The walker moves the shared `_currentSegmentId` on while an async component
+ * the handler handed this ctx to is still rendering, so code reaching this
+ * ctx after an `await` would otherwise run as (and a LateHandlePushError
+ * name) whatever segment the walker pinned since.
  *
- * The child owns `use` for that receiver: the shared implementation resolves
- * the segment off `this`, so a call that lost the receiver — `const { use } =
- * ctx`, `use` passed as a callback, `{ ...ctx }` — would file under the pin
- * the walker moved on. The wrapper supplies the child as the receiver, and
- * reads the base's `use` at call time because loader-cache.ts swaps it for
- * its override interceptor after the child exists.
+ * The child's `use` runs the base's as this segment's code (runAsSegment), so
+ * a handle push or a loader kickoff it makes files under this segment. It
+ * closes over the segment, not the receiver: `const { use } = ctx`,
+ * `props.use(H)`, `use` passed as a callback and a `{ ...ctx }` copy all keep
+ * it. It reads `base.use` per call because loader-cache.ts swaps that for its
+ * override interceptor after the child exists. `_handleSegmentId` is the same
+ * segment as data, for a reader handed the ctx rather than calling its `use`
+ * (a "use cache" call's caller segment, cache-runtime.ts).
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -236,24 +237,19 @@ export function withSegmentScope<C>(
   segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
-  const base = ctx as any;
-  const scoped = Object.create(ctx as object) as C & {
-    _handleSegmentId: string;
-    use: any;
-    reverse?: unknown;
-    _reverseScope?: ReverseScope;
-  };
+  const base = ctx as InternalHandlerContext<any, any>;
+  const scoped = Object.create(base) as InternalHandlerContext<any, any>;
   scoped._handleSegmentId = segmentId;
-  scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
-  };
+  scoped.use = ((item: any) =>
+    runAsSegment(segmentId, () => base.use(item))) as typeof base.use;
   if (scope !== undefined) {
-    scoped.reverse = scopeReverse(base.reverse, scope);
+    scoped.reverse = scopeReverse(
+      base.reverse as ScopableReverse,
+      scope,
+    ) as typeof base.reverse;
     scoped._reverseScope = scope;
   }
-  return scoped;
+  return scoped as C;
 }
 
 /**

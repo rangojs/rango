@@ -2596,38 +2596,52 @@ scope cannot reach: React renders the components that ctx was handed to after
 the handler returned, outside every scope, so the object is the only thing
 left to ask.
 
-A layout's and a slot's ctx is a `withSegmentScope` child that carries its
-segment as `_handleSegmentId`; a route's handler has no child, because its
-`{ ...ctx }` must copy the ctx's fields for a `"use cache"` call, so the
-walker stamps `_pushSegmentId` on the request's one ctx instead
-(`resolveEntryHandler`). `ctx.use` resolves the push segment off the
-receiver it was called on (`handlePushSegment`, `loader-resolution.ts`), and
-falls back to the ctx it was installed on — so a push from a component the
-handler handed its ctx to, and the dev `LateHandlePushError` it throws, names
-the handler's segment, not whichever segment the walker pinned since. The
+A layout's, a slot's and an intercept's ctx is a `withSegmentScope` child
+(`router/handler-context.ts`) whose own `use` runs the shared one inside
+`runAsSegment(itsSegment, …)`. It closes over the segment, not over the
+receiver, so the call keeps it however the component holds `use`:
+`ctx.use(H)`, `const { use } = ctx`, `props.use(H)` (whose receiver is the
+props object), `use` passed as a callback, or a `{ ...ctx }` copy, which
+copies the closure. It reads the base ctx's `use` per call, because
+`loader-cache.ts` swaps that for its override interceptor after the child
+exists. A loader the component starts through it is that segment's work too:
+its owner is read inside the same scope.
+
+A route's handler has no child, because its `{ ...ctx }` must copy the ctx's
+fields for a `"use cache"` call. The walker stamps the route's segment on the
+request's one ctx as `_handleSegmentId` instead (`resolveEntryHandler`). The
 route needs it as much as a layout does: it resolves before its orphan
 layouts and its parallels, so a route with a slot has the slot pinned by the
-time its component pushes.
+time its component pushes. A child carries its own `_handleSegmentId` too,
+the same segment as data.
 
-The receiver is what a caller can lose, so the child owns `use` too
-(`withSegmentScope`): `const { use } = ctx`, `use` passed on as a callback, or
-`{ ...ctx }` reaches the shared implementation without a receiver, and the
-child's own `use` supplies it. It reads the base ctx's `use` at call time,
-because `loader-cache.ts` swaps that for its override interceptor.
+The readers take `segmentPinOf(ctx)` (`server/context.ts`): the innermost
+scope's segment, else the ctx's `_handleSegmentId`, else its pin. They are a
+handle push's segment (`setupLoaderAccess`, and `setupBuildUse` for the
+build pass, which runs the same walker), a started loader's owning segment
+(`loaderOwner`, after a prefetch-deferred loader's registered owner) and the
+caller segment a `"use cache"` call records and replays under
+(`cache-runtime.ts`), so a HIT a component makes replays where its MISS's
+own push files. So a push from a component the handler handed its ctx to,
+and the dev `LateHandlePushError` it throws, names the handler's segment,
+not whichever segment the walker pinned since.
 
-The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin, and pass no carried segment: a started loader's owning
-segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
-and the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
-reading its pin.
+Because the request's one ctx answers the route once the route handler ran,
+code that runs for another segment through it must run inside that
+segment's scope, or it would file under the route. Every such site does:
+the walker starts a DSL loader inside its owning segment's scope
+(`resolveOwnerLoaders`), since a slot's or an orphan layout's loaders start
+after the route; a loader body runs inside its owner's; and every other
+handler gets a child.
 
-You might worry about runtimes that lose async context. The fallback is the
-ctx's own segment, else the pin, the behaviour before this scope: a lost
-store files a push where it filed before, never somewhere new. The request
-context's own ALS is not reused for this: `cache-tag.ts` and
-`cache-scope.ts` key WeakMaps by the request context's identity, so a derived
-request context per segment would split them.
+You might worry about runtimes that lose async context. A child's scope is
+opened inside its own `use` call and read in the same synchronous call, so it
+cannot be lost. Elsewhere the fallback is the ctx's own segment, else the
+pin, the behaviour before this scope: a lost store files a push where it
+filed before, never somewhere new. The request context's own ALS is not
+reused for this: `cache-tag.ts` and `cache-scope.ts` key WeakMaps by the
+request context's identity, so a derived request context per segment would
+split them.
 
 An intercept's handler and layout get a `withSegmentScope` child too
 (`intercept-resolution.ts`, and the build pass in `prerender-match.ts`): they
@@ -2642,9 +2656,11 @@ Pinned by `testing/__tests__/serve-shell-request-streamed-handle-owner.rsc-test.
 the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
-segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, through `ctx.use` and through a destructured `use`,
-and for a route whose slot resolves after its handler) and
+segment a `LateHandlePushError` names for a component a route, a layout, a
+slot and an intercept handed the ctx to, through `ctx.use`, a destructured
+`use`, a `{ ...ctx }` copy and `props.use`, for a loader such a component
+starts, for a `"use cache"` HIT it makes, and for a route whose slot
+resolves after its handler) and
 `server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
 (test-app and cloudflare-basic, dev and production) checks the message on the
 page.

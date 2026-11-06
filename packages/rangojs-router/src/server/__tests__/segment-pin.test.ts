@@ -35,4 +35,12 @@ describe("segmentPinOf", () => {
     ).toBe("L0");
     expect(runAsSegment(undefined, () => segmentPinOf(ctx))).toBe("R0.@side");
   });
+
+  it("the ctx's own segment answers before its pin, and a scope before both", () => {
+    // The request's one ctx after the route handler ran and the walker
+    // pinned the route's slot.
+    const ctx = { _currentSegmentId: "R0.@side", _handleSegmentId: "R0" };
+    expect(segmentPinOf(ctx)).toBe("R0");
+    expect(runAsSegment("R0.@side", () => segmentPinOf(ctx))).toBe("R0.@side");
+  });
 });

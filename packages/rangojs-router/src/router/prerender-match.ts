@@ -538,9 +538,9 @@ export async function matchForPrerender<TEnv = any>(
               interceptSegmentId;
 
             // The handler and layout get a ctx carrying the slot's
-            // segment: buildCtx carries the route's (_pushSegmentId), so a
+            // segment: buildCtx carries the route's (_handleSegmentId), so a
             // component they hand the ctx to would file its push under the
-            // route (handlePushSegment, router/loader-resolution.ts).
+            // route (segmentPinOf, server/context.ts).
             const interceptCtx = withSegmentScope(
               buildCtx,
               interceptSegmentId,

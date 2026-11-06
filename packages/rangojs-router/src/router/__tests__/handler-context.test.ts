@@ -24,7 +24,11 @@ import {
   stripInternalParams,
   withSegmentScope,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  segmentPinOf,
+  scopeReverse,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -623,40 +627,45 @@ describe("createReverseFunction", () => {
       expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
 
-    it("withSegmentScope: a detached `use` calls the base's current `use` with the child", () => {
-      const seen: Array<{ receiver: any; item: string }> = [];
+    it("withSegmentScope: `use` runs the base's current `use` as the segment, however it is called", () => {
+      // What the base's `use` sees as its segment: the request ctx's pin is
+      // elsewhere, so only the child's scope can answer the child's segment.
+      const seen: Array<{ item: string; segment: string | undefined }> = [];
       const ctx = {
         reverse: routeReverse(),
+        _currentSegmentId: "M0L0L0.@aside",
+        _handleSegmentId: "M0L0L0R0",
       } as unknown as InternalHandlerContext<any, any>;
-      const record = function (this: unknown, item: string) {
-        seen.push({ receiver: this, item });
+      (ctx as any).use = (item: string) => {
+        seen.push({ item, segment: segmentPinOf(ctx) });
         return item;
       };
-      (ctx as any).use = record;
-      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+      const scoped = withSegmentScope(ctx, "M0L0L0L0", undefined);
       // Swapped after the child exists, as loader-cache.ts swaps it: the
-      // wrapper must not have captured the old one.
-      const swapped = function (this: unknown, item: string) {
-        seen.push({ receiver: this, item: `swapped:${item}` });
+      // child must not have captured the old one.
+      const swapped = (item: string) => {
+        seen.push({ item: `swapped:${item}`, segment: segmentPinOf(ctx) });
         return item;
       };
       (ctx as any).use = swapped;
 
-      // A destructured `use` is called with no receiver at all.
-      const { use } = scoped as unknown as { use: (item: string) => string };
-      use("handle");
-      expect(seen).toHaveLength(1);
-      expect(seen[0]!.item).toBe("swapped:handle");
-      // The receiver carries the segment, which is what ctx.use files by.
-      expect(seen[0]!.receiver._handleSegmentId).toBe("M0L0L0R0");
-
-      // A copy carries the wrapper and the segment together.
-      const copy = { ...scoped } as unknown as {
-        use: (item: string) => string;
-      };
-      copy.use("copied");
-      expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0");
-      // The shared ctx keeps the record it had.
+      const use = scoped.use as unknown as (item: string) => string;
+      // A method call, a destructured `use` (no receiver), a call through
+      // another object (`props.use(H)`), a callback and a spread copy.
+      (scoped as any).use("method");
+      use("detached");
+      ({ use }).use("props");
+      ["callback"].forEach((item) => use(item));
+      (({ ...scoped }) as any).use("copy");
+      expect(seen).toEqual(
+        ["method", "detached", "props", "callback", "copy"].map((item) => ({
+          item: `swapped:${item}`,
+          segment: "M0L0L0L0",
+        })),
+      );
+      // Outside the child's call the request ctx answers its own segment.
+      expect(segmentPinOf(ctx)).toBe("M0L0L0R0");
+      // The shared ctx keeps the `use` it had.
       expect((ctx as any).use).toBe(swapped);
     });
   });

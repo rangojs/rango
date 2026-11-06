@@ -17,7 +17,7 @@
  * segment pinned by the time its component pushes.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import React from "react";
+import React, { type ReactNode } from "react";
 
 vi.mock(
   "@vitejs/plugin-rsc/rsc/server",
@@ -31,12 +31,17 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
+import {
+  cachedCrumb,
+  cachedCrumbRuns,
+} from "./fixtures/streamed-handle-owner-data.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -83,14 +88,51 @@ async function LateCopyPush({
   return <span>{label}</span>;
 }
 
-/** How the component holds the ctx it was handed. */
-type Hold = "ctx" | "detached" | "copy";
+/**
+ * The same, handed `use` as a prop and calling it as `props.use(Handle)`: the
+ * call's receiver is the props object, not the ctx.
+ */
+async function LatePropPush(props: {
+  use: HandlerContext["use"];
+  label: string;
+}) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  props.use(Crumbs)(props.label);
+  return <span>{props.label}</span>;
+}
 
-const HOLD = {
+/** The same, starting a loader after the `await`; the loader pushes. */
+async function LateLoaderPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await ctx.use(PushingLoader);
+  return <span>{label}</span>;
+}
+
+const PushingLoader = createLoader(async (ctx) => {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  ctx.use(Crumbs)("loader");
+  return "loaded";
+});
+
+/** How the component holds the ctx it was handed. */
+type Hold = "ctx" | "detached" | "copy" | "prop" | "loader";
+
+const HOLD: Record<
+  Hold,
+  (props: { ctx: HandlerContext; label: string }) => Promise<ReactNode>
+> = {
   ctx: LatePush,
   detached: LateDetachedPush,
   copy: LateCopyPush,
-} as const;
+  prop: ({ ctx, label }) => LatePropPush({ use: ctx.use, label }),
+  loader: LateLoaderPush,
+};
 
 function makeRouter(hold: Hold) {
   const Push = HOLD[hold];
@@ -99,10 +141,45 @@ function makeRouter(hold: Hold) {
       errors.push(error instanceof Error ? error.message : String(error));
     },
   }).routes(
-    urls(({ path, layout, parallel }) => [
+    urls(({ path, layout, parallel, loading }) => [
       layout(
         () => <main>shell</main>,
         () => [
+          // Handlers the walker resolves after the route handler: an orphan
+          // layout and the route's own slot, beside one more slot after it.
+          path(
+            "/component-orphan",
+            () => <p>page</p>,
+            {
+              name: "componentOrphan",
+            },
+            () => [layout((ctx) => <Push ctx={ctx} label="orphan" />)],
+          ),
+          path(
+            "/component-route-slot",
+            () => <p>page</p>,
+            {
+              name: "componentRouteSlot",
+            },
+            () => [
+              parallel({ "@side": (ctx) => <Push ctx={ctx} label="slot" /> }),
+              parallel({ "@after": () => <aside>after</aside> }),
+            ],
+          ),
+          // A loading() route streams its handler: the walker resolves its
+          // slot while the handler still runs.
+          path(
+            "/component-streamed",
+            async (ctx) => {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              return <Push ctx={ctx} label="route" />;
+            },
+            { name: "componentStreamed" },
+            () => [
+              loading(<p>loading</p>),
+              parallel({ "@aside": () => <aside>aside</aside> }),
+            ],
+          ),
           layout(
             (ctx) => (
               <div>
@@ -151,11 +228,19 @@ async function matchedOf(flight: string | undefined): Promise<string[]> {
   return metadata.matched;
 }
 
-async function serve(url: string, hold: Hold) {
+async function serve(
+  url: string,
+  hold: Hold,
+  mode: "document" | "navigation" = "document",
+) {
   errors.length = 0;
   const result = await serveShellRequest(makeRouter(hold), url, {
     cacheStore: new MemorySegmentCacheStore(),
+    ...(mode === "navigation" ? { partial: true as const } : {}),
   });
+  // A navigation's handles stream after the response: read them to the end,
+  // which is after every late push was rejected.
+  await result.readHandles();
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
 
@@ -261,6 +346,160 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });
+
+  // `props.use(Handle)`: the call's receiver is the props object, so only a
+  // `use` that closes over its segment keeps it. A loader the component
+  // starts after the `await` is the handler's work too: its push files
+  // under the same segment.
+  for (const hold of ["prop", "loader"] as const) {
+    it(`the layout's, for ${hold === "prop" ? "`props.use(Handle)`" : "a loader the component starts"}`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-layout",
+        hold,
+      );
+      const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+      expect(latePushSegment(reported)).toBe(layout);
+    });
+
+    it(`the slot's, for ${hold === "prop" ? "`props.use(Handle)`" : "a loader the component starts"}`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-slot",
+        hold,
+      );
+      const slot = matched.find((id) => id.endsWith(".@panel"))!;
+      expect(latePushSegment(reported)).toBe(slot);
+    });
+
+    it(`the route's, for ${hold === "prop" ? "`props.use(Handle)`" : "a loader the component starts"} and a slot after the handler`, async () => {
+      const { errors: reported, matched } = await serve(
+        "/component-with-slot",
+        hold,
+      );
+      const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+      expect(latePushSegment(reported)).toBe(route);
+    });
+  }
+});
+
+describe("a LateHandlePushError from a handler the walker resolves after the route", () => {
+  const kinds = [
+    [
+      "the orphan layout's",
+      "/component-orphan",
+      (ids: string[]) => ids.filter((id) => /R\d+L\d+$/.test(id)).at(-1)!,
+    ],
+    [
+      "the route slot's",
+      "/component-route-slot",
+      (ids: string[]) => ids.find((id) => id.endsWith(".@side"))!,
+    ],
+    [
+      "the streamed route's",
+      "/component-streamed",
+      (ids: string[]) => ids.filter((id) => /R\d+$/.test(id)).at(-1)!,
+    ],
+  ] as const;
+  for (const mode of ["document", "navigation"] as const) {
+    for (const [owner, url, segmentOf] of kinds) {
+      for (const hold of ["ctx", "detached", "prop", "loader"] as const) {
+        it(`names ${owner} segment on a ${mode} (${hold})`, async () => {
+          const { errors: reported, matched } = await serve(url, hold, mode);
+          expect(latePushSegment(reported)).toBe(segmentOf(matched));
+        });
+      }
+    }
+  }
+});
+
+/**
+ * Each handler's own body calls a "use cache" function with its ctx on the
+ * first request, which stores the entry with its push; on the second, a
+ * component the handler handed its ctx to calls it after an `await` and
+ * HITs. The replayed push is late, and its message must name the segment a
+ * MISS's own push names: the handler's.
+ */
+function cachedRouter(phase: { late: boolean }) {
+  async function LateCached({ ctx }: { ctx: HandlerContext }) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await cachedCrumb(ctx, "cached");
+    return <span>cached</span>;
+  }
+  const handler = async (ctx: HandlerContext) => {
+    if (!phase.late) await cachedCrumb(ctx, "cached");
+    return phase.late ? <LateCached ctx={ctx} /> : <span>warm</span>;
+  };
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(handler, () => [
+            path("/cached-layout", () => <p>page</p>, {
+              name: "cachedLayout",
+            }),
+          ]),
+          layout(
+            () => <section>slot frame</section>,
+            () => [
+              parallel({ "@panel": handler }),
+              path("/cached-slot", () => <p>page</p>, { name: "cachedSlot" }),
+            ],
+          ),
+          path("/cached-route", handler, { name: "cachedRoute" }, () => [
+            parallel({ "@aside": () => <aside>aside</aside> }),
+          ]),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe('a "use cache" HIT a late component makes replays into its segment', () => {
+  const cases = [
+    [
+      "the layout's",
+      "/cached-layout",
+      (ids: string[]) => ids.filter((id) => /L\d+$/.test(id)).at(-1)!,
+    ],
+    [
+      "the slot's",
+      "/cached-slot",
+      (ids: string[]) => ids.find((id) => id.endsWith(".@panel"))!,
+    ],
+    [
+      "the route's",
+      "/cached-route",
+      (ids: string[]) => ids.filter((id) => /R\d+$/.test(id)).at(-1)!,
+    ],
+  ] as const;
+  for (const [owner, url, segmentOf] of cases) {
+    it(`${owner}, as its MISS names`, async () => {
+      const phase = { late: false };
+      const router = cachedRouter(phase);
+      const cacheStore = new MemorySegmentCacheStore();
+      cachedCrumbRuns.count = 0;
+      errors.length = 0;
+      await serveShellRequest(router, url, { cacheStore });
+      expect(errors).toEqual([]);
+      expect(cachedCrumbRuns.count).toBe(1);
+
+      phase.late = true;
+      const result = await serveShellRequest(router, url, { cacheStore });
+      const matched = await matchedOf(result.flight);
+      // The replay is rejected, then the body runs and its own push is
+      // rejected too: every message names the handler's segment.
+      const named = errors.map(
+        (message) =>
+          /for segment "([^"]+)" was pushed after/.exec(message)?.[1],
+      );
+      expect(named.length).toBeGreaterThan(0);
+      expect(named).toEqual(named.map(() => segmentOf(matched)));
+    });
+  }
 });
 
 /** An intercept whose handler hands its ctx to a late-pushing component. */
@@ -313,4 +552,61 @@ describe("a component an intercept handler handed its ctx to", () => {
     expect(latePushSegment([...errors])).toBe("M0L0L0.@modal");
     await result.readHandles();
   });
+});
+
+const OrphanLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("orphan-loader");
+  return "orphan";
+});
+
+/**
+ * The request's one ctx carries the route's segment once the route handler
+ * ran, and the walker starts an orphan layout's DSL loaders after that,
+ * through the same ctx: the start must still file the loader's pushes under
+ * the orphan.
+ */
+describe("a DSL loader the walker starts after the route handler", () => {
+  for (const mode of ["document", "navigation"] as const) {
+    it(`keeps its pushes in its owner's bucket on a ${mode}`, async () => {
+      const router = createRouter({}).routes(
+        urls(({ path, layout, loader }) => [
+          layout(
+            () => <main>shell</main>,
+            () => [
+              path(
+                "/owners",
+                (ctx) => {
+                  ctx.use(Crumbs)("route");
+                  return <p>owners</p>;
+                },
+                { name: "owners" },
+                () => [
+                  layout(
+                    (ctx) => {
+                      ctx.use(Crumbs)("orphan");
+                      return <section>orphan</section>;
+                    },
+                    () => [loader(OrphanLoader)],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ]),
+      );
+      const result = await serveShellRequest(router, "/owners", {
+        cacheStore: new MemorySegmentCacheStore(),
+        ...(mode === "navigation" ? { partial: true as const } : {}),
+      });
+      const { hydration, late } = (await result.readHandles())!;
+      const data = late.at(-1) ?? hydration;
+      const matched = await matchedOf(result.flight);
+      const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+      const orphan = matched.filter((id) => /R\d+L\d+$/.test(id)).at(-1)!;
+      expect(data[Crumbs.$$id]).toEqual({
+        [route]: ["route"],
+        [orphan]: ["orphan-loader", "orphan"],
+      });
+    });
+  }
 });

@@ -395,10 +395,10 @@ export async function resolveInterceptEntry<TEnv>(
   }
 
   // The handler and layout get a ctx carrying the slot's segment: the
-  // request's one ctx carries the route's (_pushSegmentId), so a component
+  // request's one ctx carries the route's (_handleSegmentId), so a component
   // either of them hands the ctx to would otherwise file its push under the
-  // route (handlePushSegment, router/loader-resolution.ts). The scope below
-  // covers the handler's own pushes; this covers the render after it.
+  // route (segmentPinOf, server/context.ts). The scope below covers the
+  // handler's own pushes; this covers the render after it.
   const slotContext = withSegmentScope(context, slotSegmentId, undefined);
   let handlerResult: ReactNode;
   try {
