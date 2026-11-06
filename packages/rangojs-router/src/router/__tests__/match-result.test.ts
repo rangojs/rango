@@ -456,6 +456,33 @@ describe("match-result", () => {
       expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
     });
 
+    // An intercept's slot segments ride in `slots` as well as in `segments`
+    // (intercept-resolution.ts writes the same objects there), so a marked
+    // slot — the live walk's, or the stored one a HIT serves — must be
+    // stripped in both places.
+    it("strips _handlerRan from the segments an intercept slot carries", () => {
+      const ctx = createMockContext({
+        isFullMatch: false,
+        clientSegmentIds: [],
+      });
+      const state = createPipelineState();
+      state.matchedIds = ["L0", "L0.@modal"];
+      const slot = createSegment("L0.@modal", {
+        type: "parallel",
+        slot: "@modal",
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      state.slots["@modal"] = { active: true, segments: [slot] };
+
+      const result = buildMatchResult([slot], ctx, state);
+
+      expect(result.resolvedIds).toEqual(["L0.@modal"]);
+      expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
+      const slotSegments = result.slots?.["@modal"]?.segments ?? [];
+      expect(slotSegments.map((s) => s.id)).toEqual(["L0.@modal"]);
+      expect(slotSegments.every((s) => !("_handlerRan" in s))).toBe(true);
+    });
+
     // #1103: the browser replaces the handle pushes of a loader that ran and
     // keeps those of a loader the response skipped, so resolvedIds names the
     // loaders that ran. A skipped loader is in matched only.

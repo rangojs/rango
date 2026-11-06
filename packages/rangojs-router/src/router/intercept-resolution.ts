@@ -487,7 +487,15 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  const slot = slotSegment(component, layoutElement);
+  // The handler ran (the fill branch above returns before this): the browser
+  // replaces the slot's handle values with the ones this response delivers,
+  // none when it pushed none (match-result.ts resolvedIds). A cache or
+  // prerender HIT marks the stored slot it serves the same way, so a slot
+  // re-rendered live and the same slot served from storage report the same
+  // resolvedIds (cache-lookup.ts serveStoredSegments).
+  slot._handlerRan = true;
+  return [slot, ...loaderSegments];
 }
 
 /**

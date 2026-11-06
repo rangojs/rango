@@ -1268,7 +1268,12 @@ which run made each one.
    is listed the same way (`cache-lookup.ts` `serveStoredSegments`): the
    browser replaces its pushes with the record's, none when the record holds
    none. A record does not carry the marker, so the list is derived from the
-   send decision on serve.
+   send decision on serve. An intercept's slot is the same on both sides:
+   `resolveInterceptEntry` (`router/intercept-resolution.ts`) marks the slot
+   its handler ran, so a slot the live walk re-renders and the stored slot a
+   HIT serves report the same ids. The slot's segment object also rides in the
+   payload's `slots`, so the marker is stripped there too
+   (`buildMatchResult` `slotsForPayload`).
 4. **The merge replaces runs, not buckets** (`mergePartialHandleData`, called
    by `setHandleData` for a partial update). A value counts for the handler,
    or for a loader when `matched` registers that loader on the segment
@@ -1358,7 +1363,11 @@ pins that a shared segment's crumb comes from the page on screen.
   the fifth (a held loader's rerun replaces its pushes in place) is the
   control.
 - `src/router/__tests__/match-result.test.ts`, "partial match resolvedIds
-  names the loader segments that ran".
+  names the loader segments that ran", and "strips `_handlerRan` from the
+  segments an intercept slot carries".
+- `src/testing/__tests__/cache-hit-resolved-ids.rsc-test.tsx`: a `cache()`
+  record HIT, a `Prerender()` HIT, a ppr shell replay and an intercept slot
+  (live and served) list what they serve, and the marker stays off the wire.
 - `src/server/__tests__/handle-store.test.ts`, "HandleStore pushedBy records
   (the run of each push)"; `src/handles/__tests__/deferred-resolution.test.ts`,
   "keeps the pushedBy record aligned with the values it drops".

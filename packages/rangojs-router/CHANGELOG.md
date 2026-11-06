@@ -15,8 +15,10 @@ of the same URL.
 **Now.** A stored segment a response serves is listed in `resolvedIds`, next
 to the handlers and loaders that ran, so the browser replaces that segment's
 handle values with the ones the response delivers (none when the record holds
-none). A segment the client keeps is still left out, as on a live navigation.
-Nothing else on the wire changes.
+none). An intercept's slot is listed the same way whether a hit serves it or
+the live walk re-renders it, so both report the same ids. A segment the client
+keeps is still left out, as on a live navigation, and the internal marker that
+drives the list stays off the wire.
 
 ## 0.35.0 (2026-11-04)
 

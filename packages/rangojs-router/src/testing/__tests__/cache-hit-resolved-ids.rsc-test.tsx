@@ -11,6 +11,11 @@
  * copies named fields only) and serveStoredSegments (cache-lookup.ts) never
  * set it, so a HIT listed none of its stored segments: a breadcrumb the MISS
  * that wrote the record cleared came back on every HIT of it.
+ *
+ * An intercept's slot is the one stored segment that also rides in the
+ * payload's `slots` (intercept-resolution.ts writes the same objects there),
+ * and the one the live walk re-renders on every request: it is covered here
+ * too, for the marker on the wire and for the ids a MISS and a HIT report.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -47,6 +52,9 @@ const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
 /** Whether the chain layout pushes its crumb on this request. */
 let chainPushes = true;
+
+/** Whether the intercept's modal handler pushes its crumb on this request. */
+let modalPushes = true;
 
 /** Handler runs per page, to tell a stored serve from a fresh render. */
 const runs = { list: 0, a: 0, b: 0, baked: 0, shelled: 0 };
@@ -181,6 +189,50 @@ const pprRouter = createRouter({}).routes(
   ]),
 );
 
+/**
+ * A cache() record whose route an intercept covers: the slot's handler runs
+ * on the live walk, and a HIT serves the stored slot.
+ */
+const interceptRouter = createRouter({}).routes(
+  urls(({ path, cache, layout, intercept }) => [
+    cache({ ttl: 600 }, () => [
+      layout(
+        (ctx: HandlerContext) => {
+          ctx.use(Crumbs)("root");
+          return <main>shell</main>;
+        },
+        () => [
+          path(
+            "/list",
+            (ctx: HandlerContext) => {
+              ctx.use(Crumbs)("list");
+              return <ul>list</ul>;
+            },
+            { name: "list" },
+          ),
+          path(
+            "/item/:id",
+            (ctx: HandlerContext<{ id: string }>) => {
+              ctx.use(Crumbs)("item");
+              return <article>item</article>;
+            },
+            { name: "item" },
+          ),
+          intercept(
+            "@modal",
+            ".item",
+            (ctx: HandlerContext) => {
+              if (modalPushes) ctx.use(Crumbs)("modal");
+              return <dialog>modal</dialog>;
+            },
+            () => [],
+          ),
+        ],
+      ),
+    ]),
+  ]),
+);
+
 interface Answer {
   matched: string[];
   resolvedIds?: string[];
@@ -264,6 +316,7 @@ async function documentOf(
 
 beforeEach(async () => {
   chainPushes = true;
+  modalPushes = true;
   for (const page of Object.keys(runs) as (keyof typeof runs)[]) {
     runs[page] = 0;
   }
@@ -355,6 +408,78 @@ describe("a cache() HIT lists the segments it serves in resolvedIds", () => {
       "chain",
       "b",
     ]);
+  });
+});
+
+describe("an intercept slot a HIT serves", () => {
+  it("keeps the internal marker off the wire", async () => {
+    const list = await documentOf(
+      interceptRouter,
+      "/list",
+      new MemorySegmentCacheStore(),
+    );
+    const cacheStore = new MemorySegmentCacheStore();
+    await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: list.matched },
+    });
+    const hit = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: list.matched },
+    });
+    const { answer, payload } = await readAnswer(hit);
+    // The stored slot is listed, and the same object rides in the payload's
+    // `slots`: the marker must be stripped from both.
+    expect(answer.resolvedIds).toContain("M0L0C0L0.@modal");
+    expect(payload).not.toContain("_handlerRan");
+  });
+
+  it("clears a crumb the record does not hold, and reports the ids its MISS reports", async () => {
+    const list = await documentOf(
+      interceptRouter,
+      "/list",
+      new MemorySegmentCacheStore(),
+    );
+    const partial = { from: "/list", segments: list.matched };
+
+    // The client opens the modal with the handler pushing its crumb.
+    const opened = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial,
+    });
+    const openedPage = await after(list.handles, opened);
+    expect(openedPage.crumbs).toContain("modal");
+
+    // A record written by the same navigation with the handler pushing
+    // nothing: the crumb it does not hold must not survive the HIT.
+    modalPushes = false;
+    const quietStore = new MemorySegmentCacheStore();
+    await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: quietStore,
+      partial,
+    });
+
+    // The same navigation again, with the client holding the old crumb: once
+    // rendered live (no record) and once served from the record.
+    const held = { from: "/list", segments: openedPage.matched };
+    const miss = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: held,
+    });
+    const missAnswer = (await readAnswer(miss)).answer;
+    const missPage = await after(openedPage.handles, miss);
+    const hit = await serveShellRequest(interceptRouter, "/item/1", {
+      cacheStore: quietStore,
+      partial: held,
+    });
+    const { answer, payload } = await readAnswer(hit);
+    const hitPage = await after(openedPage.handles, hit);
+
+    expect(hitPage.crumbs).not.toContain("modal");
+    expect(missPage.crumbs).toEqual(hitPage.crumbs);
+    // The slot's handler runs on the MISS and the HIT serves the stored slot:
+    // both list it, so the two report the same ids.
+    expect(answer.resolvedIds).toEqual(missAnswer.resolvedIds);
   });
 });
 

@@ -131,6 +131,49 @@ export async function collectSegments(
   return segments;
 }
 
+/**
+ * A segment as the payload carries it: the internal `_handlerRan` marker
+ * stripped (types/segments.ts). The same object can ride in more than one
+ * place — an intercept's slot segments are `state.slots` entries too
+ * (intercept-resolution.ts) — so every payload field strips it here rather
+ * than at the site that sets it.
+ */
+function withoutHandlerRan(segment: ResolvedSegment): ResolvedSegment {
+  if (segment._handlerRan === undefined) return segment;
+  const { _handlerRan: _drop, ...rest } = segment;
+  return rest as ResolvedSegment;
+}
+
+/**
+ * `state.slots` as the payload carries it. A slot holds the segment objects an
+ * intercept was resolved or served with, marker and all, and a cache or
+ * prerender HIT marks the slot it serves (cache-lookup.ts serveStoredSegments)
+ * as well as the slot its live walk re-rendered.
+ */
+function slotsForPayload(
+  slots: MatchPipelineState["slots"],
+): MatchPipelineState["slots"] | undefined {
+  const names = Object.keys(slots);
+  if (names.length === 0) return undefined;
+  let marked = false;
+  for (const name of names) {
+    if (slots[name].segments.some((s) => s._handlerRan !== undefined)) {
+      marked = true;
+      break;
+    }
+  }
+  if (!marked) return slots;
+  const stripped: MatchPipelineState["slots"] = {};
+  for (const name of names) {
+    const slot = slots[name];
+    stripped[name] = {
+      ...slot,
+      segments: slot.segments.map(withoutHandlerRan),
+    };
+  }
+  return stripped;
+}
+
 export function buildMatchResult<TEnv>(
   allSegments: ResolvedSegment[],
   ctx: MatchContext<TEnv>,
@@ -203,12 +246,7 @@ export function buildMatchResult<TEnv>(
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(withoutHandlerRan(s));
     diff.push(s.id);
   }
 
@@ -227,7 +265,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: slotsForPayload(state.slots),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
