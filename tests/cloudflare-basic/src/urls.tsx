@@ -388,6 +388,7 @@ import { interceptWhenShapePatterns } from "./pages/intercept-when-shape.js";
 import { interceptActionSelectPatterns } from "./pages/intercept-action-select.js";
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
+import { slotRedirectPatterns } from "./pages/slot-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { negotiationPatterns } from "./pages/negotiation.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
@@ -3338,6 +3339,13 @@ export const urlpatterns = urls(
         // Two pages that redirect to each other (client hop limit).
         include("/redirect-loop", redirectLoopPatterns, {
           name: "redirectLoop",
+        }),
+
+        // redirect() from a parallel() slot handler: a 302 on a document
+        // request and on a Link click, and a render-failed on-demand refresh
+        // that keeps the stored page.
+        include("/slot-redirect", slotRedirectPatterns, {
+          name: "slotRedirect",
         }),
 
         // Deferred-handle navigation contract + history-cache fixes

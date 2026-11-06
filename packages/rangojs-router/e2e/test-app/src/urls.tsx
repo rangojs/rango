@@ -86,6 +86,7 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { slotRedirectPatterns } from "./urls/slot-redirect.js";
 import { prefetchFalsePatterns } from "./urls/prefetch-false.js";
 import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
@@ -1515,6 +1516,13 @@ export const urlpatterns = urls(
       // a real HTTP redirect before the streamed loading() boundary takes over.
       include("/loading-redirect", loadingRedirectPatterns, {
         name: "loadingRedirect",
+      }),
+
+      // redirect() from a parallel() slot handler: a 302 on a document request
+      // and on a Link click, and a render-failed on-demand refresh that keeps
+      // the stored page.
+      include("/slot-redirect", slotRedirectPatterns, {
+        name: "slotRedirect",
       }),
 
       // prefetch: false on loader() and loading(): one page per case, with
