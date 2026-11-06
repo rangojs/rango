@@ -223,6 +223,9 @@ function createPrerenderPassthroughFn(
  * the module that declared the segment (`_reverseScope` keys a "use cache"
  * call that takes this ctx, cache-runtime.ts). Every other field reads
  * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ *
+ * Call it with the ctx `use` is installed on (the request's handler ctx, or
+ * the build ctx): the child's own `use` forwards to that object's live `use`.
  */
 export function withSegmentScope<C>(
   ctx: C,

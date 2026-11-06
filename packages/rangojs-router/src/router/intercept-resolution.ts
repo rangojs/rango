@@ -358,8 +358,8 @@ export async function resolveInterceptEntry<TEnv>(
 
   const { context, params } = pass;
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
-  // The pin the slot's loaders and handler put back after they ran: the
-  // entry the walker was resolving before this intercept.
+  // The pin to restore once the slot's handler returned: the entry the
+  // walker was resolving before this intercept.
   const internal = context as InternalHandlerContext<any, TEnv>;
   const pinned = internal._currentSegmentId;
   const { segments: loaderSegments } = await resolveInterceptLoaders(
