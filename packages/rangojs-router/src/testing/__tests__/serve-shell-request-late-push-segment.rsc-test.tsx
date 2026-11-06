@@ -211,12 +211,17 @@ async function serve(url: string, hold: Hold) {
   return serveOn(makeRouter(hold), url);
 }
 
+/** The segment a LateHandlePushError message names. */
+function segmentOf(reported: string): string {
+  const segment = /for segment "([^"]+)" was pushed after/.exec(reported);
+  expect(segment).not.toBeNull();
+  return segment![1]!;
+}
+
 /** The one LateHandlePushError the response reported, and its segment. */
 function latePushSegment(reported: string[]): string {
   expect(reported).toHaveLength(1);
-  const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
-  expect(segment).not.toBeNull();
-  return segment![1]!;
+  return segmentOf(reported[0]!);
 }
 
 /**
@@ -226,15 +231,7 @@ function latePushSegment(reported: string[]): string {
  */
 function latePushSegments(reported: string[]): string[] {
   expect(reported.length).toBeGreaterThan(0);
-  return [
-    ...new Set(
-      reported.map((one) => {
-        const segment = /for segment "([^"]+)" was pushed after/.exec(one);
-        expect(segment).not.toBeNull();
-        return segment![1]!;
-      }),
-    ),
-  ];
+  return [...new Set(reported.map(segmentOf))];
 }
 
 beforeEach(async () => {
