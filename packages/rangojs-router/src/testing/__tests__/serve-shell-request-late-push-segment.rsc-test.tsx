@@ -69,12 +69,27 @@ async function LateDetachedPush({
   return <span>{label}</span>;
 }
 
+/** The same, holding a spread copy of the ctx, as `{ ...ctx }` hands it on. */
+async function LateCopyPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const copy = { ...ctx };
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  copy.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 /** How the component holds the ctx it was handed. */
-type Hold = "ctx" | "detached";
+type Hold = "ctx" | "detached" | "copy";
 
 const HOLD = {
   ctx: LatePush,
   detached: LateDetachedPush,
+  copy: LateCopyPush,
 } as const;
 
 function makeRouter(hold: Hold) {
@@ -207,6 +222,33 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
 
   it("the route's, for a component that holds only `use` off the ctx", async () => {
     const { errors: reported, matched } = await serve("/component", "detached");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a component that holds a spread copy of the ctx", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout",
+      "copy",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a component that holds a spread copy of the ctx", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot",
+      "copy",
+    );
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the route's, for a component that holds a spread copy of the ctx", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-with-slot",
+      "copy",
+    );
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
   });
