@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render answers `redirect()` stops serving the page it replaced
+
+**Before.** `router.prerender(url)` on an on-demand route whose render answered
+`redirect()` came back `render-failed` and kept the stored page. A page that
+moved — a renamed product, a merged slug, a superseded article — kept serving
+its old content to every visitor, in every mode, until the next deploy or a
+refresh whose render stopped redirecting.
+
+**Now.** The render produced no page, but it did produce a target, so the
+target is stored in the page's place and reported as
+`{ ok: true, status: "redirected" }`, stamped with the route's `ttl` and `tags`
+like a page. From then on the URL answers that redirect: a document request
+gets the 3xx with its `Location`, a client navigation the soft redirect, an
+action's re-render navigates after the action ran. A later refresh that renders
+a page replaces it; one that hits `notFound()` replaces it with the "removed"
+marker; one that fails keeps it. A raw `Response` that is not a 3xx is not
+storable and stays `render-failed`.
+
+```ts
+// The handler answers redirect("/products/new-slug") on its next render.
+await router.prerender({ env })(`/products/${slug}`);
+// { ok: true, path: "on-demand", status: "redirected", ttl, tags }
+
+// GET /products/<slug>  ->  302, Location: /products/new-slug
+```
+
+A tombstone was the alternative and it answers 404 where the app said the URL
+moved. `redirect(url, { external: true })` keeps its off-host target.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

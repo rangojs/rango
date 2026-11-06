@@ -378,7 +378,10 @@ type PrerenderResult =
       // "removed": the "removed" marker is stored in place of the page, by
       // remove(), by a render that hit notFound(), or found fresh by
       // onlyIfStale. ok: true, so a sweep counts it.
-      status: "rendered" | "already-fresh" | "removed";
+      // "redirected": the render answered redirect() instead of a page, and
+      // that redirect is stored in the page's place (see "A Render That
+      // Answers A Redirect"). ok: true, and stamped like a page.
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       // opaque, for debugging and logs only -- not a stable format
@@ -510,6 +513,14 @@ recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
 
+Neither is a redirect. A render that answers `redirect()` is telling you where
+the URL goes now, and keeping the old entry would serve the page it moved away
+from until the next deploy. The producer reports it as an outcome too, and the
+trigger stores the redirect in the page's place and returns `redirected`. See
+"A Render That Answers A Redirect". Any other thrown Response is a failed
+render: its body is per-request content, and nothing about it can be stored for
+everyone.
+
 ## Stored Payload
 
 The payload the serve path reads is the same shape it already knows:
@@ -602,10 +613,17 @@ interface StoredEnvelope {
 
 type PrerenderStoredEntry =
   | (StoredEnvelope & { entry: PrerenderEntry }) // a refreshed page
-  | (StoredEnvelope & { removed: true }); // the page was removed: no entry
+  | (StoredEnvelope & { removed: true }) // the page was removed: no entry
+  // the render answered redirect() instead of a page: no entry either
+  | (StoredEnvelope & {
+      redirect: { location: string; status: number; external?: true };
+    });
 ```
 
 The second variant is the "removed" marker; "Removing A Page" has its rules.
+The third is the redirect a refresh's render answered with; "A Render That
+Answers A Redirect" has its rules, including why the `external` opt-in has to
+ride the entry.
 
 Two rules follow from the envelope:
 
@@ -926,6 +944,87 @@ even if there was a successfully generated page before. This is meant to
 support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
+
+## A Render That Answers A Redirect
+
+A product is renamed, a slug is merged, an article is superseded: the handler
+starts answering `redirect()` for a URL it used to render. On a refresh that
+used to come back `render-failed` and keep the old entry — the last good page
+is served, which is right for an outage and wrong for a move — so every
+visitor kept seeing the page the app had moved away from, in every mode, until
+the next deploy.
+
+The render produced no page, but it did produce a target. That target is what
+the URL answers from then on: a refresh whose render answers a redirect stores
+the redirect in the page's place, and reports
+`{ ok: true, path: "on-demand", status: "redirected", ... }` with the route's
+`tags` and `ttl`, like a page.
+
+```ts
+// prerender/create-prerender-trigger.ts
+const redirect = produced.redirect; // the producer's outcome, not a throw
+...
+: redirect
+  ? composeStoredRedirect(key, redirect, stamp, startedAt, writtenAt)
+  : composeStoredEntry(key, { segments, handles }, stamp, startedAt, writtenAt)
+```
+
+### Why a stored redirect and not a tombstone
+
+A tombstone is the cheaper answer, and it is the wrong one. It says the URL is
+gone, and a request that finds it is not served from any prerender store: on a
+plain `Prerender(..., { onDemand })` route the retained producer is gated, so
+the visitor gets a 404 where the app said "this moved to /products/new". It
+throws away the one thing the render told us. On a `Passthrough` route the
+marker runs the live handler instead, which re-derives the same redirect — so
+a tombstone is only right where a live path re-derives the answer, and a plain
+on-demand route has no live path.
+
+What makes a stored redirect safe is the personalization guard. A requestless
+render cannot read the request: `cookies()`/`headers()` raise
+`PrerenderPersonalizationError`, the refresh is `skipped-personalized` and the
+old entry stays. So a redirect that survives an on-demand render is
+data-driven — "the catalog says this slug is now that one" — and identical for
+every visitor. Serving it to all of them is the same claim a stored page makes.
+
+### What a visitor sees
+
+| Request               | Answer                                                                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| a document GET        | the 3xx the handler asked for (`redirect()`'s 302, or its `status`), with `Location` resolved by the same open-redirect guard as any document redirect |
+| a client navigation   | the soft redirect: 204 + `X-RSC-Redirect`, so the router navigates without a document load                                                             |
+| an action's re-render | the same soft redirect, after the action ran                                                                                                           |
+
+The page the redirect replaced is in none of them. `redirect(url, {
+ external: true })` stays off-host: the opt-in is an out-of-band brand on the
+Response object (`redirect-origin.ts`), which no store can keep, so `external`
+rides the entry and the serve path restores the brand (`storedRedirectResponse`
+in `match-middleware/cache-lookup.ts`). A stored redirect from a router that
+does not know the variant reads as malformed — a miss, so the build-time page
+under the overlay serves, exactly as the tombstone degrades.
+
+### What a later refresh does
+
+| Next refresh                        | Entry afterwards                                       | Visitor sees              |
+| ----------------------------------- | ------------------------------------------------------ | ------------------------- |
+| renders a page                      | the page                                               | the page again            |
+| answers a redirect again            | the redirect, re-stamped (`storedAt`, `staleAt`, tags) | the redirect              |
+| hits `notFound()`                   | the "removed" marker                                   | a 404 ("Removing A Page") |
+| throws anything else                | untouched (`render-failed`, replace-on-success)        | the redirect              |
+| `prerender.remove()`                | a permanent marker                                     | a 404                     |
+| `onlyIfStale` while fresh           | untouched, reports `redirected`                        | the redirect              |
+| `onlyIfStale` once stale, or marked | whatever that render produces                          | that                      |
+
+A redirect is rechecked like a page: it carries the route's `ttl` and `tags`,
+so `markStale()` reaches it and a stale hit schedules `onRevalidate`.
+
+### Failures still win
+
+A render can answer a redirect and fail somewhere else at once. The rule for a
+`notFound()` extends to it: a real failure goes first (`firstFlightError` in
+`router/prerender-match.ts`), so that render is `render-failed` and the page
+keeps serving. The trigger's own read-and-write narrowing covers a
+`prerender.remove()` that lands during the render, as it does for a page.
 
 ## Build-time Durable Seeding
 

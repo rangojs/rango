@@ -4029,6 +4029,85 @@ export async function expectDeclinedBakedParamServedLive(
   await page.goto(pageUrl(declineBakedSlug));
   await expect(source).toHaveText("prerender");
 }
+
+/**
+ * A refresh whose render answers `redirect()` instead of a page: the render
+ * produced no page, but it did produce a target, and that target is what the
+ * URL answers from then on — a document request and a client navigation alike
+ * — instead of the page it replaced (and instead of the build-time entry under
+ * the overlay). The redirect is stamped like a page (the route's ttl and
+ * tags), so a later refresh that renders the page again replaces it.
+ *
+ * The trigger's `?moved=1&to=<path>` op makes the plain route's handler answer
+ * `redirect(<path>)` for `slug` on its next render; `?moved=0` makes it render
+ * the page again. The target is another param of the same route, refreshed
+ * first, so the visitor can be followed all the way to the page it lands on.
+ */
+export async function expectRefreshStoresRedirect(
+  page: Page,
+  fixture: PrerenderOutcomesFixture,
+  slug: string,
+): Promise<void> {
+  using _ = guardHydrationErrors(page);
+  const trigger = fixture.triggerUrl(slug);
+  const landing = pushProbe("landing");
+  const landingPath = fixture.path(landing);
+  await refreshPage(page, fixture.triggerUrl(landing));
+
+  // A page first, so the redirect replaces one rather than filling a hole.
+  await refreshPage(page, trigger);
+  const stamp = await readStoredStamp(page, fixture, slug);
+
+  await removeTrigger(
+    page,
+    trigger,
+    `?moved=1&to=${encodeURIComponent(landingPath)}`,
+  );
+  try {
+    const redirected = await removeTrigger(page, trigger);
+    expect(redirected, JSON.stringify(redirected)).toMatchObject({
+      ok: true,
+      path: "on-demand",
+      status: "redirected",
+      target: fixture.path(slug),
+      tags: [fixture.tag(slug)],
+    });
+
+    // A document request answers the redirect, and the page it replaced is
+    // nowhere in the response.
+    const document = await page.request.get(fixture.pageUrl(slug), {
+      maxRedirects: 0,
+      headers: PUSH_HTML_HEADERS,
+    });
+    expect(document.status()).toBe(302);
+    expect(document.headers()["location"]).toBe(landingPath);
+    expect(await document.text()).not.toContain(
+      `data-testid="${fixture.stampTestId}"`,
+    );
+
+    // The visitor follows it to the page the app moved the URL to.
+    await page.goto(fixture.pageUrl(slug));
+    await waitForShellHydration(page);
+    expect(new URL(page.url()).pathname).toBe(landingPath);
+    await expect(byTestId(page, fixture.slugTestId)).toHaveText(landing);
+
+    // A client navigation gets it as a soft redirect, not a document load.
+    const partial = await page.request.get(
+      `${fixture.pageUrl(slug)}?_rsc_partial=true&_rsc_segments=M0L0`,
+      { maxRedirects: 0 },
+    );
+    expect(partial.status()).toBe(204);
+    expect(partial.headers()["x-rsc-redirect"] ?? "").toMatch(
+      new RegExp(`${landingPath}$`),
+    );
+  } finally {
+    await removeTrigger(page, trigger, "?moved=0");
+  }
+
+  // The page is back in the data source: a refresh replaces the redirect.
+  await refreshPage(page, trigger);
+  expect(await readStoredStamp(page, fixture, slug)).not.toBe(stamp);
+}
 export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";

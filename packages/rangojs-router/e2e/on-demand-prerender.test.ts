@@ -9,6 +9,7 @@ import {
   expectRemovedBakedPageAnswers404,
   expectRemovedPassthroughPageRunsLiveHandler,
   expectRemovedUnbakedPageAnswers404,
+  expectRefreshStoresRedirect,
   type PrerenderOutcomesFixture,
 } from "@shared/e2e";
 
@@ -360,6 +361,16 @@ function defineOutcomeTests(f: Fixture) {
     page,
   }) => {
     await expectDeclinedBakedParamServedLive(page, removeFixture(f));
+  });
+
+  test("a refresh whose render answers redirect() stores it: the URL redirects instead of serving the page it replaced", async ({
+    page,
+  }) => {
+    await expectRefreshStoresRedirect(
+      page,
+      removeFixture(f),
+      uniqueSlug("moved"),
+    );
   });
 }
 

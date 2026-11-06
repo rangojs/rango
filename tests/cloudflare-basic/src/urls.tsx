@@ -314,6 +314,7 @@ import {
   GuideSwrDef,
   guidePlainFailKey,
   guidePlainGoneKey,
+  guidePlainMovedKey,
 } from "./pages/guide-plain.js";
 import { guideDeclineKey } from "./pages/guides-handler.js";
 import { GuidePlainLoader } from "./loaders/guide-plain.js";
@@ -488,6 +489,9 @@ const GuidesTrigger: Handler<{ slug: string }> = async (ctx) => {
 //                          the next refresh hits notFound() or renders again
 //   ?fail=1 / ?fail=0   -> take the data source down / bring it back, so the
 //                          next refresh throws something other than notFound()
+//   ?moved=1&to=<path> / ?moved=0 -> the page moved to <path> / moved back:
+//                          the next refresh answers redirect(<path>), stored
+//                          in place of the page
 //   ?target=<path> (repeated) -> prerender.many(targets): the results as a
 //                          JSON array in target order
 const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -514,6 +518,21 @@ const GuidePlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") await ctx.env.PRERENDER_KV.put(failKey, "1");
     else await ctx.env.PRERENDER_KV.delete(failKey);
     return Response.json({ fail: fail === "1" });
+  }
+  const moved = ctx.url.searchParams.get("moved");
+  if (moved) {
+    const movedKey = guidePlainMovedKey(ctx.params.slug);
+    if (moved === "1") {
+      await ctx.env.PRERENDER_KV.put(
+        movedKey,
+        ctx.url.searchParams.get("to") ?? "/",
+      );
+    } else {
+      await ctx.env.PRERENDER_KV.delete(movedKey);
+    }
+    return Response.json({
+      moved: await ctx.env.PRERENDER_KV.get(movedKey),
+    });
   }
   const targets = ctx.url.searchParams.getAll("target");
   if (targets.length > 0) {

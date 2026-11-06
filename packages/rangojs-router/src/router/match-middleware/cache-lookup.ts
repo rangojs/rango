@@ -83,6 +83,8 @@ import {
 } from "../../cache/cache-scope.js";
 import { ShellRecordUnavailableError } from "../../cache/shell-snapshot.js";
 import { prerenderStoreShortCircuits } from "../navigation-snapshot.js";
+import { prefixBasename } from "../basename.js";
+import { markExternalRedirect } from "../../redirect-origin.js";
 import { paramsEqual } from "../params-util.js";
 import { markSourceHeld, readsOfAllParams } from "../source-reads.js";
 import { requestHeaders } from "../../server/request-headers.js";
@@ -792,6 +794,30 @@ export function scheduleOverlayRevalidation<TEnv>(
 }
 
 /**
+ * The redirect a refresh stored in place of a page, as the Response that
+ * answers this request. The stored target is served as the render resolved it,
+ * with the basename of the request (a render has none, and `prefixBasename` is
+ * idempotent); `external` restores the `{ external: true }` opt-in, whose brand
+ * is a WeakSet membership on the Response object and so does not survive the
+ * store (redirect-origin.ts). The same-origin guard still runs on the document
+ * response (rsc/redirect-guard.ts), and the soft-redirect resolver on the
+ * client-navigation one.
+ */
+function storedRedirectResponse(
+  redirect: { location: string; status: number; external?: true },
+  reqCtx: RequestContext<any> | undefined,
+): Response {
+  const response = new Response(null, {
+    status: redirect.status,
+    headers: {
+      Location: prefixBasename(redirect.location, reqCtx?._basename),
+    },
+  });
+  if (redirect.external) markExternalRedirect(response);
+  return response;
+}
+
+/**
  * The prerendered (build-time cached) entry for the current route, or null on
  * a miss. Intercept navigations consult only the intercept-specific entry
  * (`paramHash + "/i"`); a miss there falls through to the normal pipeline so
@@ -838,6 +864,17 @@ async function readPrerenderSource<TEnv>(
           } as PrerenderTargetObject,
           reqCtx,
         );
+      }
+      if (stored.redirect) {
+        // The page moved: a refresh's render answered a redirect, which is
+        // stored in its place. This URL now answers that redirect, for every
+        // visitor, instead of the page it moved away from (and instead of the
+        // build-time entry, as a removal is). A thrown Response is the
+        // pipeline's short-circuit: the document request answers the 3xx, a
+        // client navigation gets it as a soft redirect
+        // (rsc/handler.ts interceptRedirectForPartial), and an action's
+        // re-render navigates after the action ran.
+        throw storedRedirectResponse(stored.redirect, reqCtx);
       }
       if (stored.removed === true) {
         // The page was removed. Not served, and step 2 is skipped: the

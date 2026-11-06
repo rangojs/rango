@@ -1038,6 +1038,19 @@ The visitor's theme reads (the handler and middleware `ctx.theme`, `getRequestCo
   stale one still answers 404, schedules `onRevalidate`, is rendered again by
   `onlyIfStale`, and `markStale()` reaches it. A `remove()` marker has
   neither and is permanent until a refresh without `onlyIfStale`.
+- A refresh whose render answers a redirect (`redirect()`, or any 3xx Response
+  with a `Location`; `matchForPrerender` reports `{ redirect }` on an on-demand
+  run, and any other Response stays `render-failed`) stores the redirect in
+  place of the page (`composeStoredRedirect`) and reports `redirected`. A
+  request that finds it is answered with it instead of the page and instead of
+  the bundled manifest (`storedRedirectResponse`, thrown from
+  `readPrerenderSource`): the document gets the 3xx, a client navigation the
+  soft redirect, an action re-render navigates after the action ran.
+  `external: true` rides the entry because the brand on the Response object
+  cannot survive a store. Stamped with the route's `ttl` and `tags` like a
+  page, so it is rechecked like one; a later refresh replaces it with whatever
+  it renders. A tombstone was rejected: it answers 404 where the app said the
+  URL moved.
 - `remove()` and a refresh are two writes to one key: last write wins, except
   that a page is not written over a marker stored after its render started
   (`renderOnDemand` re-reads the key). No warm request follows `removed`. A

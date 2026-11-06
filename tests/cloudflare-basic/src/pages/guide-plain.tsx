@@ -1,4 +1,4 @@
-import { Prerender, notFound } from "@rangojs/router";
+import { Prerender, notFound, redirect } from "@rangojs/router";
 import { GuidePlainLoaderValue } from "../components/GuidePlainLoaderValue.js";
 import { GuidePlainActionPanel } from "../components/GuidePlainActionPanel.js";
 
@@ -13,6 +13,14 @@ export const guidePlainGoneKey = (slug: string): string =>
 /** KV key of a slug whose data source the e2e took down: a refresh throws. */
 export const guidePlainFailKey = (slug: string): string =>
   `gp-fail:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
+
+/**
+ * KV key of a slug whose page moved: its value is the redirect target the
+ * producer answers with, and a refresh stores that redirect in place of the
+ * page. Per mode, as above.
+ */
+export const guidePlainMovedKey = (slug: string): string =>
+  `gp-moved:${import.meta.env.DEV ? "dev" : "prod"}:${slug}`;
 
 // PLAIN (non-Passthrough) on-demand prerender route. Contract under test
 // (gateOnDemandProducer): a live PRODUCTION request for a param with no overlay
@@ -38,6 +46,13 @@ export const GuidePlainDef = Prerender<{ slug: string }>(
     ) {
       throw new Error("upstream 500");
     }
+    // The page moved (guidePlainMovedKey, set by the trigger's ?moved=1 op):
+    // the render answers a redirect instead of a page, and the refresh stores
+    // it in place of the page it replaced.
+    const movedTo = ctx.onDemand
+      ? await ctx.env.PRERENDER_KV.get(guidePlainMovedKey(ctx.params.slug))
+      : null;
+    if (movedTo) throw redirect(movedTo);
     // Per-render stamp + entropy: stable across overlay hits (frozen payload),
     // different across renders.
     const stamp = `${new Date().toISOString()}:${Math.random().toString(36).slice(2, 10)}`;

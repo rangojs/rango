@@ -4,9 +4,10 @@ import {
   Passthrough,
   cookies,
   notFound,
+  redirect,
   type Handler,
 } from "@rangojs/router";
-import { declineSlugs, failSlugs, goneSlugs } from "../od-gone.js";
+import { declineSlugs, failSlugs, goneSlugs, movedSlugs } from "../od-gone.js";
 import { FreshStampLoader, PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 import { OnDemandFreshStamp } from "../components/OnDemandFreshStamp.js";
@@ -127,10 +128,14 @@ export const OnDemandTrigger: Handler<{ slug: string }> = async (ctx) => {
 // fall-through. od-plain-stamp is captured once per render (frozen-payload
 // proof); the FreshStampLoader value differs per request (loaders-fresh proof).
 // A slug the e2e deleted from the data source (goneSlugs) is a notFound(): a
-// refresh of it stores the "removed" marker.
+// refresh of it stores the "removed" marker. A slug whose page moved
+// (movedSlugs) is a redirect(): a refresh stores the redirect in place of the
+// page it replaced.
 export const OnDemandPlainDef = Prerender<{ slug: string }>(
   async () => [{ slug: "baked" }],
   async (ctx) => {
+    const movedTo = movedSlugs.get(ctx.params.slug);
+    if (movedTo !== undefined) throw redirect(movedTo);
     if (goneSlugs.has(ctx.params.slug)) notFound();
     if (failSlugs.has(ctx.params.slug)) throw new Error("upstream 500");
     const stamp = new Date().toISOString();
@@ -156,7 +161,9 @@ export const OnDemandPlainDef = Prerender<{ slug: string }>(
 // (prerender.remove(): the "removed" marker, nothing rendered) and ?gone=1 /
 // ?gone=0 (delete / restore the slug in the data source, so the next refresh
 // hits notFound() or renders again), ?fail=1 / ?fail=0 (the data source goes
-// down / comes back: a refresh throws something other than notFound()) and
+// down / comes back: a refresh throws something other than notFound()),
+// ?moved=1&to=<path> / ?moved=0 (the page moved to <path> / moved back: the
+// next refresh answers redirect(<path>), stored in place of the page) and
 // repeated ?target=<path> (prerender.many(targets), the results as a JSON
 // array in target order).
 export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
@@ -178,6 +185,15 @@ export const OnDemandPlainTrigger: Handler<{ slug: string }> = async (ctx) => {
     if (fail === "1") failSlugs.add(ctx.params.slug);
     else failSlugs.delete(ctx.params.slug);
     return Response.json({ fail: failSlugs.has(ctx.params.slug) });
+  }
+  const moved = ctx.searchParams.get("moved");
+  if (moved) {
+    if (moved === "1") {
+      movedSlugs.set(ctx.params.slug, ctx.searchParams.get("to") ?? "/");
+    } else {
+      movedSlugs.delete(ctx.params.slug);
+    }
+    return Response.json({ moved: movedSlugs.get(ctx.params.slug) ?? null });
   }
   const targets = ctx.searchParams.getAll("target");
   if (targets.length > 0) {

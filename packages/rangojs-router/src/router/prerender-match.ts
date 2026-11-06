@@ -35,6 +35,8 @@ import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
 import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
 import { isDataNotFoundError } from "../errors.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isExternalRedirect } from "../redirect-origin.js";
 
 /**
  * An intercept a navigation can select over the route that the build does
@@ -110,6 +112,13 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /**
+   * On-demand only: the render answered a redirect (a 3xx Response carrying a
+   * Location) and nothing else failed. `external` carries
+   * `redirect(url, { external: true })`'s out-of-band opt-in, which the store
+   * has to keep because the brand on the Response object cannot survive it.
+   */
+  redirect?: { location: string; status: number; external?: true };
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -394,14 +403,18 @@ export async function matchForPrerender<TEnv = any>(
           flightErrors.push(error);
         };
         // The collected error to rethrow. On an on-demand refresh a failure
-        // goes ahead of a notFound(): a render that hit a missing item AND a
-        // failing data source must keep the page (render-failed), not remove
-        // it because the notFound() happened to be reported first.
+        // goes ahead of a notFound() and of a redirect(): a render that hit a
+        // missing item (or a moved one) AND a failing data source must keep
+        // the page (render-failed), not remove or redirect it because the
+        // notFound()/redirect() happened to be reported first.
         const firstFlightError = (): unknown => {
-          const failure = onDemand
-            ? flightErrors.findIndex((e) => !isDataNotFoundError(e))
-            : -1;
-          return flightErrors[failure === -1 ? 0 : failure];
+          if (!onDemand) return flightErrors[0];
+          const failure = flightErrors.findIndex(
+            (e) => !isDataNotFoundError(e) && !isRedirectOutcome(e),
+          );
+          if (failure !== -1) return flightErrors[failure];
+          const redirect = flightErrors.findIndex(isRedirectOutcome);
+          return flightErrors[redirect === -1 ? 0 : redirect];
         };
         const serializedSegments = await serializeSegments(
           nonLoaderSegments,
@@ -634,23 +647,53 @@ export async function matchForPrerender<TEnv = any>(
   );
   // A build or dev render keeps the throw (the caller's onError policy).
   if (!onDemand) return rendered;
-  // An on-demand refresh reports a notFound() anywhere in the render (a
-  // handler's throw, or the only kind of error Flight collected) as an
-  // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // An on-demand refresh reports two control-flow throws as outcomes, with the
+  // route's onDemand config (the trigger needs its ttl and tags to stamp what
+  // it stores, create-prerender-trigger.ts):
+  // - a notFound() anywhere in the render (a handler's throw, or the only kind
+  //   of error Flight collected): the trigger stores the "removed" marker.
+  // - a redirect() anywhere in the render: the trigger stores the redirect in
+  //   place of the page, so the URL answers where it now goes instead of the
+  //   page it moved away from. Any other Response is a failed render: a raw
+  //   payload is per-request content and cannot be stored for everyone.
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
-    return {
-      segments: [],
-      handles: "",
-      routeName: matched.routeKey,
-      params: matchedParams,
-      notFound: true,
-      onDemandConfig,
-    };
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    if (isRedirectOutcome(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: {
+          location: error.headers.get("Location")!,
+          status: error.status,
+          ...(isExternalRedirect(error) ? { external: true as const } : {}),
+        },
+        onDemandConfig,
+      };
+    }
+    throw error;
   }
+}
+
+/**
+ * A thrown 3xx Response carrying a Location: `redirect()` or a hand-built one.
+ * Only this kind of Response is a storable render outcome; any other is a
+ * failed render, because its content is per-request.
+ */
+function isRedirectOutcome(error: unknown): error is Response {
+  return error instanceof Response && isRedirectResponse(error);
 }
 
 /**
