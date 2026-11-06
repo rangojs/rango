@@ -215,7 +215,7 @@ function createPrerenderPassthroughFn(
  * handed this ctx to is still rendering, so a push made through this ctx after
  * an `await` would otherwise file under (and a LateHandlePushError name)
  * whatever segment the walker pinned since. `ctx.use` reads
- * `_handleSegmentId` off the receiver it was called on (handlePushSegment,
+ * `_handleSegmentId` off the receiver it was called on (receiverSegment,
  * router/loader-resolution.ts), which holds after an `await` and in a
  * component the ctx is handed to.
  *

@@ -554,15 +554,21 @@ export function startDeferredLoader(
 /**
  * The segment a run of `loaderId` files its handle pushes under: the one
  * that registers it when it is registered (registerDeferredLoader), else the
- * segment whose code starts it (segmentPinOf).
+ * segment whose code starts it: the calling ctx's when a handler started it
+ * through `ctx.use` (receiverSegment, loader-resolution.ts), else
+ * `segmentPinOf`.
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
   loaderId: string,
+  /** The calling ctx's segment, when a handler started the loader. */
+  segment?: string,
 ): string | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
   return (
-    internal._deferredLoaders?.get(loaderId)?.owner ?? segmentPinOf(internal)
+    internal._deferredLoaders?.get(loaderId)?.owner ??
+    segment ??
+    segmentPinOf(internal)
   );
 }
 

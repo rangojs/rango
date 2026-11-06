@@ -2594,9 +2594,10 @@ scope. Await continuations inherit the scope. A layout's or slot's ctx is the
 case the scope cannot reach: React renders the components that ctx was
 handed to after the handler returned, outside every scope, so the object is
 the only thing left to ask. That ctx carries its segment
-(`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the push
-segment off the receiver it was called on (`handlePushSegment`,
-`loader-resolution.ts`) — a push from such a component, and the dev
+(`_handleSegmentId`, `withSegmentScope`), and `ctx.use` resolves the segment
+a push — and a loader a handler starts through it — files under off the
+receiver it was called on (`receiverSegment`, `loader-resolution.ts`), which
+is how `loaderOwner` gets it too — a push from such a component, and the dev
 `LateHandlePushError` it throws, names the layout or the slot, not whichever
 segment the walker pinned since. The other readers take `segmentPinOf(ctx)`,
 the innermost scope's segment else the ctx's carried one else its pin: a

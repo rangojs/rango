@@ -101,7 +101,8 @@ export type LoaderErrorCallback = (
  */
 
 /**
- * The segment a handle push through `ctx.use` files under.
+ * The segment a call through `ctx.use` files under: a handle push's, and the
+ * owning segment of a loader a handler starts (loaderOwner).
  *
  * The receiver decides when it carries a segment: a layout's or a parallel
  * slot's ctx does (withSegmentScope), and the segment holds however long after
@@ -111,7 +112,7 @@ export type LoaderErrorCallback = (
  * the walker pins — a handler that built a smaller ctx with `use` copied onto
  * it (a Prerender handler forwarding to a shared page handler) included.
  */
-function handlePushSegment(
+function receiverSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
@@ -514,6 +515,7 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  segment?: string,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -532,6 +534,8 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    /** The calling ctx's segment (receiverSegment), when a handler started it. */
+    segment?: string,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -629,7 +633,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, segment);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1006,10 +1010,10 @@ export function setupLoaderAccess<TEnv>(
       },
     )(loader, null);
 
-  // A regular function, not an arrow: `ctx.use` resolves the push segment
-  // from the RECEIVER when it carries one (handlePushSegment), so a layout's
-  // or slot's ctx files the push under its own segment however long after the
-  // handler returned.
+  // A regular function, not an arrow: `ctx.use` resolves the segment a push
+  // or a loader it starts files under from the RECEIVER when it carries one
+  // (receiverSegment), so a layout's or slot's ctx files it under its own
+  // segment however long after the handler returned.
   ctx.use = function (
     this: HandlerContext<any, TEnv> | undefined,
     item: LoaderDefinition<any, any> | Handle<any, any>,
@@ -1017,7 +1021,7 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = receiverSegment(this, ctx);
 
       if (!segmentId) {
         throw new Error(
@@ -1074,7 +1078,9 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    // A loader a layout's or slot's component starts belongs to that segment
+    // too, not to whatever the shared pin holds by then.
+    return useLoader(loader, null, receiverSegment(this, ctx));
   } as typeof ctx.use;
 }
 
@@ -1095,7 +1101,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = handlePushSegment(this, ctx);
+      const segmentId = receiverSegment(this, ctx);
 
       if (!segmentId) {
         throw new Error(

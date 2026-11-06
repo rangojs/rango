@@ -6,9 +6,10 @@
  * The push is rejected by design (the `.defer()` path is the mitigation), so
  * the message is all a consumer sees of it: it must name the segment whose
  * ctx made the push, not whichever segment the walker pinned last. A layout's
- * or slot's ctx carries its own segment, so the message names it; a route
- * handler's ctx is the request's one ctx, and reads the request's pin, which
- * the walker puts back on the route once the route's parallel slots resolved.
+ * or slot's ctx carries its own segment, so the message names it, for a push
+ * made through it and for a loader it starts; a route handler's ctx is the
+ * request's one ctx, and reads the request's pin, which the walker puts back
+ * on the route once the route's parallel slots resolved.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -25,6 +26,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -47,6 +49,18 @@ async function LatePush({
   await new Promise((resolve) => setTimeout(resolve, 0));
   ctx.use(Crumbs)(label);
   return <span>{label}</span>;
+}
+
+const PushLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("from-loader");
+  return null;
+});
+
+/** An async server component starting a loader through the ctx it was handed. */
+async function LateStartLoader({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await ctx.use(PushLoader);
+  return <span>loader</span>;
 }
 
 function makeRouter() {
@@ -90,6 +104,14 @@ function makeRouter() {
             (ctx) => <LatePush ctx={ctx} label="route slot" />,
             { name: "componentRouteSlot" },
             () => [parallel({ "@panel": () => <aside>panel</aside> })],
+          ),
+          layout(
+            (ctx) => <LateStartLoader ctx={ctx} />,
+            () => [
+              path("/component-layout-loader", () => <p>page</p>, {
+                name: "componentLayoutLoader",
+              }),
+            ],
           ),
         ],
       ),
@@ -150,5 +172,15 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     // The slot handler pins the request's shared segment id while it resolves
     // (resolveParallelSlotComponent); the route's push reads it after that.
     expect(latePushSegment(reported)).toBe(route);
+  });
+
+  it("the layout's, for a loader the component the layout handed its ctx to starts", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout-loader",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    // The loader's own pushes read its owner (loaderOwner), which the calling
+    // ctx's carried segment decides.
+    expect(latePushSegment(reported)).toBe(layout);
   });
 });
