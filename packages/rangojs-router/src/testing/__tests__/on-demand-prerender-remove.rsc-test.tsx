@@ -59,6 +59,8 @@ class SharedMemoryStore extends MemorySegmentCacheStore {
 const catalog = new Map<string, string>();
 /** slug -> the slug its page now redirects to: the item moved. */
 const movedTo = new Map<string, string>();
+/** slug -> a Response its page answers with that is NOT a redirect. */
+const brokenResponses = new Map<string, Response>();
 const runs = { producer: 0, hot: 0, live: 0, loader: 0, plain: 0 };
 /** Set to make the next producer run fail like an upstream outage. */
 let outage = false;
@@ -231,6 +233,18 @@ const MovedDef = Prerender<{ slug: string }>(
   { onDemand: { ttl: 60, tags: ({ params }) => [`moved:${params.slug}`] } },
 );
 
+// A page whose handler answers a Response that is not a redirect (a 500, a
+// 304 with no Location): that is a failure, not a removal, and keeps the page.
+const BrokenResponseDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    const broken = brokenResponses.get(ctx.params.slug);
+    if (broken) throw broken;
+    return <h1>{`broken:${ctx.params.slug}`}</h1>;
+  },
+  { onDemand: { ttl: 60 } },
+);
+
 // The same page behind a live handler, which redirects the same way: once the
 // stored page is out of service the live handler answers, with a real 3xx.
 const MovedLive = Passthrough(MovedDef, async (ctx) => {
@@ -277,6 +291,9 @@ function makeRouter(
         path("/baked/:slug", Baked, { name: "baked" }),
         path("/moved/:slug", MovedDef, { name: "moved" }),
         path("/moved-live/:slug", MovedLive, { name: "movedLive" }),
+        path("/broken-response/:slug", BrokenResponseDef, {
+          name: "brokenResponse",
+        }),
         path("/plain", PlainPage, { name: "plain" }),
         path("/tree/sync/:slug", SyncComponentDef, { name: "treeSync" }),
         path("/tree/async/:slug", AsyncComponentDef, { name: "treeAsync" }),
@@ -353,6 +370,7 @@ describe("on-demand prerender: removing a refreshed page", () => {
     catalog.set("a", "Alpha");
     catalog.set("b", "Beta");
     movedTo.clear();
+    brokenResponses.clear();
     for (const key of Object.keys(runs) as (keyof typeof runs)[]) runs[key] = 0;
     outage = false;
     flaky = false;
@@ -465,6 +483,7 @@ describe("on-demand prerender: removing a refreshed page", () => {
     // The data source still has the item: only the redirect says the URL is
     // not this page, and the stored render is not what answers.
     expect(gone.body).not.toContain("moved:a:Alpha");
+
     expect(redirected).toMatchObject({
       ok: true,
       path: "on-demand",
@@ -491,6 +510,31 @@ describe("on-demand prerender: removing a refreshed page", () => {
     expect(back.response.status).toBe(200);
     expect(back.flight).toContain("moved:a:Alpha");
   });
+
+  // The boundary of the rule: only a 3xx with a Location is a no-page
+  // outcome. Any other Response a render answers with is a failure, and a
+  // failure keeps the page (a 500 from an outage must not take it down).
+  for (const [label, response] of [
+    ["a 500", new Response("boom", { status: 500 })],
+    ["a 304 with no Location", new Response(null, { status: 304 })],
+  ] as const) {
+    it(`${label} from a refresh is render-failed, and the page keeps serving`, async () => {
+      const router = makeRouter({ store });
+      const prerender = router.prerender({ env: {} });
+      expect(await prerender("/broken-response/a")).toMatchObject({
+        status: "rendered",
+      });
+
+      brokenResponses.set("a", response);
+      const failed = await prerender("/broken-response/a");
+
+      expect(failed).toMatchObject({ ok: false, status: "render-failed" });
+      expect((failed as { error: Response }).error).toBe(response);
+      const served = await serveShellRequest(router, "/broken-response/a");
+      expect(served.response.status).toBe(200);
+      expect(served.flight).toContain("broken:a");
+    });
+  }
 
   it("a Passthrough route's redirecting refresh is answered by its live handler, which sends the redirect", async () => {
     const router = makeRouter({ store });
