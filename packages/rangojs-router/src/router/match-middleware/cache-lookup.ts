@@ -591,7 +591,12 @@ async function* serveStoredSegments<TEnv>(
     ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
     : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
-  const sentIds = restoreHandles && new Set<string>();
+  // The stored segments this response sends, for the handle replay below and
+  // for `resolvedIds` (match-result.ts): a sent stored segment stands in for
+  // the handler a live walk re-runs for it, so the HIT must name what the MISS
+  // that wrote the record named, or the browser keeps that segment's handle
+  // values (handles/pushed-by.ts).
+  const sentIds = new Set<string>();
 
   yield* liveSegments;
 
@@ -612,27 +617,17 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) {
-      keepClientSegment(segment);
-    } else {
-      // A sent stored segment stands in for the handler a live walk re-runs
-      // for it, so it is marked as run: `resolvedIds` (match-result.ts) must
-      // name what the MISS that wrote the record named, or the browser keeps
-      // the handle values of a segment the response replaced
-      // (handles/pushed-by.ts). The record cannot carry the flag: a record is
-      // written by another render (a proactive re-render runs every handler),
-      // so a persisted one would name every segment on every HIT.
-      segment._handlerRan = true;
-      sentIds?.add(segment.id);
-    }
+    if (!send) keepClientSegment(segment);
+    else sentIds.add(segment.id);
     yield segment;
   }
+  state.storedResolvedIds = sentIds;
 
   // A partial cache() HIT replays handler values for the segments it sends
   // only, decided above after the live entries: a kept segment keeps the
   // client's, as on a live walk (handle-snapshot.ts restoreHandles;
   // decodeStoredEntry for a bake).
-  if (sentIds) await restoreHandles!(sentIds);
+  if (restoreHandles) await restoreHandles(sentIds);
 
   // The stored handler values stand where the MISS's handlers pushed them:
   // behind what a segment's loaders push before the walk reaches its handler

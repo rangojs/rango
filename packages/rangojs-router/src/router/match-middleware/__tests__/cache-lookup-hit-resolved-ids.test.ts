@@ -46,9 +46,10 @@ import type { ResolvedSegment } from "../../../types.js";
 import { seg, gen } from "./helpers.js";
 
 // A stored record carries no `_handlerRan` (serializeSegments copies named
-// fields), so a HIT that re-sends a segment listed nothing in `resolvedIds`
-// and the browser kept that segment's handle values (handles/pushed-by.ts).
-// The serve path marks each segment it sends in place of a re-run handler.
+// fields), so a HIT that re-sent a segment listed nothing in `resolvedIds` and
+// the browser kept that segment's handle values (handles/pushed-by.ts). The
+// serve records the stored segments it sends in place of a re-run handler, and
+// `buildMatchResult` names them in `resolvedIds` (match-result.ts).
 
 const LAYOUT = "L0";
 const ROUTE = "L0R0";
@@ -61,7 +62,11 @@ const ROUTE = "L0R0";
 async function drain(
   routeRevalidates: boolean,
   clientSegments: string[],
-): Promise<ResolvedSegment[]> {
+): Promise<{
+  sent: string[];
+  resolvedIds: string[];
+  keptComponents: Record<string, boolean>;
+}> {
   const store = new MemorySegmentCacheStore();
   await store.set(
     "partial:localhost/p?page=2",
@@ -132,25 +137,35 @@ async function drain(
     }),
   );
   expect(state.cacheHit).toBe(true);
-  return yielded;
+  return {
+    sent: yielded.map((s) => s.id),
+    resolvedIds: [...(state.storedResolvedIds ?? [])],
+    keptComponents: Object.fromEntries(
+      yielded.map((s) => [s.id, s.component !== null]),
+    ),
+  };
 }
 
-const handlerRan = (segments: ResolvedSegment[]): Record<string, boolean> =>
-  Object.fromEntries(segments.map((s) => [s.id, s._handlerRan === true]));
-
-describe("withCacheLookup — a HIT marks the segments it re-sends as run", () => {
-  it("a segment its revalidate() re-sends is marked; a kept one is not", async () => {
-    const segments = await drain(true, [LAYOUT, ROUTE]);
-    expect(handlerRan(segments)).toEqual({ [LAYOUT]: false, [ROUTE]: true });
+describe("withCacheLookup — a HIT records the segments it sends as resolved", () => {
+  it("a segment its revalidate() re-sends is resolved; a kept one is not", async () => {
+    const { sent, resolvedIds } = await drain(true, [LAYOUT, ROUTE]);
+    expect(sent).toEqual([LAYOUT, ROUTE]);
+    expect(resolvedIds).toEqual([ROUTE]);
   });
 
-  it("a segment the client does not hold is sent and marked", async () => {
-    const segments = await drain(false, [LAYOUT]);
-    expect(handlerRan(segments)).toEqual({ [LAYOUT]: false, [ROUTE]: true });
+  it("a segment the client does not hold is sent and resolved", async () => {
+    const { resolvedIds } = await drain(false, [LAYOUT]);
+    expect(resolvedIds).toEqual([ROUTE]);
   });
 
-  it("a segment the rules keep is not marked", async () => {
-    const segments = await drain(false, [LAYOUT, ROUTE]);
-    expect(handlerRan(segments)).toEqual({ [LAYOUT]: false, [ROUTE]: false });
+  it("a segment the rules keep is not resolved", async () => {
+    const { sent, resolvedIds, keptComponents } = await drain(false, [
+      LAYOUT,
+      ROUTE,
+    ]);
+    expect(sent).toEqual([LAYOUT, ROUTE]);
+    expect(resolvedIds).toEqual([]);
+    // Both are kept: a kept segment loses its component (keepClientSegment).
+    expect(keptComponents).toEqual({ [LAYOUT]: false, [ROUTE]: false });
   });
 });

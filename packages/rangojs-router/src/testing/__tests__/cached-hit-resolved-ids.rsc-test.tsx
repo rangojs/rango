@@ -65,9 +65,9 @@ function itemPage(push: (crumb: string) => void, id: string): React.ReactNode {
   return <article>item {id}</article>;
 }
 
-function makeRouter(source: Source) {
+function makeRouter(source: Source, withIntercept = false) {
   return createRouter({}).routes(
-    urls(({ path, layout, cache, revalidate }) => {
+    urls(({ path, layout, cache, revalidate, intercept }) => {
       const item = (ctx: HandlerContext<{ id: string }>): React.ReactNode =>
         itemPage(ctx.use(Crumbs), ctx.params.id);
       const chain = () =>
@@ -97,6 +97,15 @@ function makeRouter(source: Source) {
                   { name: "item" },
                 )
               : path("/item/:id", item, { name: "item" }),
+            // Declared only where a test asks for it.
+            ...(withIntercept
+              ? [
+                  intercept("@modal", ".item", (ctx: HandlerContext) => {
+                    ctx.use(Crumbs)("modal");
+                    return <dialog>modal</dialog>;
+                  }),
+                ]
+              : []),
           ],
         );
       const root = () =>
@@ -233,6 +242,24 @@ describe("a stored HIT names the runs its MISS named in resolvedIds", () => {
     );
     expect(await crumbsAfter(page.handles, miss)).toEqual(["root", "item-1"]);
     expect(await crumbsAfter(page.handles, hit)).toEqual(["root", "item-1"]);
+  });
+
+  it("names the intercept slot without sending an internal field for it", async () => {
+    const router = makeRouter("cache", true);
+    const page = await pageOf(router, "/a");
+    const partial = {
+      from: "/a",
+      segments: page.matched,
+      interceptSource: "/a",
+    };
+    await navigate(router, "/item/1", partial, page.store);
+    const hit = await navigate(router, "/item/1", partial, page.store);
+    const answer = await answerOf(hit);
+    const slot = answer.segments.find((s) => s.id.includes(".@"))!;
+    expect(answer.resolvedIds).toContain(slot.id);
+    // The slot's segments ride the payload's `slots` unstripped: no internal
+    // marker may be written on one.
+    expect(hit.flight).not.toContain("_handlerRan");
   });
 
   it("a Prerender() bake HIT clears it as a live render of the same navigation does", async () => {

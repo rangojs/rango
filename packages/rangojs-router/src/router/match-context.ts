@@ -256,6 +256,17 @@ export interface MatchPipelineState {
   // Cached segments (if cache hit)
   cachedSegments?: ResolvedSegment[];
   cachedMatchedIds?: string[];
+  /**
+   * Ids of the stored segments this response sends in place of a handler a
+   * live walk would re-run (serveStoredSegments, cache-lookup.ts).
+   * match-result.ts names them in `resolvedIds`, so a HIT reports the runs the
+   * MISS that wrote the record reported: the browser replaces only the runs a
+   * response lists or delivers values for (handles/pushed-by.ts). A stored
+   * segment cannot carry `_handlerRan` instead — the record is written by
+   * another render, and the marker must never reach the client, while the
+   * slot segments this set also covers ride the payload unstripped.
+   */
+  storedResolvedIds?: ReadonlySet<string>;
 
   // Whether cache should be revalidated (SWR)
   shouldRevalidate?: boolean;
