@@ -121,6 +121,12 @@ export default defineConfig(({ isPreview }) => ({
     "process.env.RANGO_E2E_RENDER_TIMEOUT": JSON.stringify(
       process.env.RANGO_E2E_RENDER_TIMEOUT ?? "",
     ),
+    // Declared-under guard fixture (src/pages/dsl-nesting.tsx): same inlining
+    // rationale as the flag above — workerd's process.env is not the host's.
+    // Empty string on a normal build → the valid shapes are registered.
+    "process.env.RANGO_TEST_DECLARED_OUTSIDE": JSON.stringify(
+      process.env.RANGO_TEST_DECLARED_OUTSIDE ?? "",
+    ),
     // Edge-only cache e2e (playwright.edge-only.config.ts): drops the KV
     // binding from the app-level CFCacheStore so ppr shells run L1-only
     // (Cache API). Same inlining rationale as the flag above. Empty string

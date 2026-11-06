@@ -391,6 +391,7 @@ import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
 import { negotiationPatterns } from "./pages/negotiation.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
+import { dslNestingPatterns } from "./pages/dsl-nesting.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import { holeyThrowsPatterns } from "./pages/holey-throws.js";
@@ -3344,6 +3345,11 @@ export const urlpatterns = urls(
         // (#622 follow-ups), exercised through client (soft) navigation under
         // the workerd runtime.
         include("/", deferredHandleNavPatterns, { name: "" }),
+
+        // A definition created inside the callback that nests it, and the
+        // sibling of a bare cache() — the shapes the declared-under guard must
+        // keep accepting on workerd (src/pages/dsl-nesting.tsx).
+        include("/dsl-nesting", dslNestingPatterns, { name: "" }),
 
         // Prerender manifest introspection for e2e tests
         path.json(

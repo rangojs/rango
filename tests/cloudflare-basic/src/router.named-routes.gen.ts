@@ -95,6 +95,8 @@ export const NamedRoutes = {
   docStateVerify: "/doc-state/verify",
   documentCache: "/document-cache",
   documentCacheNoCache: "/document-cache-no-cache",
+  dslNesting: "/dsl-nesting",
+  dslNestingCached: "/dsl-nesting/cached",
   errorsCaptureFails: "/errors/capture-fails/:k",
   fast: "/slow/fast",
   featuresDetail: "/features/:slug",
