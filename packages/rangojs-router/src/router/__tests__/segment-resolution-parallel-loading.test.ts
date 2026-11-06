@@ -334,6 +334,74 @@ describe("segment-resolution parallel loading", () => {
     expect(result.segments[0]?.type).toBe("parallel");
   });
 
+  describe("a slot handler's Response", () => {
+    // A handler's returned Response (redirect()) is control flow, as on the
+    // route and layout handler paths: the walk rethrows it so the request
+    // short-circuits, instead of rendering it as the slot's component (which
+    // only fails later, during Flight serialization).
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    function slotLayout(handler: any, loading?: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [
+          loading === undefined
+            ? { ...createParallelEntry(handler), loading: false }
+            : createParallelEntry(handler),
+        ],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+
+    it("is thrown, not rendered, when the slot does not stream", async () => {
+      const response = new Response(null, { status: 302 });
+      const context = createContext();
+      const walk = resolveParallelSegments(
+        makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+        slotLayout(() => response),
+        false,
+      );
+      await expect(walk).rejects.toBe(response);
+    });
+
+    it("is thrown when a loading() slot returns it synchronously", async () => {
+      const response = new Response(null, { status: 302 });
+      const context = createContext();
+      const walk = resolveParallelSegments(
+        makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+        slotLayout(() => response, "sidebar-loading"),
+        false,
+      );
+      await expect(walk).rejects.toBe(response);
+    });
+
+    it("rejects the streamed promise when a loading() slot returns it after an await", async () => {
+      const response = new Response(null, { status: 302 });
+      const context = createContext();
+      const result = await resolveParallelSegments(
+        makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+        slotLayout(async () => response, "sidebar-loading"),
+        false,
+      );
+      const component = result.segments[0]?.component as Promise<unknown>;
+      expect(component).toBeInstanceOf(Promise);
+      await expect(component).rejects.toBe(response);
+    });
+  });
+
   describe("static slot value with loading false", () => {
     // A non-function slot value is the slot's content as declared: a
     // Promise (a React 19 ReactNode) goes to render as is, never awaited by
