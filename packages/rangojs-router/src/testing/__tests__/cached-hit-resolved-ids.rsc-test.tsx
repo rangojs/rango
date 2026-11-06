@@ -163,7 +163,7 @@ async function crumbsAfter(
 
 /** A document of `url`: its handles and mounted ids. */
 async function documentOf(
-  target: typeof router | typeof prerenderRouter,
+  target: Parameters<typeof serveShellRequest>[0],
   url: string,
 ): Promise<{ handles: HandleData; matched: string[] }> {
   const { answer, handles } = await readAnswer(
