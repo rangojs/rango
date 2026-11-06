@@ -84,7 +84,11 @@ test.describe("a route declared outside its layout (production)", () => {
   test.describe.configure({ timeout: 180_000 });
 
   test("the build fails with exit code 1, naming the definition", async () => {
-    const res = await x(VITE, ["build", "--outDir", "dist-declared-outside"], {
+    // The build dies in route discovery, before anything is written. The outDir
+    // sits under the ignored dist/ anyway, so a build that ever got this far
+    // would leave nothing untracked and could not touch the preview server's
+    // dist/client.
+    const res = await x(VITE, ["build", "--outDir", "dist/declared-outside"], {
       nodeOptions: { cwd, env: isolatedEnv() },
       throwOnError: false,
     });
