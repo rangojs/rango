@@ -55,7 +55,7 @@ function isActionRequest(ctx: HandlerCtx): boolean {
  * it, a redirect on the action's revalidation. Async, so it streams under
  * loading().
  */
-async function handler(ctx: HandlerCtx): Promise<React.ReactNode> {
+async function handler(ctx: HandlerCtx): Promise<React.ReactNode | Response> {
   if (isActionRequest(ctx)) {
     await new Promise((resolve) => setTimeout(resolve, 0));
     return redirect(REDIRECT_TO);
@@ -64,7 +64,7 @@ async function handler(ctx: HandlerCtx): Promise<React.ReactNode> {
 }
 
 /** The same redirect, returned synchronously. */
-function syncHandler(ctx: HandlerCtx): React.ReactNode {
+function syncHandler(ctx: HandlerCtx): React.ReactNode | Response {
   return isActionRequest(ctx) ? redirect(REDIRECT_TO) : <dialog>modal</dialog>;
 }
 
@@ -161,13 +161,13 @@ type Router = ReturnType<typeof makeRouter>;
 function makeRouter(options: {
   interceptHandler?: (
     ctx: HandlerCtx,
-  ) => React.ReactNode | Promise<React.ReactNode>;
+  ) => React.ReactNode | Response | Promise<React.ReactNode | Response>;
   declareLoading?: boolean;
   /** Put the handler and its loading() on /target's route instead. */
   onRoute?: boolean;
   routeHandler?: (
     ctx: HandlerCtx,
-  ) => React.ReactNode | Promise<React.ReactNode>;
+  ) => React.ReactNode | Response | Promise<React.ReactNode | Response>;
 }) {
   const {
     interceptHandler = handler,

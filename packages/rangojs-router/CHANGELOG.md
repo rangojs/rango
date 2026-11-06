@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: an intercept handler under `loading()` redirects from an action
+
+**Before.** An `intercept()` whose handler declared `loading()` and returned
+`redirect()` from an async handler answered an action's revalidation with
+`200` and the `Response` in the Flight payload: the browser kept the page and
+the slot failed to render. The same handler on a route under `loading()`
+answered `204` + `X-RSC-Redirect`.
+
+**Now.** An action's revalidation awaits the intercept's handler, so a thrown
+`Response` short-circuits the action as a route handler's does: `204` +
+`X-RSC-Redirect`, and the browser navigates. A navigation still streams the
+handler under the slot's `loading()` fallback.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

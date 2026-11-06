@@ -334,6 +334,8 @@ export const NamedRoutes = {
   "interceptHeld.pushItem": "/intercept-held/push/:id",
   "interceptHeld.rerunItem": "/intercept-held/rerun/:id",
   "interceptHeld.search": "/intercept-held/search",
+  "interceptRedirect.item": "/intercept-redirect/item",
+  "interceptRedirect.list": "/intercept-redirect/list",
   "interceptWhenShape.item": "/intercept-when-shape/item/:id",
   "interceptWhenShape.list": "/intercept-when-shape/list/:section",
   "isAction.index": "/is-action",

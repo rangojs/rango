@@ -86,7 +86,11 @@ rest, as it keeps a route loader it holds (pinned by the `[I3]` semantic matrix
 row). The intercept handler re-runs on every request that resolves the
 intercept, except a fill (flow 5) in which the client holds the slot: there
 neither the handler nor the intercept's layout runs, only the loaders the
-client lacks run. A runtime `cache()` hit or a `Prerender()` target serves the
+client lacks run. A handler under the slot's `loading()` streams on a
+navigation, and an action's revalidation awaits it instead, as
+`resolveRouteComponent` awaits a route's: a thrown `Response` (`redirect()`)
+or `notFound()` then answers the action as a route handler's does, rather
+than surfacing inside the payload after the response has started. A runtime `cache()` hit or a `Prerender()` target serves the
 stored slot and resolves only its loaders. The browser folds the
 loader segments back onto the slot before it builds the tree
 (`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal

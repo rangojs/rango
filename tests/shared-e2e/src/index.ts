@@ -140,6 +140,8 @@ export { runInterceptWholeRequestTests } from "./intercept-whole-request-scenari
 export type { InterceptWholeRequestScenarioOptions } from "./intercept-whole-request-scenario.js";
 export { runInterceptHistoryTests } from "./intercept-history-scenario.js";
 export type { InterceptHistoryScenarioOptions } from "./intercept-history-scenario.js";
+export { runInterceptRedirectTests } from "./intercept-redirect-scenario.js";
+export type { InterceptRedirectScenarioOptions } from "./intercept-redirect-scenario.js";
 export type { LateHandleHistoryScenarioOptions } from "./late-handle-history-scenario.js";
 export type { HeldBoundaryScenarioOptions } from "./held-boundary-scenario.js";
 export { runPeFormStateTests } from "./pe-form-state-scenario.js";
