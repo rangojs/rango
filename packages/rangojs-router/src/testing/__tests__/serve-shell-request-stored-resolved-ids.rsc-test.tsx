@@ -89,6 +89,17 @@ const router = createRouter({}).routes(
                 },
                 { name: "b" },
               ),
+              // A void handler: its UI lives in parallels, so its record
+              // holds a null component (a partial write allows one,
+              // cache-scope.ts cacheRoute).
+              path(
+                "/c",
+                (ctx: HandlerContext) => {
+                  ctx.use(Crumbs)("c");
+                  return null;
+                },
+                { name: "c" },
+              ),
             ],
           ),
         ]),
@@ -214,10 +225,34 @@ describe("a cache() HIT lists the segments its record sends", () => {
       segmentWith(miss.handles, "b"),
     ]);
 
-    const hit = await readAnswer(
-      await serveShellRequest(router, "/b", { cacheStore, partial }),
-    );
+    const hitResult = await serveShellRequest(router, "/b", {
+      cacheStore,
+      partial,
+    });
+    const hit = await readAnswer(hitResult);
     // The record serves both: their values stand for the runs the MISS made.
+    expect(hit.answer.resolvedIds).toEqual(miss.answer.resolvedIds);
+    // The marker itself never reaches the client.
+    expect(hitResult.flight).not.toContain("_handlerRan");
+  });
+
+  it("a stored route segment whose record holds a null component is listed", async () => {
+    const page = await documentOf(router, "/a");
+    const chainId = segmentWith(page.handles, "chain");
+    const cacheStore = new MemorySegmentCacheStore();
+    const partial = { from: "/a", segments: page.matched };
+
+    const miss = await readAnswer(
+      await serveShellRequest(router, "/c", { cacheStore, partial }),
+    );
+    expect(miss.answer.resolvedIds).toEqual([
+      chainId,
+      segmentWith(miss.handles, "c"),
+    ]);
+
+    const hit = await readAnswer(
+      await serveShellRequest(router, "/c", { cacheStore, partial }),
+    );
     expect(hit.answer.resolvedIds).toEqual(miss.answer.resolvedIds);
   });
 
