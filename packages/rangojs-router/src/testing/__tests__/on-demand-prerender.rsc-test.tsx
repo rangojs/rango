@@ -609,13 +609,16 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
       // The same render now answers redirect(): its own result, and no write.
       (redirecting as Record<string, boolean>)[kind] = true;
       const attemptsBefore = renderAttempts[attemptKey] ?? 0;
-      expect(await prerender(url)).toMatchObject({
+      const result = await prerender(url);
+      expect(result).toMatchObject({
         ok: false,
         path: "on-demand",
         status: "skipped-redirect",
         target: url,
         routeName,
       });
+      // No warm follows: there is no new page for a cache to be rebuilt on.
+      expect(result).not.toHaveProperty("caches");
       expect(store.size).toBe(1);
       expect(store.entries()[0]![1].entry).toBeDefined();
       // The handler that answers the redirect ran, and only it did.
