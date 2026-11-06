@@ -100,19 +100,39 @@ const InComponentDef = Prerender<{ slug: string }>(
   { onDemand: true },
 );
 
+// A parallel slot's handler runs inside the same segment resolution, after
+// the chain above it: its redirect reaches the producer the same way.
+function MovedSlot(ctx: HandlerContext<{ slug: string }>): React.ReactNode {
+  const m = moved.get(ctx.params.slug);
+  if (m !== undefined) throw redirect(m.to);
+  return <aside>{ctx.params.slug}</aside>;
+}
+
 function makeRouter(
   prerender: { store: MemoryPrerenderStore },
   options: { basename?: string } = {},
 ) {
   return createRouter({ prerender, ...options }).routes(
-    urls(({ path, layout }) => [
+    urls(({ path, layout, parallel }) => [
       path("/products/:slug", ProductDef, { name: "product" }),
       path("/guides/:slug", Guide, { name: "guide" }),
       path("/start", () => <p>start</p>, { name: "start" }),
       layout(MovedLayout, () => [
         path("/in-layout/:slug", InLayoutDef, { name: "inLayout" }),
       ]),
-      path("/in-component/:slug", InComponentDef, { name: "inComponent" }),
+      layout(
+        () => <div>chrome</div>,
+        () => [
+          parallel({ "@aside": MovedSlot }),
+          path("/in-slot/:slug", InLayoutDef, { name: "inSlot" }),
+        ],
+      ),
+      path(
+        "/in-component/:slug",
+        InComponentDef,
+        { name: "inComponent" },
+        () => [parallel({ "@aside": MovedSlot })],
+      ),
     ]),
   );
 }
@@ -360,6 +380,36 @@ describe("on-demand prerender: a refresh that answers with a redirect", () => {
     const response = await serveShellRequest(router, "/in-component/c");
     expect(response.response.status).toBe(302);
     expect(response.response.headers.get("Location")).toBe("/products/c-new");
+  });
+
+  it("a redirect from a parallel slot handler is stored too", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("s", { to: "/products/s-new" });
+    expect(await prerender("/in-slot/s")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: { status: 302, location: "/products/s-new" },
+    });
+    const response = await serveShellRequest(router, "/in-slot/s");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe("/products/s-new");
+  });
+
+  it("a route with its own slot that redirects is stored: the route's answer wins", async () => {
+    const router = makeRouter({ store });
+    const prerender = router.prerender({ env: {} });
+
+    moved.set("r", { to: "/products/r-new" });
+    expect(await prerender("/in-component/r")).toMatchObject({
+      ok: true,
+      status: "redirected",
+      redirect: { status: 302, location: "/products/r-new" },
+    });
+    const response = await serveShellRequest(router, "/in-component/r");
+    expect(response.response.status).toBe(302);
+    expect(response.response.headers.get("Location")).toBe("/products/r-new");
   });
 
   it("a route that is not on-demand still warms: the redirect is only an on-demand answer", async () => {
