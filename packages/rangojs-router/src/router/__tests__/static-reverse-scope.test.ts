@@ -46,6 +46,7 @@ function capture(key: string, name: string) {
 }
 
 const rootLayout = capture("root", ".home");
+const rootSlot = capture("rootSlot", ".home");
 const outerLayout = capture("outer", ".settings");
 const innerLayout = capture("inner", ".settings");
 const innerSlot = capture("slot", ".settings");
@@ -69,8 +70,9 @@ const outerPatterns = urls(({ path, layout, include }) => [
   ]),
 ]);
 
-const patterns = urls(({ path, layout, include }) => [
+const patterns = urls(({ path, layout, include, parallel }) => [
   layout(rootLayout, () => [
+    parallel({ "@aside": rootSlot }),
     path("/home", () => null, { name: "home" }),
     include("/outer", outerPatterns, { name: "outer" }),
   ]),
@@ -88,22 +90,20 @@ const router = createRouter({
 }).routes(patterns) as unknown as RangoInternal<any, any>;
 
 /** The collector's exact production call (prerender-collection.ts). */
-async function bake(def: any): Promise<void> {
-  // Only a mounted layout or slot has a ReverseScope: path() stamps a route
-  // name, layout() and parallel() stamp the include prefix and root scope.
-  const reverseScope =
-    def.$$routeName === undefined && def.$$rootScoped !== undefined
-      ? { prefix: def.$$routePrefix, rootScoped: def.$$rootScoped }
-      : undefined;
-  await router
+async function bake(
+  instance: RangoInternal<any, any>,
+  def: any,
+): Promise<void> {
+  await instance
     .renderStaticSegment(
       def.handler,
       def.$$id,
+      // A layout or slot has no route name; its scope is the stamp.
       def.$$routeName ?? def.$$routePrefix,
       undefined,
       undefined,
       def.$$rootScoped,
-      reverseScope,
+      def.$$reverseScope,
     )
     .catch(() => {});
 }
@@ -118,12 +118,13 @@ describe("Static() layout and slot reverse scope at bake time", () => {
 
     for (const [key, def] of [
       ["root", rootLayout],
+      ["rootSlot", rootSlot],
       ["outer", outerLayout],
       ["inner", innerLayout],
       ["slot", innerSlot],
       ["route", dottedRoute],
     ] as const) {
-      await bake(def);
+      await bake(router, def);
     }
 
     // Every row in one assertion: a bake that resolves one include too high
@@ -137,6 +138,9 @@ describe("Static() layout and slot reverse scope at bake time", () => {
     expect(actual).toEqual({
       // Root scope has no name prefix; the bare-name fallback resolves it.
       root: "/home",
+      // A slot at root scope resolves the same way (it threw Unknown route
+      // while the bake read the empty prefix as a route name).
+      rootSlot: "/home",
       // Prefix "outer": one include deep the prefix and the stripped route
       // name agree, so this row passed before the fix too.
       outer: "/outer/settings",
@@ -147,5 +151,55 @@ describe("Static() layout and slot reverse scope at bake time", () => {
       // keeps resolving from its route name, not from the "outer" module.
       route: "/outer/blog/settings",
     });
+  });
+
+  it("bakes a def mounted twice in its last mount's scope, prefix included", async () => {
+    let resolved: string | undefined;
+    const shared = Static((ctx: any) => {
+      try {
+        resolved = ctx.reverse(".settings");
+      } catch (error) {
+        resolved = `ERROR: ${String(error)}`;
+      }
+      throw new Error("halt-before-encode");
+    });
+
+    // One def, two mounts: a named include first, the root scope last. The
+    // scope is one stamp, so the last mount clears the earlier prefix too; a
+    // bake that keeps it resolves the named module's route ("/outer/settings")
+    // where the last mount renders "/settings".
+    const namedModule = urls(({ path, layout }) => [
+      layout(shared, () => [
+        path("/settings", () => null, { name: "settings" }),
+      ]),
+    ]);
+    const rootModule = urls(({ path, layout }) => [
+      layout(shared, () => [
+        path("/settings", () => null, { name: "settings" }),
+      ]),
+    ]);
+    const twice = urls(({ include }) => [
+      include("/outer", namedModule, { name: "outer" }),
+      include("/root-mount", rootModule, { name: "" }),
+    ]);
+    const twiceRouter = createRouter({
+      id: "static-reverse-scope-twice",
+      $$routeNames: {
+        settings: "/settings",
+        "outer.settings": "/outer/settings",
+      },
+    }).routes(twice) as unknown as RangoInternal<any, any>;
+
+    await generateManifestFull(twice, 0, {
+      routerId: "static-reverse-scope-twice",
+    });
+
+    await bake(twiceRouter, shared);
+
+    // The root mount renders "/settings" live; a bake that keeps the earlier
+    // mount's prefix resolves the named module's route instead.
+    expect(resolved).toBe("/settings");
+    expect((shared as any).$$routePrefix).toBeUndefined();
+    expect((shared as any).$$rootScoped).toBe(true);
   });
 });

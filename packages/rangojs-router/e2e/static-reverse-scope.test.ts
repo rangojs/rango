@@ -8,19 +8,22 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * that declares it, exactly as the same segment resolves it live.
  *
  * test-app mounts include("/static-scope", ..., { name: "" }) — a transparent
- * include, so its Static root-scope layout bakes with no name prefix — and
- * below it the outer module (prefix "outer") holds the inner module (prefix
- * "outer.inner"). The outer and the inner module both name a route "settings",
- * so a bake that resolves one include too high bakes the outer module's URL
- * for the inner layout and the inner slot (it did: /static-scope/outer/settings
- * instead of /static-scope/outer/inner/settings), and a root-scope bake used to
- * throw Unknown route for ".staticScopeHome".
+ * include, so its Static root-scope layout and parallel slot bake with no name
+ * prefix — and below it the outer module (prefix "outer") holds the inner
+ * module (prefix "outer.inner"). The outer and the inner module both name a
+ * route "settings", so a bake that resolves one include too high bakes the
+ * outer module's URL for the inner layout and the inner slot (it did:
+ * /static-scope/outer/settings instead of
+ * /static-scope/outer/inner/settings), and a root-scope bake used to throw
+ * Unknown route for ".staticScopeHome" — the layout's and the slot's alike.
  */
 
 const BASE = "/static-scope";
 
 async function expectRootScopeLink(page: Page) {
   await expect(testId(page, "srs-root-home")).toHaveText(`${BASE}/home`);
+  // A root-scope parallel slot bakes the same link as its layout.
+  await expect(testId(page, "srs-root-slot-home")).toHaveText(`${BASE}/home`);
 }
 
 async function expectInnerLinks(page: Page) {

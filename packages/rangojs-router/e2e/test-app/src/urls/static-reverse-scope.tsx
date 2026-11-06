@@ -7,8 +7,8 @@ import { Outlet, ParallelOutlet } from "@rangojs/router/client";
  *
  * Mounted in urls.tsx as
  *   include("/static-scope", staticReverseScopePatterns, { name: "" })
- * — a transparent include, so this layout sits at root scope with no name
- * prefix, the scope a router's root layout bakes in. Below it
+ * — a transparent include, so this layout and its slot sit at root scope with
+ * no name prefix, the scope a router's root layout bakes in. Below it
  * include(..., { name: "outer" }) holds a layout at prefix "outer" and
  * include(..., { name: "inner" }) a layout and a slot at prefix "outer.inner".
  * Both the outer and the inner module name a route "settings": resolving one
@@ -21,8 +21,17 @@ import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 export const StaticScopeRootLayout = Static((ctx) => (
   <div data-testid="srs-root-layout">
     <span data-testid="srs-root-home">{ctx.reverse(".staticScopeHome")}</span>
+    <ParallelOutlet name="@aside" />
     <Outlet />
   </div>
+));
+
+export const StaticScopeRootSlot = Static((ctx) => (
+  <aside data-testid="srs-root-slot">
+    <span data-testid="srs-root-slot-home">
+      {ctx.reverse(".staticScopeHome")}
+    </span>
+  </aside>
 ));
 
 export const StaticScopeOuterLayout = Static((ctx) => (
@@ -68,13 +77,18 @@ const outerPatterns = urls(({ path, layout, include }) => [
   ]),
 ]);
 
-export const staticReverseScopePatterns = urls(({ path, layout, include }) => [
-  layout(StaticScopeRootLayout, () => [
-    path(
-      "/home",
-      () => <div data-testid="srs-home-page">Static scope home</div>,
-      { name: "staticScopeHome" },
-    ),
-    include("/outer", outerPatterns, { name: "outer" }),
-  ]),
-]);
+export const staticReverseScopePatterns = urls(
+  ({ path, layout, include, parallel }) => [
+    layout(StaticScopeRootLayout, () => [
+      // A slot at root scope: its bake has no name prefix to fall back on, the
+      // shape that threw Unknown route before the fix.
+      parallel({ "@aside": StaticScopeRootSlot }),
+      path(
+        "/home",
+        () => <div data-testid="srs-home-page">Static scope home</div>,
+        { name: "staticScopeHome" },
+      ),
+      include("/outer", outerPatterns, { name: "outer" }),
+    ]),
+  ],
+);

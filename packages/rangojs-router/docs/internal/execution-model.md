@@ -2546,13 +2546,15 @@ A `Static()` layout or slot takes the same route at build time. There is no
 request, so no `EntryData` and no live ctx: `renderStaticSegment`
 (`router/prerender-match.ts`) builds the ctx with `createStaticContext` and
 wraps it in `withReverseScope` with the def's own scope, which the DSL stamps
-on the definition at mount time — `$$routePrefix` is the `include()` name
-prefix (`ctx.namePrefix`), `$$rootScoped` is `getRootScoped()`. The collector
-(`vite/discovery/prerender-collection.ts`) passes both. Without the wrap the
-bake read `$$routePrefix` as a route name and dropped its last segment, so a
-layout at prefix `account.project` baked the account module's URL for
-`.settings`, and at root scope, where the prefix is empty, the bake threw
-`Unknown route` for a name the same layout resolved live.
+on the definition at mount time — `stampStaticDefScope` (`server/context.ts`)
+writes `$$reverseScope` (`getReverseScope()`: the `include()` name prefix and
+`getRootScoped()`), and the collector
+(`vite/discovery/prerender-collection.ts`) passes it. A route def has no scope:
+its dot-local names resolve from its route name, as its live handler's do.
+Without the wrap the bake read `$$routePrefix` as a route name and dropped its
+last segment, so a layout at prefix `account.project` baked the account
+module's URL for `.settings`, and at root scope, where the prefix is empty, the
+bake threw `Unknown route` for a name the same layout resolved live.
 
 Limits:
 
@@ -2568,9 +2570,13 @@ Limits:
   child inherits.
 - A `Static()` def mounted more than once is stamped by its last mount, and
   its artifact is keyed by handler id: both mounts bake in that one scope.
+  `stampStaticDefScope` writes that identity whole (route name, prefix, root
+  scope, `$$reverseScope`), so a re-mount cannot pair one mount's prefix with
+  another's root scope.
 - A `Static()` layout's or slot's `ctx.routeName` is its include name prefix
   (`$$routePrefix`), not a route name; a `Static()` route's is its route name.
-  Only `reverse` reads the scope.
+  The scope itself is read only through `reverse` (and `_reverseScope`, which
+  keys a `"use cache"` call taking the ctx).
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,

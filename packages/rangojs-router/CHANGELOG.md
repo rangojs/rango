@@ -15,7 +15,10 @@ resolved live.
 
 **Now.** A `Static()` layout or slot bakes `ctx.reverse(".name")` in the
 include scope that declared it — the same `ReverseScope` its live ctx
-carries — at every nesting depth, the root included.
+carries — at every nesting depth, the root included. One definition mounted
+more than once bakes in the scope of its last mount, prefix included: the
+mount stamps the whole scope at once, so a re-mount cannot keep the previous
+mount's prefix next to its own root scope.
 
 ## 0.35.0 (2026-11-04)
 

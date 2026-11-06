@@ -21,6 +21,7 @@ import {
   warnLiveIntercepts,
 } from "../utils/prerender-utils.js";
 import type { DiscoveryState } from "./state.js";
+import type { ReverseScope } from "../../server/context.js";
 import { createRangoDebugger, NS } from "../debug.js";
 
 const debug = createRangoDebugger(NS.prerender);
@@ -439,22 +440,18 @@ export async function renderStaticHandlers(
       const owned = owner !== undefined ? registry.get(owner) : undefined;
       const candidates = owned ? [owned] : [...registry.values()];
       // path() stamps the mounted route's full name; layout() and parallel()
-      // stamp only the include name prefix, since a layout or slot is not a
-      // route. A mounted layout or slot is the only kind that has a
-      // ReverseScope to bake in: its dot-local names resolve in the include
-      // scope that declared it, the same scope its live ctx carries. A route's
-      // resolve from its own route name, as its live handler does.
+      // stamp the include scope that declared them instead, as `$$reverseScope`
+      // (stampStaticDefScope) — a layout or slot is not a route, and its
+      // dot-local names resolve in that scope, the same one its live ctx
+      // carries. A route has no scope: its dot-local names resolve from its own
+      // route name, as its live handler does.
       const stampedRouteName = (def as any).$$routeName as string | undefined;
       const stampedRootScoped = (def as any).$$rootScoped as
         | boolean
         | undefined;
-      const reverseScope =
-        stampedRouteName === undefined && stampedRootScoped !== undefined
-          ? {
-              prefix: (def as any).$$routePrefix as string | undefined,
-              rootScoped: stampedRootScoped,
-            }
-          : undefined;
+      const reverseScope = (def as any).$$reverseScope as
+        | ReverseScope
+        | undefined;
       for (const routerInstance of candidates) {
         if (!routerInstance.renderStaticSegment) continue;
         try {
