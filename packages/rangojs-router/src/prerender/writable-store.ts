@@ -71,7 +71,30 @@ interface StoredEnvelope {
   };
 }
 
-type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
+type StoredPage = StoredEnvelope & {
+  entry: PrerenderEntry;
+  removed?: never;
+  redirect?: never;
+};
+
+/**
+ * What a stored redirect answers with. `location` is the target the render
+ * produced, before the serving request's basename: `redirect()` prefixes the
+ * basename of the request it runs in, and a requestless render has none, so
+ * the stored value is the app path and each request prefixes its own. A store
+ * holds no Response: the out-of-band brands `redirect()` sets on one (the
+ * `{ external: true }` opt-in, location state) are WeakSet/WeakMap membership
+ * and cannot cross a store, so `external` rides the envelope as a field and a
+ * redirect carrying location state is not storable at all.
+ */
+export interface StoredRedirectTarget {
+  /** The `Location` the render produced (`redirect()`'s argument). */
+  location: string;
+  /** The status the render produced: 302 unless the app asked for another. */
+  status: number;
+  /** The render's `redirect(url, { external: true })` opt-in. */
+  external?: true;
+}
 
 /**
  * The "removed" marker (tombstone) stored in place of a page, by
@@ -82,14 +105,39 @@ type StoredPage = StoredEnvelope & { entry: PrerenderEntry; removed?: never };
  * `meta` is stamped like a page's for a render outcome, so that marker goes
  * stale and is rechecked; a `remove()` marker has no `staleAt` and no tags.
  */
-type StoredTombstone = StoredEnvelope & { removed: true; entry?: never };
+type StoredTombstone = StoredEnvelope & {
+  removed: true;
+  entry?: never;
+  redirect?: never;
+};
+
+/**
+ * The redirect stored in place of a page, by a refresh whose render redirected
+ * (`redirect()` in the route handler, a layout or slot handler, or any server
+ * component). A request that finds it is answered with that redirect, never
+ * with a page or the build-time entry below the overlay: the render said this
+ * URL is no longer the page, and the target it named is the answer.
+ *
+ * No `entry`: a router from before this variant rejects it as malformed (a
+ * miss) instead of serving an empty page. `meta` is stamped like a page's, so
+ * the redirect goes stale and is rechecked like one.
+ */
+type StoredRedirect = StoredEnvelope & {
+  redirect: StoredRedirectTarget;
+  entry?: never;
+  removed?: never;
+};
 
 /**
  * Versioned envelope the router composes on a refresh or a removal and
- * verifies on every read: a page, or the marker that the page was removed. A
- * store persists either as given and returns it as stored.
+ * verifies on every read: a page, the marker that the page was removed, or the
+ * redirect that answers in its place. A store persists any of them as given
+ * and returns it as stored.
  */
-export type PrerenderStoredEntry = StoredPage | StoredTombstone;
+export type PrerenderStoredEntry =
+  | StoredPage
+  | StoredTombstone
+  | StoredRedirect;
 
 /**
  * The writable durable overlay: plain get/set. Backed in production by a
@@ -199,6 +247,28 @@ export function composeStoredTombstone(
 }
 
 /**
+ * @internal Compose the redirect stored in place of a page by a refresh whose
+ * render redirected. Its meta is a page's (composeStoredEntry), so `ttl` and
+ * `tags` mean the same and the redirect is rechecked like a page.
+ */
+export function composeStoredRedirect(
+  key: PrerenderKey,
+  redirect: StoredRedirectTarget,
+  options: StoredEntryOptions,
+  now: number,
+  staleFrom: number = now,
+): StoredRedirect {
+  const { v, meta } = composeStoredEntry(
+    key,
+    { segments: [], handles: "" },
+    options,
+    now,
+    staleFrom,
+  );
+  return { v, redirect, meta };
+}
+
+/**
  * @internal Verify a store's answer is safe to serve for this key: the
  * envelope shape and version tag, the key version, and the stored params
  * against the request's (the 8-hex DJB2 collision guard, param-hash.ts: a
@@ -218,14 +288,26 @@ export function isStoredEntryValidFor(
   const candidate = stored as Partial<PrerenderStoredEntry>;
   const entry = candidate.entry;
   const meta = candidate.meta;
+  // Three shapes, told apart by what they carry: a page (`entry`), the
+  // "removed" marker (`removed: true`), the redirect that answers in its place
+  // (`redirect`). A mixed envelope is malformed, not a page with extra fields.
+  const redirect = candidate.redirect;
+  const hasRedirect = redirect != null;
   if (
     candidate.v !== 1 ||
-    // The "removed" marker has no entry; a page must have a whole one.
-    (candidate.removed !== true &&
-      (entry == null ||
-        typeof entry !== "object" ||
-        !Array.isArray(entry.segments) ||
-        typeof entry.handles !== "string")) ||
+    (hasRedirect
+      ? candidate.removed === true ||
+        entry != null ||
+        typeof redirect !== "object" ||
+        typeof redirect.location !== "string" ||
+        redirect.location === "" ||
+        typeof redirect.status !== "number"
+      : // The "removed" marker has no entry; a page must have a whole one.
+        candidate.removed !== true &&
+        (entry == null ||
+          typeof entry !== "object" ||
+          !Array.isArray(entry.segments) ||
+          typeof entry.handles !== "string")) ||
     meta == null ||
     typeof meta !== "object" ||
     !Array.isArray(meta.tags) ||

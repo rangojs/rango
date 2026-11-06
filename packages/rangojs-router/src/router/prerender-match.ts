@@ -33,7 +33,13 @@ import type {
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { RouterVersions } from "../router-versions.js";
 import type { OnDemandRouteConfig } from "../prerender/on-demand.js";
-import { isPrerenderPersonalizationError } from "../prerender/producer-guard.js";
+import {
+  isPrerenderPersonalizationError,
+  PrerenderPersonalizationError,
+} from "../prerender/producer-guard.js";
+import { getRedirectState, isExternalRedirect } from "../redirect-origin.js";
+import { isRedirectResponse } from "../response-utils.js";
+import type { StoredRedirectTarget } from "../prerender/writable-store.js";
 import { isDataNotFoundError } from "../errors.js";
 
 /**
@@ -110,6 +116,8 @@ export async function matchForPrerender<TEnv = any>(
   passthrough?: true;
   /** On-demand only: the render hit `notFound()` and nothing else failed. */
   notFound?: true;
+  /** On-demand only: the render redirected; the trigger stores the redirect. */
+  redirect?: StoredRedirectTarget;
   /** Route-level onDemand config (ttl/tags) read off the route entry; only set
    *  when `onDemand` and the route declared an onDemand object literal. */
   onDemandConfig?: OnDemandRouteConfig;
@@ -634,23 +642,60 @@ export async function matchForPrerender<TEnv = any>(
   );
   // A build or dev render keeps the throw (the caller's onError policy).
   if (!onDemand) return rendered;
-  // An on-demand refresh reports a notFound() anywhere in the render (a
-  // handler's throw, or the only kind of error Flight collected) as an
-  // outcome, with the route's onDemand config: the trigger stores the
-  // "removed" marker stamped like a page (create-prerender-trigger.ts).
+  // An on-demand refresh reports two outcomes that are not failures, each with
+  // the route's onDemand config, so the trigger can stamp what it stores like a
+  // page (create-prerender-trigger.ts): a `notFound()` anywhere in the render (a
+  // handler's throw, or the only kind of error Flight collected) becomes the
+  // "removed" marker, and a `redirect()` becomes the stored redirect.
   try {
     return await rendered;
   } catch (error) {
-    if (!isDataNotFoundError(error)) throw error;
-    return {
-      segments: [],
-      handles: "",
-      routeName: matched.routeKey,
-      params: matchedParams,
-      notFound: true,
-      onDemandConfig,
-    };
+    if (isDataNotFoundError(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        notFound: true,
+        onDemandConfig,
+      };
+    }
+    if (error instanceof Response && isRedirectResponse(error)) {
+      return {
+        segments: [],
+        handles: "",
+        routeName: matched.routeKey,
+        params: matchedParams,
+        redirect: storedRedirectTarget(error),
+        onDemandConfig,
+      };
+    }
+    throw error;
   }
+}
+
+/**
+ * The redirect a render threw, as the trigger stores it: the `Location` and the
+ * status, plus the `{ external: true }` opt-in. That opt-in is a WeakSet brand
+ * on the Response (redirect-origin.ts), which no store can hold, so it rides
+ * the envelope as a field and the serve path re-brands the Response it builds.
+ *
+ * A redirect that carries location state (`redirect(url, { state })`) is not
+ * storable, and throws as personalized: the state is the visitor's (a flash
+ * message, a return path), so a payload shared by every visitor would replay
+ * one visitor's state to each of them. It maps to `skipped-personalized` like
+ * any other per-visitor render, and the previous entry keeps serving.
+ */
+function storedRedirectTarget(response: Response): StoredRedirectTarget {
+  if (getRedirectState(response)) {
+    throw new PrerenderPersonalizationError("redirect(url, { state })");
+  }
+  return {
+    // isRedirectResponse guarantees a truthy Location.
+    location: response.headers.get("Location")!,
+    status: response.status,
+    ...(isExternalRedirect(response) ? { external: true as const } : {}),
+  };
 }
 
 /**

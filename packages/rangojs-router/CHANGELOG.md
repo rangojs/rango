@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a refresh whose render redirects stores the redirect instead of keeping the page
+
+**Before.** `router.prerender(url)` on a `Prerender(..., { onDemand })` route
+whose render called `redirect()` came back
+`{ ok: false, status: "render-failed", error: <the 3xx Response> }`, and the
+entry already stored for that URL kept serving: a product that moved kept
+showing its old page, and a URL with no entry stayed a 404 in production.
+`notFound()` and `ctx.passthrough()` were already stored as a "removed"
+marker; a redirect was not.
+
+**Now.** The redirect is stored in place of the page, stamped with the
+route's `ttl` and `tags` like a page, and the refresh reports
+`{ ok: true, status: "redirected", location }`. A request for that URL is
+answered with the redirect in every shape: a document GET (`301` and
+`Location`, say), a client navigation (the `X-RSC-Redirect` soft form), and a
+server action's re-render. `{ external: true }` and the request's basename
+survive the store. A later refresh renders again and replaces the redirect
+with whatever that render says (a page, another redirect, or a removal);
+`{ onlyIfStale: true }` leaves a fresh redirect alone and reports
+`redirected`.
+
+A redirect that carries location state (`redirect(url, { state })`) is
+per-visitor, so it is not stored: the refresh reports
+`{ ok: false, status: "skipped-personalized" }` and the previous entry keeps
+serving, as it does for `cookies()` and `headers()`.
+
+```ts
+Prerender(
+  async (ctx) => {
+    const product = await db.product(ctx.params.slug);
+    if (!product) notFound();
+    if (product.slug !== ctx.params.slug) redirect(`/products/${product.slug}`, 301);
+    return <Product product={product} />;
+  },
+  { onDemand: { ttl: 3600 } },
+);
+
+await router.prerender({ env })("/products/old-slug");
+// { ok: true, status: "redirected", location: "/products/new-slug", ... }
+// GET /products/old-slug -> 301 Location: /products/new-slug
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

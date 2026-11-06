@@ -26,10 +26,15 @@
  *   is rechecked like a page. `prerender.remove()` stores one without
  *   rendering, which never goes stale. A Passthrough build handler that
  *   declines (`ctx.passthrough()`) stores one too, so its live handler answers.
- * - A page and a render's marker (a `notFound()` or a decline) carry the
- *   render's start as `storedAt`, so a `markStale()` that lands during the
- *   render marks the result; `staleAt` counts the ttl from the write. A
- *   `remove()` marker renders nothing and carries its write time.
+ * - A `redirect()` in the render is not a failure either: it stores the
+ *   redirect in place of the page, stamped the same way, so a request for the
+ *   URL is answered with the redirect instead of the page or its build-time
+ *   entry. A redirect carrying location state is per-visitor and is not
+ *   stored (`skipped-personalized`).
+ * - A page and a render's marker (a `notFound()`, a decline or a redirect)
+ *   carry the render's start as `storedAt`, so a `markStale()` that lands
+ *   during the render marks the result; `staleAt` counts the ttl from the
+ *   write. A `remove()` marker renders nothing and carries its write time.
  * - An on-demand target is path-only (its key carries no search); a warm
  *   target keeps its search params, which cache keys carry.
  * - A warm writes only to a store shared beyond the place the call runs.
@@ -47,12 +52,14 @@ import { isPrerenderPersonalizationError } from "./producer-guard.js";
 import { normalizeTagList } from "../cache/cache-policy.js";
 import {
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryStale,
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
   type PrerenderStoredEntry,
+  type StoredRedirectTarget,
 } from "./writable-store.js";
 import type {
   OnDemandRouteConfig,
@@ -89,6 +96,8 @@ export interface ProducerOutput {
   passthrough?: true;
   /** The render hit `notFound()` and nothing else failed: no page to store. */
   notFound?: true;
+  /** The render redirected: the redirect is stored in place of the page. */
+  redirect?: StoredRedirectTarget;
   onDemandConfig?: OnDemandRouteConfig;
 }
 
@@ -481,8 +490,9 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     const store = config.store;
     /** What the store holds for the page, as a result reports it. */
     const held = (
-      status: "already-fresh" | "removed",
+      status: "already-fresh" | "removed" | "redirected",
       meta: PrerenderStoredEntry["meta"],
+      location?: string,
     ): PrerenderResult => ({
       ok: true,
       path: "on-demand",
@@ -494,7 +504,16 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // The configured ttl, not staleAt - storedAt: storedAt is the render's
       // start and a markStale() lowers staleAt, so the difference is neither.
       ...(meta.ttl != null ? { ttl: meta.ttl } : {}),
+      ...(location !== undefined ? { location } : {}),
     });
+    /** A held entry, reported as whatever it holds. */
+    const heldEntry = (entry: PrerenderStoredEntry): PrerenderResult =>
+      entry.redirect
+        ? held("redirected", entry.meta, entry.redirect.location)
+        : held(
+            entry.removed === true ? "removed" : "already-fresh",
+            entry.meta,
+          );
     // Replace-on-success: a failed write leaves the prior durable entry (and
     // the bundled manifest fallback) in place.
     const storeFailed = (error: unknown): PrerenderResult => ({
@@ -531,13 +550,10 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
       // An unreadable or unverifiable entry is "couldn't confirm fresh":
       // render, never throw (one result per target, many() keeps going).
       const existing = await readVerifiedStoredEntry(store, key, match.params);
-      // A fresh marker is left like a fresh page; a stale one (a notFound()
-      // past its ttl, or marked stale) is rendered again below.
+      // A fresh marker (a notFound() or a redirect) is left like a fresh page;
+      // a stale one is rendered again below.
       if (existing && !isStoredEntryStale(existing, Date.now())) {
-        return held(
-          existing.removed === true ? "removed" : "already-fresh",
-          existing.meta,
-        );
+        return heldEntry(existing);
       }
     }
 
@@ -585,11 +601,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     }
     // No page to store: the render hit notFound() (the page no longer
     // exists; keeping the old entry would serve a deleted item until the next
-    // deploy), or a Passthrough build handler declined the param (the live
+    // deploy), a Passthrough build handler declined the param (the live
     // handler is to answer, which it only does once nothing in a prerender
-    // store does). Both store the "removed" marker, stamped below with the
-    // route's ttl and tags like a page, so the outcome is rechecked like one.
-    const noPage = produced.notFound === true || produced.passthrough === true;
+    // store does), or the render redirected (the URL is no longer this page:
+    // answering with the page would send a visitor to content the app itself
+    // has moved away from, and answering 404 as a notFound() does would drop
+    // the target the app named). Each stores something in place of the page,
+    // stamped below with the route's ttl and tags like a page, so the outcome
+    // is rechecked like one.
+    const redirect = produced.redirect;
+    const removed = produced.notFound === true || produced.passthrough === true;
+    const noPage = removed || redirect !== undefined;
 
     // Resolve soft TTL + tags from the route's onDemand config (read off the
     // loaded route entry by the producer), falling back to the router default.
@@ -614,32 +636,41 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
         tags,
         params: match.params,
       };
-      if (!noPage) {
-        // A marker stored after this render started is not overwritten by its
-        // page: a remove() (stamped with its write time) always qualifies. A
+      if (!removed) {
+        // A page or a redirect is served, so a marker stored after this render
+        // started must not be overwritten by it:
+        // a remove() (stamped with its write time) always qualifies. A
         // render's own marker carries that render's start, so only a render
         // that started later than this one wins; an older render's notFound()
         // does not (this one read newer data). This narrows the race, it
         // cannot close it: the read and the write are two store calls, and KV
-        // is eventually consistent. Otherwise last write wins.
+        // is eventually consistent. Otherwise last write wins. A tombstone this
+        // render writes needs no guard: writing one marker over another serves
+        // the same answer.
         const current = await readVerifiedStoredEntry(store, key, match.params);
-        if (current?.removed === true && current.meta.storedAt > startedAt) {
-          return held("removed", current.meta);
+        if (
+          current != null &&
+          (current.removed === true || current.redirect != null) &&
+          current.meta.storedAt > startedAt
+        ) {
+          return heldEntry(current);
         }
       }
       // The router composes the envelope; the store only persists it.
       const writtenAt = Date.now();
       await store.set(
         key,
-        noPage
-          ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
-          : composeStoredEntry(
-              key,
-              { segments: produced.segments, handles: produced.handles },
-              stamp,
-              startedAt,
-              writtenAt,
-            ),
+        redirect !== undefined
+          ? composeStoredRedirect(key, redirect, stamp, startedAt, writtenAt)
+          : noPage
+            ? composeStoredTombstone(key, stamp, startedAt, writtenAt)
+            : composeStoredEntry(
+                key,
+                { segments: produced.segments, handles: produced.handles },
+                stamp,
+                startedAt,
+                writtenAt,
+              ),
       );
     } catch (err) {
       return storeFailed(err);
@@ -657,12 +688,17 @@ export function createPrerenderTrigger<TEnv = any, TRoutes = {}>(
     return {
       ok: true,
       path: "on-demand",
-      status: produced.notFound ? "removed" : "rendered",
+      status: redirect
+        ? "redirected"
+        : produced.notFound
+          ? "removed"
+          : "rendered",
       target: display,
       routeName: match.routeName,
       key: keyStr,
       tags,
       ...(ttl != null ? { ttl } : {}),
+      ...(redirect !== undefined ? { location: redirect.location } : {}),
     };
   }
 

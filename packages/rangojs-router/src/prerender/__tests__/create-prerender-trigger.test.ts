@@ -1458,6 +1458,196 @@ describe("createPrerenderTrigger", () => {
       });
     });
 
+    describe("a refresh whose render redirects", () => {
+      const redirectTarget = { location: "/products/43", status: 301 };
+      const redirected = {
+        ok: true,
+        path: "on-demand",
+        status: "redirected",
+        target: "/products/42",
+        routeName: "products.detail",
+        key: serializePrerenderKey(productKey()),
+        tags: [],
+        location: "/products/43",
+      };
+
+      it("stores the redirect in place of the page and reports redirected", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        expect(store.peek(productKey())).toHaveProperty("entry");
+
+        runProducer.mockResolvedValueOnce(output({ redirect: redirectTarget }));
+        const result = await trigger("/products/42");
+
+        expect(result).toEqual(redirected);
+        const stored = store.peek(productKey());
+        expect(stored).toMatchObject({
+          v: 1,
+          redirect: redirectTarget,
+          meta: { tags: [], version: "b1", params: { id: "42" } },
+        });
+        expect(stored).not.toHaveProperty("entry");
+        expect(stored).not.toHaveProperty("removed");
+        // No route ttl and no router ttl: never stale, like a page.
+        expect(stored?.meta).not.toHaveProperty("staleAt");
+        expect(store.size).toBe(1);
+      });
+
+      it("stamps the redirect like a page: the route's ttl and tags, else the router's ttl", async () => {
+        const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+        try {
+          const routed = harness({
+            runProducer: async () =>
+              output({
+                redirect: redirectTarget,
+                onDemandConfig: {
+                  ttl: 60,
+                  tags: ({ params }) => [`product:${params.id}`, " "],
+                },
+              }),
+          });
+          expect(await routed.trigger("/products/42")).toEqual({
+            ...redirected,
+            tags: ["product:42"],
+            ttl: 60,
+          });
+          expect(routed.store.peek(productKey())).toEqual({
+            v: 1,
+            redirect: redirectTarget,
+            meta: {
+              storedAt: 1000,
+              staleAt: 61_000,
+              ttl: 60,
+              tags: ["product:42"],
+              version: "b1",
+              params: { id: "42" },
+            },
+          });
+        } finally {
+          clock.mockRestore();
+        }
+      });
+
+      it("a later refresh that renders a page replaces the redirect", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output({ redirect: redirectTarget }),
+        );
+        const { trigger, store } = harness({ runProducer });
+        expect(await trigger("/products/42")).toEqual(redirected);
+
+        runProducer.mockResolvedValueOnce(output());
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "rendered",
+        });
+        expect(store.peek(productKey())).toHaveProperty("entry");
+        expect(store.peek(productKey())).not.toHaveProperty("redirect");
+      });
+
+      it("a redirect carrying location state is skipped-personalized: nothing is written", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () => output(),
+        );
+        const { trigger, store } = harness({ runProducer });
+        await trigger("/products/42");
+        const page = store.peek(productKey());
+
+        runProducer.mockRejectedValueOnce(
+          new PrerenderPersonalizationError("redirect(url, { state })"),
+        );
+        expect(await trigger("/products/42")).toMatchObject({
+          ok: false,
+          path: "on-demand",
+          status: "skipped-personalized",
+        });
+        expect(store.peek(productKey())).toBe(page);
+      });
+
+      it("a redirect that lands during the render wins over that render's page", async () => {
+        const h = harness({
+          runProducer: async () => {
+            // The item moves while this render runs.
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await h.store.set(productKey(), {
+              v: 1,
+              redirect: redirectTarget,
+              meta: {
+                storedAt: Date.now(),
+                tags: [],
+                version: "b1",
+                params: { id: "42" },
+              },
+            });
+            return output({ onDemandConfig: { ttl: 60 } });
+          },
+        });
+
+        const result = await h.trigger("/products/42");
+
+        expect(result).toMatchObject({
+          ok: true,
+          status: "redirected",
+          location: "/products/43",
+        });
+        expect(h.store.peek(productKey())).toMatchObject({
+          redirect: redirectTarget,
+        });
+        expect(h.store.peek(productKey())).not.toHaveProperty("entry");
+      });
+
+      it("a remove() that lands during a redirecting render wins over the redirect", async () => {
+        const h = harness({
+          runProducer: async () => {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            await h.trigger.remove("/products/42");
+            return output({ redirect: redirectTarget });
+          },
+        });
+
+        expect(await h.trigger("/products/42")).toMatchObject({
+          ok: true,
+          status: "removed",
+        });
+        expect(h.store.peek(productKey())).toMatchObject({ removed: true });
+        expect(h.store.peek(productKey())).not.toHaveProperty("redirect");
+      });
+
+      it("onlyIfStale leaves a fresh redirect alone and reports it; a stale one renders", async () => {
+        const runProducer = vi.fn<PrerenderTriggerDeps["runProducer"]>(
+          async () =>
+            output({
+              redirect: redirectTarget,
+              onDemandConfig: { tags: ["product:42"] },
+            }),
+        );
+        const store = createMemoryPrerenderStore();
+        const { trigger } = harness({
+          config: { store },
+          runProducer,
+        });
+        await trigger("/products/42");
+        runProducer.mockClear();
+
+        expect(await trigger("/products/42", { onlyIfStale: true })).toEqual({
+          ...redirected,
+          tags: ["product:42"],
+        });
+        expect(runProducer).not.toHaveBeenCalled();
+
+        // Stale (marked through the tag the entry carries), and the render no
+        // longer redirects: the sweep renders the page over it.
+        await trigger.markStale(["product:42"]);
+        runProducer.mockResolvedValueOnce(output());
+        expect(
+          await trigger("/products/42", { onlyIfStale: true }),
+        ).toMatchObject({ ok: true, status: "rendered" });
+        expect(store.peek(productKey())).toHaveProperty("entry");
+      });
+    });
+
     describe("PrerenderError names the call that failed", () => {
       it("prerender.remove() and remove.many()", async () => {
         const { trigger } = harness({ config: undefined });

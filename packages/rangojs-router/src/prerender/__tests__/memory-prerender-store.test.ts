@@ -3,6 +3,7 @@ import { createMemoryPrerenderStore } from "../memory-prerender-store.js";
 import {
   serializePrerenderKey,
   composeStoredEntry,
+  composeStoredRedirect,
   composeStoredTombstone,
   isStoredEntryValidFor,
   isStoredEntryStale,
@@ -161,6 +162,52 @@ describe("isStoredEntryValidFor — malformed durable values read as a miss", ()
       ),
     ).toBe(false);
   });
+  it("rejects a malformed redirect without throwing", () => {
+    const meta = { version: k.version, params: m, tags: [], storedAt: 1 };
+    // No location, no status, the wrong types, or a page/marker mixed in: a
+    // miss, so a router never serves a redirect it cannot build.
+    expect(
+      isStoredEntryValidFor({ v: 1, redirect: {}, meta } as any, k, m),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { v: 1, redirect: { location: "", status: 302 }, meta } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        { v: 1, redirect: { location: "/x", status: "302" }, meta } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        {
+          v: 1,
+          redirect: { location: "/x", status: 302 },
+          removed: true,
+          meta,
+        } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+    expect(
+      isStoredEntryValidFor(
+        {
+          v: 1,
+          redirect: { location: "/x", status: 302 },
+          entry: { segments: [], handles: "" },
+          meta,
+        } as any,
+        k,
+        m,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("isStoredEntryValidFor (verify-on-read)", () => {
@@ -182,6 +229,20 @@ describe("isStoredEntryValidFor (verify-on-read)", () => {
   it("fails on a version mismatch (post-deploy scoping)", () => {
     expect(
       isStoredEntryValidFor(stored, key({ version: "b2" }), { id: "42" }),
+    ).toBe(false);
+  });
+
+  it("passes for a redirect, and still verifies its key like a page's", () => {
+    const redirect = composeStoredRedirect(
+      key(),
+      { location: "/product/43", status: 301 },
+      { params: { id: "42" }, tags: [] },
+      1000,
+    );
+    expect(isStoredEntryValidFor(redirect, key(), { id: "42" })).toBe(true);
+    expect(isStoredEntryValidFor(redirect, key(), { id: "99" })).toBe(false);
+    expect(
+      isStoredEntryValidFor(redirect, key({ version: "b2" }), { id: "42" }),
     ).toBe(false);
   });
 

@@ -159,8 +159,16 @@ export type PrerenderResult =
        * rechecked like a page. `onlyIfStale` finding a fresh marker reports
        * `removed` too. When the data source may be failing, throw anything
        * else: that is `render-failed` and keeps the page.
+       *
+       * `redirected`: the render redirected (`redirect()` anywhere in it), so
+       * the redirect is stored in place of the page and requests are answered
+       * with it instead of the page or its build-time entry. Stamped and
+       * rechecked like a page: a `notFound()` marker's rules apply, with the
+       * redirect in the marker's place. `onlyIfStale` finding a fresh one
+       * reports `redirected` too. A later refresh renders again and replaces
+       * it with whatever that render says (a page, a redirect, a removal).
        */
-      status: "rendered" | "already-fresh" | "removed";
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       /** Opaque, for debugging/logs only — not a stable format. */
@@ -168,6 +176,11 @@ export type PrerenderResult =
       tags: string[];
       /** Absent = never stale. */
       ttl?: number;
+      /**
+       * The stored redirect's target (`redirected` only): the `Location` the
+       * render produced, without the request's basename.
+       */
+      location?: string;
       /**
        * The warm request that followed the store write. Absent when the app
        * store is not shared, no origin resolved, or nothing was rendered.

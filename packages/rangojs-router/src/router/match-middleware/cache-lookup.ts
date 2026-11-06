@@ -67,7 +67,9 @@ import {
   readVerifiedStoredEntry,
   serializePrerenderKey,
   type PrerenderKey,
+  type StoredRedirectTarget,
 } from "../../prerender/writable-store.js";
+import { redirect } from "../../route-definition/redirect.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "../../cache/cache-policy.js";
 import type {
   PrerenderTargetObject,
@@ -792,10 +794,24 @@ export function scheduleOverlayRevalidation<TEnv>(
 }
 
 /**
+ * The redirect a stored overlay entry records, as the Response the handler's
+ * own `redirect()` would have produced (redirect-origin.ts).
+ */
+function storedRedirectResponse(target: StoredRedirectTarget): Response {
+  return redirect(target.location, {
+    status: target.status,
+    ...(target.external ? { external: true } : {}),
+  });
+}
+
+/**
  * The prerendered (build-time cached) entry for the current route, or null on
  * a miss. Intercept navigations consult only the intercept-specific entry
  * (`paramHash + "/i"`); a miss there falls through to the normal pipeline so
  * intercept-resolution can run. Callers run `ensurePrerenderDeps()` first.
+ *
+ * Throws the Response of a stored redirect: the overlay can hold a redirect in
+ * place of a page, and the request is answered with it.
  */
 async function readPrerenderSource<TEnv>(
   ctx: MatchContext<TEnv>,
@@ -838,6 +854,17 @@ async function readPrerenderSource<TEnv>(
           } as PrerenderTargetObject,
           reqCtx,
         );
+      }
+      if (stored.redirect != null) {
+        // The refresh recorded that this URL answers with a redirect. Thrown,
+        // not returned: a Response is this router's short-circuit control flow
+        // (handleHandlerResult does the same for a handler that redirects), so
+        // the document, client-navigation and action lanes convert it exactly
+        // as they convert the handler's own redirect(). Built per request
+        // through redirect() for the same reason: it applies THIS request's
+        // basename and re-brands the `{ external: true }` opt-in, neither of
+        // which a store can hold.
+        throw storedRedirectResponse(stored.redirect);
       }
       if (stored.removed === true) {
         // The page was removed. Not served, and step 2 is skipped: the
