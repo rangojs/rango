@@ -182,6 +182,20 @@ const FailingPageDef = Prerender<{ slug: string }>(
   { onDemand: { ttl: 3600, tags: redirectTag } },
 );
 
+/** Answers an off-host redirect once the switch is on: same answer shape. */
+let externalRedirect = false;
+
+const ExternalRedirectDef = Prerender<{ slug: string }>(
+  async () => [],
+  async (ctx) => {
+    if (externalRedirect) {
+      throw redirect("https://accounts.example.com/login", { external: true });
+    }
+    return pageOf("external", ctx.params.slug);
+  },
+  { onDemand: { ttl: 3600, tags: redirectTag } },
+);
+
 /**
  * A component that fails while the tree is encoded, as a real page's can. A
  * synchronous throw is reported during the layout segment's own encode, so it
@@ -556,6 +570,7 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
     }
     for (const key of Object.keys(renderCounts)) delete renderCounts[key];
     for (const key of Object.keys(renderAttempts)) delete renderAttempts[key];
+    externalRedirect = false;
   });
 
   afterEach(() => {
@@ -697,6 +712,35 @@ describe("on-demand prerender: a redirecting refresh keeps the page", () => {
     expect((await serveShellRequest(router, url)).flight).toContain(
       "failing:a:r1",
     );
+  });
+
+  // The config axis: the classification reads the Response, not the URL, so a
+  // basename-prefixed router and an off-host redirect answer the same way.
+  it("a redirect is an answer under a basename, external or not", async () => {
+    const router = createRouter({
+      basename: "/app",
+      prerender: { store },
+    }).routes(
+      urls(({ path }) => [
+        path("/redir-ext/:slug", ExternalRedirectDef, { name: "redirExt" }),
+      ]),
+    );
+    const prerender = router.prerender({ env: {} });
+
+    expect(await prerender("/app/redir-ext/a")).toMatchObject({
+      ok: true,
+      status: "rendered",
+    });
+    externalRedirect = true;
+    expect(await prerender("/app/redir-ext/a")).toMatchObject({
+      ok: false,
+      path: "on-demand",
+      status: "skipped-redirect",
+    });
+    expect(store.size).toBe(1);
+    const document = await serveShellRequest(router, "/app/redir-ext/a");
+    expect(document.response.status).toBe(200);
+    expect(document.flight).toContain("external:a:r1");
   });
 
   it("a non-redirect Response from a handler stays render-failed", async () => {
