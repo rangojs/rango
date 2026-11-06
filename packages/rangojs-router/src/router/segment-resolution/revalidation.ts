@@ -833,7 +833,13 @@ async function resolveParallelSlotComponent<TEnv>(
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
         if (hasLoadingFallback) {
-          const result = runAsSegment(parallelId, run);
+          // Same funnel as the route-handler path: a Response returned
+          // synchronously (redirect()) is control flow and throws here, before
+          // the slot streams, so the request short-circuits. One returned after
+          // an await rejects the tracked promise below, which the response has
+          // already started past: an error row, as a streamed route handler's
+          // redirect is.
+          const result = handleHandlerResult(runAsSegment(parallelId, run));
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
             result.finally(doneHandler).catch(() => {});
@@ -852,8 +858,17 @@ async function resolveParallelSlotComponent<TEnv>(
             component = result as ReactNode;
           }
         } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
+          // A static value (a Promise included) goes to render as is. A
+          // handler's result is not streamed, so a returned Response still
+          // short-circuits: run it through the same funnel a route or layout
+          // handler's result goes through. Otherwise the Response becomes the
+          // slot's component and only surfaces during Flight serialization
+          // ("Only plain objects, and a few built-ins, can be passed to Client
+          // Components"), which renders an error row instead of the redirect.
+          component =
+            typeof handler === "function"
+              ? handleHandlerResult(await run())
+              : handler;
           doneHandler();
         }
       } catch (error) {

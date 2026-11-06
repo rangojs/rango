@@ -298,12 +298,29 @@ beforeAll(async () => {
 type Projected = Record<string, unknown>;
 
 /**
- * A value as data the two walks can be compared on: promises settled, an
- * element as its type, key and props, collections by their entries, a
- * function by its name.
+ * A thrown value as data: a Response by its status (its message is empty), any
+ * other by its message.
+ */
+function thrownText(error: unknown): string {
+  if (error instanceof Response) return `Response ${error.status}`;
+  return String((error as Error)?.message ?? error);
+}
+
+/**
+ * A value as data the two walks can be compared on: promises settled (or
+ * rejected with what they threw), an element as its type, key and props,
+ * collections by their entries, a function by its name.
  */
 async function settled(value: unknown): Promise<unknown> {
-  if (value instanceof Promise) return { promise: await settled(await value) };
+  if (value instanceof Promise) {
+    // A streamed handler's promise rejects with what it threw, a Response
+    // (redirect()) included: an outcome to compare, not a broken projection.
+    try {
+      return { promise: await settled(await value) };
+    } catch (error) {
+      return { promise: { rejected: thrownText(error) } };
+    }
+  }
   if (isValidElement(value)) {
     const type = value.type as string | { name?: string };
     return {
@@ -538,7 +555,13 @@ function walkRevalidating(
 
 /** The text a rendered value shows: its strings, elements unwrapped. */
 async function textOf(node: unknown): Promise<string> {
-  if (node instanceof Promise) return textOf(await node);
+  if (node instanceof Promise) {
+    try {
+      return await textOf(await node);
+    } catch (error) {
+      return `threw ${thrownText(error)}`;
+    }
+  }
   if (typeof node === "string" || typeof node === "number") return `${node}`;
   if (Array.isArray(node)) {
     return (await Promise.all(node.map(textOf))).join("");
@@ -1278,13 +1301,16 @@ const CASES: Case[] = [
     metered: ["M0L0", "M0L0L0"],
   },
   {
+    // The slot declares loading(), so its returned Response is streamed: the
+    // walk leaves a promise that rejects with it (handleHandlerResult, as on
+    // the route-handler path), which rides the stream as an error row.
     name: "streamed slot handler returning a Response",
     pathname: "/slot-response",
     fresh: [
       "M0L0 layout",
       'M0L0L0 layout "root"',
       'M0L0L0L4 layout "response slot"',
-      "M0L0L0L4.@response parallel",
+      'M0L0L0L4.@response parallel "threw Response 204"',
       'M0L0L0L4R0 route "slot response"',
     ],
     expected: {},

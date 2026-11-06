@@ -328,6 +328,7 @@ import { buildSkipPatterns } from "./pages/build-skip.js";
 import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
 import { handlerFirstPatterns } from "./pages/handler-first.js";
 import { parallelNewSlotRevalPatterns } from "./pages/parallel-new-slot-reval.js";
+import { slotRedirectPatterns } from "./pages/slot-redirect.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -3207,6 +3208,13 @@ export const urlpatterns = urls(
         // Rendered barrier: loader reads handle data after ctx.rendered()
         include("/rendered-barrier", renderedBarrierPatterns, {
           name: "renderedBarrier",
+        }),
+
+        // A parallel slot handler's redirect: a returned Response short-circuits
+        // like a route or layout handler's, on a document request, a client
+        // navigation and an on-demand refresh.
+        include("/slot-redirect", slotRedirectPatterns, {
+          name: "slotRedirect",
         }),
 
         // Fully-prefetched commit mode: no-flash + client-mount-suspense

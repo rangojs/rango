@@ -94,14 +94,14 @@ export function handleHandlerResult(
 }
 
 /**
- * Dev-only: warn when a handler on a route that declares loading() resolves or
- * rejects with a Response (e.g. redirect()).
+ * Dev-only: warn when a handler on a route that declares loading() rejects
+ * with a Response (e.g. redirect()).
  *
  * On a non-loading route a returned/thrown Response short-circuits to an HTTP
  * redirect. But when the route declares loading(), the handler result is
- * streamed (not awaited at the resolution boundary), so the Response surfaces
- * only during RSC serialization and is rendered into the stream instead of
- * becoming a 302/308 — a silent failure mode. Issue redirects from middleware,
+ * streamed (not awaited at the resolution boundary), so a Response that
+ * arrives after an await cannot become a 302/308: it rides the stream as an
+ * error row instead — a silent failure mode. Issue redirects from middleware,
  * a loader, or a synchronous handler return instead. Compiled out in production.
  */
 export function warnOnStreamedResponse(
@@ -109,12 +109,11 @@ export function warnOnStreamedResponse(
   entryId: string,
 ): void {
   if (process.env.NODE_ENV === "production") return;
-  // A Response can surface either as a rejection (handleHandlerResult rethrows a
-  // resolved Response) or as a resolved value (the raw parallel-slot handler is
-  // not run through handleHandlerResult). Check both so every streamed path is
-  // covered. Each handler is an independent observer; it does not consume the
-  // rejection for the trackHandler/observeStreamedHandler chains.
-  const check = (value: unknown) => {
+  // Every call site hands over a handleHandlerResult promise, which rethrows a
+  // resolved Response, so a Response only ever surfaces as a rejection. Each
+  // handler is an independent observer; it does not consume the rejection for
+  // the trackHandler/observeStreamedHandler chains.
+  result.catch((value: unknown) => {
     if (value instanceof Response) {
       console.warn(
         `[rango] Handler for "${entryId}" returned a Response (e.g. ` +
@@ -123,8 +122,7 @@ export function warnOnStreamedResponse(
           `from middleware, a loader, or a synchronous handler return.`,
       );
     }
-  };
-  result.then(check, check);
+  });
 }
 
 // ---------------------------------------------------------------------------

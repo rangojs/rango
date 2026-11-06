@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `parallel()` slot handler's `redirect()` redirects instead of rendering an error page
+
+**Before.** A slot handler's returned `Response` was not run through
+`handleHandlerResult` (`resolveParallelSlotComponent` in
+`segment-resolution/revalidation.ts`), so it became the slot's component. The
+document answered `200` with a Flight error row ("Only plain objects, and a few
+built-ins, can be passed to Client Components"), a client navigation answered
+`200` with no `X-RSC-Redirect`, and an on-demand `Prerender()` refresh failed
+with that serialization error instead of the redirect. A `redirect()` thrown
+from a slot handler already worked.
+
+**Now.** A slot handler's returned or thrown `redirect()` answers as a route or
+layout handler's does: `302` with `Location` on a document request, a Flight
+redirect (`204` with `X-RSC-Redirect`) on a client navigation, and on an
+on-demand refresh `render-failed` carrying the `Response` — nothing is stored,
+and the page stored before keeps serving. A slot that declares `loading()` and
+returns a `Response` after an `await` still streams it, as a `loading()` route
+handler does: the response has already started. A synchronous return on a
+`loading()` slot now redirects, as a synchronous return on a `loading()` route
+already did.
+
+```tsx
+layout(<Chrome />, () => [
+  parallel({
+    // Before: the page rendered with an error row in this slot.
+    // Now: the request becomes a redirect, on a document and a navigation.
+    "@aside": () => redirect("/moved", 302),
+  }),
+  path("/page", Page),
+]);
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -1020,10 +1020,21 @@ return on a `loading()` route still throws synchronously and redirects correctly
 only the async/Promise sub-branch is affected. Parallel slots with `loading()`
 share this behavior.
 
+A slot **without** `loading()` answers as a route handler without it does: its
+handler result goes through `handleHandlerResult` in
+`resolveParallelSlotComponent` (`segment-resolution/revalidation.ts`), so a
+returned or thrown `Response` short-circuits the request — 302 with `Location`
+on a document, a Flight redirect on a client navigation, and `render-failed`
+carrying the `Response` on an on-demand refresh, where nothing is stored and
+the page stored before keeps serving. Before that funnel existed the `Response`
+became the slot's component and surfaced only during Flight serialization
+("Only plain objects, and a few built-ins, can be passed to Client Components"),
+which answered 200 with an error row instead of redirecting.
+
 To redirect from a `loading()` route, issue the redirect from middleware, a
 loader, or a synchronous handler return. In development, `warnOnStreamedResponse`
-(`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
-or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
+(`segment-resolution/helpers.ts`) logs a warning when a streamed handler rejects
+with a `Response`, so the swallowed-redirect failure mode is visible.
 
 ### Streamed handler rejections render the declared boundary
 
