@@ -31,6 +31,34 @@ const moduleB = urls(({ path, layout }) => [
 // /b/settings to /b/settings.
 ```
 
+### Fixed: a `Static()` mount's `.name` links resolve in its own include scope in a build
+
+**Before.** A `Static()` layout or slot baked its `ctx.reverse(".name")` from a
+route name derived from the mount's include prefix, so the prefix was read as a
+route and lost its last dot segment. In a nested include the link pointed into
+the enclosing module, or the build failed with `Unknown route: ".settings"`; at
+root scope (no include name) it always failed. Dev rendered the right link.
+
+**Now.** The mount records the include scope it sits in
+(`StaticMount.reverseScope`) and the bake resolves `.name` through it, the same
+way the live handler does, so a build and dev produce the same href. A build
+also registers those routes' root scope as the request-time evaluation does, so
+a named include under a transparent `{ name: "" }` include no longer loses the
+root-scope fallback at build time.
+
+```ts
+// One Static layout in a nested include: dev and the build both link here.
+const admin = urls(({ path, layout }) => [
+  layout(Nav, () => [path("/settings", Page, { name: "settings" })]),
+]);
+const acme = urls(({ include }) => [
+  include("/admin", admin, { name: "admin" }),
+]);
+const app = urls(({ include }) => [include("/acme", acme, { name: "acme" })]);
+// /acme/admin/settings renders href="/acme/admin/settings". Before, the build
+// failed with `Unknown route: ".settings" (current route: acme.admin)`.
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

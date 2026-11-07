@@ -389,6 +389,9 @@ function staticBakeMounts(def: any): StaticMount[] {
     // Full route name when stamped; the historical $$routePrefix is a name
     // PREFIX (never in the root-scope registry) kept as fallback.
     routeName: (def.$$routeName ?? def.$$routePrefix) as string | undefined,
+    // No DSL position recorded this mount, so there is no position scope to
+    // resolve dot names in: keep the historical route-name resolution.
+    reverseScope: undefined,
     rootScoped: def.$$rootScoped as boolean | undefined,
     routerId: def.$$routerId as string | undefined,
   };
@@ -479,6 +482,7 @@ export async function renderStaticHandlers(
               state.resolvedBuildEnv,
               !state.isBuildMode,
               mount.rootScoped,
+              mount.reverseScope,
             );
             if (result) {
               // result.handles is the pre-encoded handle string ("" when none).

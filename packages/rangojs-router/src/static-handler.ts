@@ -37,6 +37,7 @@ import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { StaticBuildContext } from "./prerender.js";
 import type { UseItems, HandlerUseItem } from "./route-types.js";
+import type { ReverseScope } from "./server/context.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { isUnderTestRunner } from "./runtime-env.js";
 
@@ -99,11 +100,23 @@ export interface StaticMount {
    */
   routeName: string | undefined;
   /**
+   * The dot-local resolution scope of a layout() or parallel() mount: the DSL
+   * position's include scope (`getReverseScope()`), the same value the live
+   * entry carries in `reverseScope` and its handler receives through
+   * `withReverseScope`. The bake resolves `.name` through it, so a mount in a
+   * nested include (`a.b`) links into `a.b` and one at root scope links into
+   * the root map — without it the bake read the prefix as a route name and
+   * dropped its last segment (or had no prefix at all at root).
+   *
+   * undefined for a path() mount, whose live handler resolves dot names from
+   * the route name (`createHandlerContext`), and for a definition no DSL
+   * position mounted.
+   */
+  reverseScope: ReverseScope | undefined;
+  /**
    * getRootScoped() where the mount sits. Reaches the bake's synthetic request
-   * context (`renderStaticSegment`'s `reverse`) only: the handler's own
-   * `ctx.reverse` resolves root scope from the route registry
-   * (`createStaticContext`), so the artifact's links do not depend on it, and it
-   * stays out of `staticArtifactKey`.
+   * context (`renderStaticSegment`'s `reverse`) for a mount with no
+   * `reverseScope`, and stays out of `staticArtifactKey`.
    */
   rootScoped: boolean | undefined;
   /** The mounting router, whose route map the bake resolves against. */
@@ -126,14 +139,13 @@ export interface StaticMount {
  * stamps it under the router's own evaluation store, and the runtime rebuilds
  * the route's entries per request (router/manifest.ts), where the include's
  * name prefix is the value both paths reproduce exactly. The mount's root scope
- * stays out: it reaches the bake's synthetic request context only (the
- * handler's `ctx.reverse` reads the route registry, `createStaticContext`), and
- * the two paths disagree about it anyway — build discovery evaluates each
- * include from a root store, so a named include under a transparent one is
+ * stays out because the two paths disagree about it: build discovery evaluates
+ * each include from a root store, so a named include under a transparent one is
  * stamped scoped, while the request-time rebuild restores the captured parent
  * scope and stamps it root. Two mounts that share a key therefore share one
  * artifact — as every mount of a definition did before, so this never regresses
- * one.
+ * one — and the artifact's links come from `StaticMount.reverseScope`, which the
+ * bake reads and the key does not need to carry.
  *
  * Every value is percent-encoded, so a route name or router id containing "::"
  * cannot compose another mount's key (a collision would serve the wrong

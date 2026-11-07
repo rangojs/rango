@@ -2554,10 +2554,16 @@ Limits:
   those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
-- `Static()` layouts and slots bake at build time through
-  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
-  through this scope. At one include level that gives the same module; in a
-  nested module the last name segment is dropped.
+- A `Static()` layout or slot bakes through this scope: the DSL position
+  records it on the mount (`StaticMount.reverseScope`, `stampStaticDefScope`),
+  and the bake resolves `.name` with the same `scopeReverse` a live handler
+  gets (`createStaticContext` and `renderStaticSegment`'s synthetic request
+  context). It used to hand the def's `$$routePrefix` to
+  `renderStaticSegment` as a route name: at one include level that reached the
+  same module, in a nested module it dropped the prefix's last segment, and at
+  root scope it had no prefix at all, so `.name` threw "Unknown route" during
+  the build. A `path()` mount records no scope and keeps route-name
+  resolution, which is what its live handler does.
 - A `Static()` def mounted more than once bakes once per mount scope: the DSL
   position records a `StaticMount` (`stampStaticDefScope`) and
   `staticArtifactKey` composes the manifest key from the def's `$$id`, the
@@ -2566,17 +2572,17 @@ Limits:
   resolve per mount, as they do live. Mounts in the same scope compose one key
   and share one artifact. The key holds only values both sides reproduce: the
   runtime rebuilds a route's entries per request (`router/manifest.ts`), where
-  the include's name prefix is exact but the mount's root scope is not — build
-  discovery evaluates each include from a root store, so a named include under
-  a transparent one is stamped scoped, while the request-time rebuild restores
-  the captured parent scope and stamps the same mount root. Root scope is not a
-  bake input either: the mount records it for the bake's synthetic request
-  context (`renderStaticSegment`'s `reverse`) only, and the handler's own
-  `ctx.reverse` resolves root scope from the route registry
-  (`createStaticContext`), so no artifact's links depend on it. The
-  nested-include limit above holds per mount. Pinned by
-  `router/__tests__/static-reverse-scope.rsc-test.tsx` (the bake) and
-  `router/__tests__/manifest-router-seed.test.ts` (the request-time rebuild).
+  the include's name prefix is exact but the mount's root scope is not, so the
+  scope stays out of the key. Both paths now agree on that scope: build
+  discovery re-enters each include with the value `include()` captured
+  (`TrackedInclude.rootScoped`, `generate-manifest.ts`), as the runtime
+  expansion does (`lazy-includes.ts`), instead of recomputing it from a store
+  that has no parent scope — which lost a transparent `{ name: "" }`
+  ancestor's root grant and registered those routes scoped at build time.
+  Pinned by `testing/__tests__/static-mount-reverse-scope.rsc-test.tsx` (bake
+  and dev agree per position), `router/__tests__/static-reverse-scope.rsc-test.tsx`
+  (the bake) and `router/__tests__/manifest-router-seed.test.ts` (the
+  request-time rebuild).
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,

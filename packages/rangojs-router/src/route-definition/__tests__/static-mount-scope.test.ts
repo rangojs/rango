@@ -80,12 +80,15 @@ describe("Static() mount scope", () => {
       {
         key: keyA,
         routeName: "mountA",
+        // The DSL position's scope, which the bake resolves `.name` through.
+        reverseScope: { prefix: "mountA", rootScoped: false },
         rootScoped: false,
         routerId: "mount-router",
       },
       {
         key: keyB,
         routeName: "mountB",
+        reverseScope: { prefix: "mountB", rootScoped: false },
         rootScoped: false,
         routerId: "mount-router",
       },
@@ -150,6 +153,9 @@ describe("Static() mount scope", () => {
       {
         key: entry.staticHandlerId,
         routeName: "mountA.settings",
+        // A route mount resolves dot names from its route name, live and at
+        // bake alike, so it records no position scope.
+        reverseScope: undefined,
         rootScoped: false,
         routerId: "mount-router",
       },

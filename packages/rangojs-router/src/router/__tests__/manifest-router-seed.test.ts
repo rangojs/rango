@@ -176,8 +176,10 @@ describe("a lazy manifest rebuild restores its include's router id", () => {
         search: { q: "string" },
       }),
     ]);
-    // A named include under a transparent one. Discovery evaluates each
-    // include from a root store, so the mount registers scoped (false).
+    // A named include under a transparent one: the transparent include grants
+    // root scope, and discovery re-enters each include with the scope include()
+    // captured (generate-manifest.ts), so it registers what the request-time
+    // rebuild registers.
     const transparent = urls(({ include }) => [
       include("/a", moduleA, { name: "mountA" }),
     ]);
@@ -188,15 +190,14 @@ describe("a lazy manifest rebuild restores its include's router id", () => {
       0,
       { routerId: ROUTER_ID },
     );
-    expect(isRouteRootScoped("mountA.settings", ROUTER_ID)).toBe(false);
+    expect(isRouteRootScoped("mountA.settings", ROUTER_ID)).toBe(true);
     expect(getSearchSchema("mountA.settings", ROUTER_ID)).toEqual({
       q: "string",
     });
 
     // The request-time rebuild restores the captured parent scope (root) and
-    // re-applies only this include's name, so it registers root-scoped. The
-    // two paths disagree on this value, which is why it stays out of the
-    // Static artifact key (staticArtifactKey).
+    // re-applies only this include's name: the same value, so a Static mount's
+    // artifact resolves the same dot names whichever path recorded its scope.
     const rebuilt = await rebuild(
       lazyEntry(
         moduleA,
