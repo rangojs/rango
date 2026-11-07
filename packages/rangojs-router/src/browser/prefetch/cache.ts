@@ -54,6 +54,7 @@ import { abortAllPrefetches } from "./loader.js";
 import { notifyPrefetchCacheInvalidated } from "./invalidation.js";
 import { invalidateRangoState } from "../rango-state.js";
 import type { RscPayload } from "../types.js";
+import type { HeldPreloads } from "./held-preloads.js";
 import { WIRE } from "../../wire-params.js";
 import {
   formatSourceLabel,
@@ -132,6 +133,13 @@ export interface DecodedPrefetch {
    * Absent on a respawned entry, which has no timer.
    */
   stallTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * The preloads a speculative prefetch held back from its decode
+   * (held-preloads.ts): the navigation that serves the entry releases them.
+   * Shared by every respawn of the entry, since they decode the same filtered
+   * bytes. Absent on an intent prefetch, whose decode starts them.
+   */
+  heldPreloads?: HeldPreloads;
   /**
    * Release the buffered reserve bytes. Called when the entry is evicted
    * without being consumed (expiry, FIFO, sweep, cache clear) so the tee
@@ -373,6 +381,19 @@ export function hasPrefetch(key: string): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Start the preloads a speculative prefetch under `key` held
+ * (DecodedPrefetch.heldPreloads), stored or still in flight, without
+ * consuming it: an intent prefetch (a hover) that this one answers.
+ */
+export function releaseHeldPreloads(key: string): void {
+  cache.get(key)?.entry.heldPreloads?.release();
+  // The in-flight promise never rejects (fetch.ts catches into null).
+  void inflightPromises
+    .get(key)
+    ?.then((entry) => entry?.heldPreloads?.release());
 }
 
 /**

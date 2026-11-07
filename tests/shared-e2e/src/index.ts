@@ -89,6 +89,8 @@ export { runDocCacheSourceTests } from "./doc-cache-source-scenario.js";
 export type { DocCacheSourceScenarioOptions } from "./doc-cache-source-scenario.js";
 export { runPrefetchStoredTests } from "./prefetch-stored-scenario.js";
 export type { PrefetchStoredScenarioOptions } from "./prefetch-stored-scenario.js";
+export { runPrefetchPreloadsTests } from "./prefetch-preloads-scenario.js";
+export type { PrefetchPreloadsScenarioOptions } from "./prefetch-preloads-scenario.js";
 export { runActionBoundaryTests } from "./action-boundary-scenario.js";
 export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
 export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";

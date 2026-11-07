@@ -26,6 +26,7 @@ import {
   setInflightPromiseWithAliases,
   storePrefetch,
   removePrefetch,
+  releaseHeldPreloads,
   clearPrefetchInflight,
   currentGeneration,
   currentPrefetchEpoch,
@@ -50,14 +51,22 @@ import {
   getRegisteredStore,
 } from "../navigation-store-handle.js";
 import { writePartialParams } from "../wire-protocol.js";
+import { holdPreloads, type HeldPreloads } from "./held-preloads.js";
 
 /**
  * Decoder injected at app startup (see setPrefetchDecoder). This is
  * `deps.createFromFetch` — decoupled from the RSC runtime exactly like the
  * navigation client. Prefetch decodes through it so the route's client chunks
- * are pulled during the prefetch, not on click.
+ * are pulled during the prefetch, not on click. `filterFragment`, when given,
+ * is applied to each stored segment fragment's Flight stream before it is
+ * decoded (a speculative prefetch's HeldPreloads.filter).
  */
-type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
+export type PrefetchDecoder = (
+  response: Promise<Response>,
+  filterFragment?: (
+    stream: ReadableStream<Uint8Array>,
+  ) => ReadableStream<Uint8Array>,
+) => Promise<RscPayload>;
 
 let decoder: PrefetchDecoder | null = null;
 
@@ -100,12 +109,16 @@ function makeRespawn(
   reserve: ReadableStream<Uint8Array>,
   slot: PrefetchSlot,
   epoch: number,
+  heldPreloads: HeldPreloads | undefined,
 ): () => DecodedPrefetch {
   return () => {
     const [body, nextReserve] = reserve.tee();
     // decoder is non-null here: respawn is only armed after a successful
     // eager decode, which requires the decoder to have been set.
-    const payload = decoder!(Promise.resolve(new Response(body)));
+    const payload = decoder!(
+      Promise.resolve(new Response(body)),
+      heldPreloads?.filter,
+    );
     payload.catch(() => {});
     const entry: DecodedPrefetch = {
       payload,
@@ -114,6 +127,7 @@ function makeRespawn(
       paramsLabel: slot.paramsLabel,
       epoch,
       complete: true,
+      heldPreloads,
       dispose: () => {
         // Rejects (caught) instead of throwing if the branch is already
         // locked by a later respawn — cache eviction never races adoption on
@@ -121,7 +135,13 @@ function makeRespawn(
         nextReserve.cancel().catch(() => {});
       },
     };
-    entry.respawn = makeRespawn(storageKey, nextReserve, slot, epoch);
+    entry.respawn = makeRespawn(
+      storageKey,
+      nextReserve,
+      slot,
+      epoch,
+      heldPreloads,
+    );
     // Parity with the original path: a rejected decode must not stay
     // consumable. Clean bytes should never fail to decode, but if they do,
     // evict (identity-guarded) so navigation refetches instead.
@@ -407,6 +427,18 @@ function executePrefetchFetch(
         true,
       );
 
+      // A speculative prefetch holds back the preloads of the resources its
+      // page can show late (images, media), which the decode would start: the
+      // navigation that serves it releases them (held-preloads.ts). Filtered
+      // before the split below, so a respawn decodes the same filtered bytes;
+      // the decoder filters each segment fragment it expands with the same
+      // hold, on every decode.
+      const heldPreloads = intent ? undefined : holdPreloads();
+      const body =
+        heldPreloads && tracked.body
+          ? heldPreloads.filter(tracked.body)
+          : tracked.body;
+
       // Split the decode branch: one side feeds the eager decoder (unchanged —
       // client chunks still import at prefetch time), the other stays unread as
       // a reserve of the raw Flight bytes. A decoded payload is single-render
@@ -415,15 +447,18 @@ function executePrefetchFetch(
       // fresh decode per adoption instead (see makeRespawn).
       let decodeSource: Response = tracked;
       let reserve: ReadableStream<Uint8Array> | undefined;
-      if (tracked.body) {
-        const [decodeBody, reserveBody] = tracked.body.tee();
+      if (body) {
+        const [decodeBody, reserveBody] = body.tee();
         decodeSource = new Response(decodeBody, { headers: tracked.headers });
         reserve = reserveBody;
       }
 
       // Eager decode: parsing the Flight stream imports the route's client
       // chunks now, not on click.
-      const payload = decoder(Promise.resolve(decodeSource));
+      const payload = decoder(
+        Promise.resolve(decodeSource),
+        heldPreloads?.filter,
+      );
       // Mark handled so an unconsumed prefetch decode error stays quiet; the
       // error is still surfaced to navigation if it consumes the entry.
       payload.catch(() => {});
@@ -436,6 +471,7 @@ function executePrefetchFetch(
         epoch,
         complete: false,
         stallTimer: timeoutId,
+        heldPreloads,
         ...(reserve && {
           dispose: () => {
             reserve.cancel().catch(() => {});
@@ -471,7 +507,13 @@ function executePrefetchFetch(
         if (decode.status === "fulfilled" && endedCleanly) {
           entry.complete = true;
           if (reserve) {
-            entry.respawn = makeRespawn(storageKey, reserve, slot, epoch);
+            entry.respawn = makeRespawn(
+              storageKey,
+              reserve,
+              slot,
+              epoch,
+              heldPreloads,
+            );
             // Refill after an early adoption. A click that lands before this
             // point adopts the entry with respawn unarmed and leaves the slot
             // empty — via either path: pre-headers inflight adoption makes
@@ -516,21 +558,21 @@ function executePrefetchFetch(
  * otherwise the source slot would stay unpopulated and navigation from
  * this source would fall through to the (potentially wrong) wildcard
  * response, defeating the opt-out.
+ *
+ * Returns the key that hit, or undefined on a miss.
  */
-function hasPrefetchHit(
+function prefetchHitKey(
   forceSourceScope: boolean,
   wildcardKey: string,
   sourceKey: string,
   stateKey: string,
   targetUrl: URL,
-): boolean {
-  if (forceSourceScope) return hasPrefetch(sourceKey);
-  return (
-    hasPrefetch(wildcardKey) ||
-    hasPrefetch(sourceKey) ||
-    paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).some(
-      hasPrefetch,
-    )
+): string | undefined {
+  if (forceSourceScope) return hasPrefetch(sourceKey) ? sourceKey : undefined;
+  if (hasPrefetch(wildcardKey)) return wildcardKey;
+  if (hasPrefetch(sourceKey)) return sourceKey;
+  return paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).find(
+    hasPrefetch,
   );
 }
 
@@ -544,6 +586,7 @@ function hasPrefetchHit(
  * `loading()` work included. It runs only on a miss: a cached prefetch or one
  * in flight, even a speculative one that deferred work, is used as it is,
  * and its click sends the fill as before (docs/design/prefetch-false.md, R16).
+ * The preloads such a speculative one held start now (held-preloads.ts).
  *
  * By default the wildcard key (Rango-state-keyed) is used for inflight
  * dedup and for responses that are not source-sensitive; source-scoped
@@ -577,15 +620,17 @@ export function prefetchDirect(
   const stateKey = stateEpoch(rangoState);
   const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
-  if (
-    hasPrefetchHit(
-      forceSourceScope,
-      wildcardKey,
-      sourceKey,
-      stateKey,
-      targetUrl,
-    )
-  ) {
+  const hitKey = prefetchHitKey(
+    forceSourceScope,
+    wildcardKey,
+    sourceKey,
+    stateKey,
+    targetUrl,
+  );
+  if (hitKey !== undefined) {
+    // An intent prefetch starts every hint, and a speculative prefetch of the
+    // page answers this one: start the preloads it held.
+    releaseHeldPreloads(hitKey);
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] direct dedup (key already exists)", {
         url,
@@ -645,13 +690,13 @@ export function prefetchQueued(
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (
-    hasPrefetchHit(
+    prefetchHitKey(
       forceSourceScope,
       wildcardKey,
       sourceKey,
       stateKey,
       targetUrl,
-    )
+    ) !== undefined
   ) {
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] queued dedup (key already exists)", {
@@ -675,13 +720,13 @@ export function prefetchQueued(
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (
-      hasPrefetchHit(
+      prefetchHitKey(
         forceSourceScope,
         wildcardKey,
         sourceKey,
         stateKey,
         targetUrl,
-      )
+      ) !== undefined
     ) {
       return Promise.resolve();
     }

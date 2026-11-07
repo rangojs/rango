@@ -332,6 +332,8 @@ export const routes = {
   "prefetchFalse.vtUnit": "/prefetch-false/vt-unit",
   "prefetchFalse.vtUnitOff": "/prefetch-false/vt-unit-off",
   "prefetchFalse.vtUnitOwn": "/prefetch-false/vt-unit-own",
+  "prefetchPreloads.home": "/prefetch-preloads/home",
+  "prefetchPreloads.target": "/prefetch-preloads/target",
   "prefetchRenderErrors.handler": "/prefetch-render-errors/handler",
   "prefetchRenderErrors.home": "/prefetch-render-errors",
   "prefetchRenderErrors.loader": "/prefetch-render-errors/loader",

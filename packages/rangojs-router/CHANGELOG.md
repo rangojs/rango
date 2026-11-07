@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Fix: a viewport or render prefetch no longer downloads the target page's images
+
+**Before.** A `<Link>` prefetched on viewport or render decoded the target
+page's Flight payload right away, and React started every resource hint in
+it as it decoded. A page that calls `preload(src, { as: "image" })` (a hero
+image, product thumbnails) had those images downloaded as soon as a link to
+it scrolled into view, before any click and on a page that shows none of
+them. On a phone that spends data and competes with the current page's own
+requests.
+
+**Now.** A speculative prefetch holds back the `preload()` hints of
+resources a page can show late: every `as` other than `"style"`, `"font"`
+and `"script"` (images, media, `fetch`, documents). The click that uses the
+prefetch starts them, with the same options, so the target page's images
+still begin loading before its first paint. Hints in a stored segment
+fragment the payload carries are held the same way. Unchanged: style, font
+and script preloads, `preinit` (the route's CSS), `preloadModule` (its
+chunks), `preconnect` and `prefetchDNS` still start during the prefetch, so
+a prefetched click paints without a flash of unstyled content or fallback
+fonts; a hover prefetch and `useRouter().prefetch()` (intent) start every
+hint as before, and a hover over a link a viewport prefetch already answered
+starts the hints that prefetch held, without a new request.
+
+```tsx
+// A product page that preloads its hero image.
+function ProductPage() {
+  preload("/images/hero.webp", { as: "image", fetchPriority: "high" });
+  return <Hero />;
+}
+
+// Before: /images/hero.webp downloads when this link enters the viewport.
+// Now: it downloads when the link is clicked.
+<Link to="/product/1" prefetch="viewport">
+  Product
+</Link>;
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

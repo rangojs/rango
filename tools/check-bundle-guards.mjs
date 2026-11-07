@@ -299,7 +299,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.875KB on 2026-11-07 for a viewport or render prefetch
+// that no longer downloads its page's images, measured on cloudflare-basic
+// from main 5260819 53997B -> 54825B (+828B gzip). A speculative prefetch
+// filters its Flight bytes, and each segment fragment's, through a row reader
+// that holds the `preload()` hints of everything but styles, fonts and
+// scripts (browser/prefetch/held-preloads.ts); the click that serves the
+// entry, or a hover over its link, starts them (navigation-client.ts,
+// prefetch/cache.ts releaseHeldPreloads). None of it can load lazily: the
+// filter runs on every viewport prefetch, and browser/prefetch/ is not split
+// (AGENTS.md Bundle hygiene). By the owner's rule above: 54825B + 256B,
+// rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.875 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
