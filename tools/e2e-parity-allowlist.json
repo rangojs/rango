@@ -35,6 +35,11 @@
     "reason": "Historical debt: production twin deferred (other cache.* describes already paired)"
   },
   {
+    "base": "dev-reload-handoff",
+    "file": "packages/rangojs-router/e2e/dev-reload-handoff.test.ts",
+    "reason": "Dev RSC module-runner reload; a build has no module runner, so no production counterpart"
+  },
+  {
     "base": "client-component-hmr",
     "file": "packages/rangojs-router/e2e/client-component-hmr.test.ts",
     "reason": "HMR / Vite serve-only; no production preview counterpart"

@@ -110,6 +110,10 @@
       "types": "./dist/types/browser/dev-discovery.d.ts",
       "default": "./src/browser/dev-discovery.ts"
     },
+    "./internal/dev-reload-handoff": {
+      "types": "./dist/types/router/dev-reload-handoff.d.ts",
+      "default": "./src/router/dev-reload-handoff.ts"
+    },
     "./cache": {
       "types": "./dist/types/cache/index.d.ts",
       "react-server": "./src/cache/index.ts",

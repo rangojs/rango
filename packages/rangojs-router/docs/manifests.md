@@ -534,8 +534,54 @@ It does not catch everything. These cases still run on the split module set:
 - a re-import that has not registered the router when the wait runs out;
 - a router built in a factory, since importing its `$$sourceFile` does not create it, so the
   wait runs out;
-- `createHostRouter()` itself (its patterns and middleware); a `router.fetch` it dispatches
-  to still hands off.
+- `createHostRouter()` itself (its patterns and middleware) under a Cloudflare worker entry;
+  a `router.fetch` it dispatches to still hands off;
+- a custom entry that calls `createRSCHandler` (from `@rangojs/router/rsc`) itself rather
+  than `router.fetch`: nothing tells the dropped handler where its fresh twin is.
+
+#### The Node entry hands off too
+
+Everything above lives in `router.fetch`, which a Cloudflare worker entry calls. The Node and
+Vercel presets never call it: their generated RSC entry (`getVirtualEntryRSC` in
+`src/vite/plugins/virtual-entries.ts`) calls `createRSCHandler` directly, and
+`@vitejs/plugin-rsc`'s dev middleware imports that entry through the runner for every request.
+So on Node the split went unhandled. You did not need a cold start to see it: an edit to a
+server module that no HMR boundary accepts reloads the RSC program ("(rsc) program reload"),
+and saving `src/urls/client-urls-action.tsx` and then, 10 ms later, `client-urls.loader.ts` in
+the router e2e test-app failed every GET in flight with
+`include() could not resolve the server projection for clientUrls() module ...`: the
+per-request trie rebuild imported `generate-manifest.js` after the clear, and its
+`mergeIncludeNodes` read the fresh, empty projection registry. That was 3 failed requests on
+each of 5 edits, under 3 request loops.
+
+So the generated entry wraps its default export in `serveEntryAcrossRunnerReload`, with the
+same rules as `serveAcrossRunnerReload`: a GET or HEAD whose copy the reload dropped, before or
+during the request, re-runs on the re-evaluated entry. The host entry
+(`getVirtualEntryRSCHost`) does the same; a sub-app's `router.fetch` inside it may hand off
+first, and the entry then re-runs the whole request once more on one module set.
+
+Why not read `default` off the fresh entry module, as `routerAfterRunnerReload` reads the fresh
+`RouterRegistry`? Because the fresh module is there before it is ready. While the runner's
+re-import still evaluates it, an import from the dropped copy gets the unfinished module (the
+entry's id is in that copy's import call stack), and Vite's SSR transform defines a hoisted
+`export default function` before the imports run. A request handed to it then runs before the
+routes-manifest bootstrap installed the clientUrls() projections; called that way, the runner
+test's entry fixture threw `Cannot access 'entryState' before initialization`. Instead, each entry calls
+`registerEntryHandler(handler)` as its last statement, and the dropped copy polls
+`registeredEntryHandler()` on whichever copy of `dev-reload-handoff.ts` is current, importing
+it again on each poll. That import moves on to the newest copy when a second reload lands
+while the first re-import is still evaluating (an edit followed by the route-gen write), and
+it is still the dropped copy between `vite:beforeFullReload` and the clear, so a handler equal
+to the dropped one counts as not registered yet. The wait has the same 10 s bound. If the
+fresh entry fails to evaluate, the request answers with its first run once the bound runs out.
+
+Pinned by `src/router/__tests__/dev-reload-handoff-runner.test.ts` (a held GET re-runs on the
+re-evaluated entry, also across a second reload during the first re-import; a POST does not), the generated-code assertions in
+`src/vite/__tests__/host-entry.test.ts`, and the dev e2e `e2e/dev-reload-handoff.test.ts`: in
+its isolated server, `RANGO_E2E_DEV_RELOAD_SPLIT=1` makes the handler of `/dev-reload-split`
+load a probe (`devReloadSplitProbe()` in the test-app's `vite.config.ts`) that asks for the
+reload and resumes after the clear; the module it imports next reads the fresh, empty request
+context. It answered 500 before the entry handed off.
 
 The discovery-probe check stays ahead of the hand-off, so a dropped router still answers
 probes with its own epoch without rendering. Pinned by

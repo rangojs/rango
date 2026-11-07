@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: on the Node and Vercel presets' dev server, a page request no longer fails when an edit reloads the server mid-request ([#1429](https://github.com/rangojs/rango/pull/1429))
+
+**Before.** With `preset: "node"` (or `"vercel"`) under `vite dev`, a GET that
+was running when an edit reloaded the RSC module runner ("(rsc) program
+reload" in the log) ran half on the old modules and half on the new ones. It
+answered 500, for example
+`include() could not resolve the server projection for clientUrls() module ...`,
+or `getRequestContext() called outside of a request context`. Saving a
+`clientUrls()` file and a server module it uses within a few milliseconds
+failed every request in flight. The Cloudflare preset already re-ran such a
+request, through `router.fetch`.
+
+**Now.** The generated Node RSC entry re-runs a GET or HEAD request the
+reload landed in on the entry the reload re-evaluated, once that entry has
+finished loading, and answers with that run. A host-router entry
+(`createHostRouter()`) does the same. Other methods still run once, since a
+re-run would repeat a server action's side effects. Production behaviour is
+unchanged: the hand-off runs only while `process.env.NODE_ENV !== "production"`,
+and a build that folds `NODE_ENV` drops it.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

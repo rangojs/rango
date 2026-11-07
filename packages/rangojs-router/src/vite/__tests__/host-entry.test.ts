@@ -8,6 +8,7 @@ import {
 } from "../utils/shared-utils.js";
 import {
   VIRTUAL_IDS,
+  getVirtualEntryRSC,
   getVirtualEntryRSCHost,
 } from "../plugins/virtual-entries.js";
 import {
@@ -73,6 +74,30 @@ describe("getVirtualEntryRSCHost", () => {
     expect(code).toContain("isNoRouteMatchError(err)");
     expect(code).toContain("status: 404");
   });
+});
+
+describe("generated Node RSC entries: dev runner-reload hand-off", () => {
+  it.each([
+    ["router", getVirtualEntryRSC("/src/router.tsx")],
+    ["host", getVirtualEntryRSCHost("/src/worker.rsc.tsx")],
+  ])(
+    "the %s entry serves through the hand-off and registers last",
+    (_, code) => {
+      expect(code).toContain(
+        'from "@rangojs/router/internal/dev-reload-handoff"',
+      );
+      // The default export goes through the hand-off in dev only; a build folds
+      // the NODE_ENV check away.
+      expect(code).toMatch(
+        /export default function handler\(request, input\) \{\s*\/\/[^]*?if \(process\.env\.NODE_ENV !== "production"\) \{\s*return serveEntryAcrossRunnerReload\(request, input, handler, \(\) =>\s*serve\(request, input\)\s*\);\s*\}\s*return serve\(request, input\);\s*\}/,
+      );
+      // A dropped copy may hand a request to this entry only once every import
+      // has evaluated, so the registration is the module's last statement.
+      expect(code.trimEnd()).toMatch(
+        /if \(process\.env\.NODE_ENV !== "production"\) \{\s*registerEntryHandler\(handler\);\s*\}$/,
+      );
+    },
+  );
 });
 
 describe("createVirtualEntriesPlugin entry kind", () => {
