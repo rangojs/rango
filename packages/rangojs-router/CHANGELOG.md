@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Docs: a client link into another module comes from the server
+
+**Before.** The `/links` skill said to use `useReverse(routes)` "to generate
+URLs into a known module", and kept the mount rule at the end of an unrelated
+section. `useReverse` joins every name with the nearest `include()` mount,
+whichever map it is given, so in a project module at `/:accountId/:projectId`
+`useReverse(accountRoutes)(".settings")` returns `/acme/web/settings` and
+`useReverse(NamedRoutes)("account.settings")` returns
+`/acme/web/acme/settings`, with no error.
+
+**Now.** `/links` has a "Links into another module" section: a module's
+`routes` map is right only under that module's own mount and
+`router.named-routes.gen.ts` only at the root mount, with the outputs above,
+and a link into another module is built on the server
+(`ctx.reverse("account.settings")`, `/acme/settings`) and passed as a prop or
+loader data. `/hooks` and `/typesafety` point to it. Behaviour is unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

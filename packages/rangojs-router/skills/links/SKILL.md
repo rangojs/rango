@@ -16,7 +16,7 @@ links to JSON/text endpoints see `/response-routes`.
 **On the client, two patterns:**
 
 1. **Receive URLs as props / loader data / action return.** The default. The server has the full route manifest and handler context — generate URLs there and hand strings to client components.
-2. **`useReverse(routes)`.** Import a generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse("name", params?)` (the leading dot is optional). Mount-aware via `useMount()`, auto-fills params from `useParams()`, fully typed from the imported map. Use this when a client component needs to generate URLs into a known module without round-tripping through the server.
+2. **`useReverse(routes)`.** Import a generated `routes` map from a `urls()` module's `.gen.ts` and call `reverse("name", params?)` (the leading dot is optional). Mount-aware via `useMount()`, auto-fills params from `useParams()`, fully typed from the imported map. Use this when a client component links inside its own module, under that module's `include()` mount, without round-tripping through the server. A link into another module comes from the server (pattern 1; see "Links into another module").
 
 `ctx.reverse()` itself is **server-only** — it depends on the full route manifest and handler context. Client components never import or call it.
 
@@ -420,7 +420,7 @@ function MountInfo() {
 
 Hook that returns a typed local reverse function for a `routes` map imported from a generated `.gen.ts` next to a `urls()` module. The route map is the **exposure boundary** — `useReverse` only knows about names in that map, never the full app manifest.
 
-> **Which map?** `useReverse` accepts any routes map. Prefer the per-module `routes` (e.g. `urls/blog.gen.ts`): it gives **mount-aware** local `.name` reverse (auto-prefixes the `include()` mount) and only that module's names enter the client bundle. You _can_ instead pass `router.named-routes.gen.ts` (`NamedRoutes`) for **global** names (`blog.post`; the leading dot is optional) — it is a plain importable map and works on the client (it is **not** server-only) — but its paths are **absolute** while `useReverse` mount-prefixes, so it is correct only at the root mount (under a non-root mount it double-prefixes), and importing it pulls every route name and pattern in the app into the client bundle (a small names-to-paths map — not components or loaders), versus the per-module map which exposes only one module's names. So the per-module map is preferred for in-module links; the named-routes map is the escape hatch for global names.
+> **Which map?** `useReverse` accepts any routes map. Prefer the per-module `routes` (e.g. `urls/blog.gen.ts`): it gives **mount-aware** local `.name` reverse (auto-prefixes the `include()` mount) and only that module's names enter the client bundle. You _can_ instead pass `router.named-routes.gen.ts` (`NamedRoutes`) for **global** names (`blog.post`; the leading dot is optional) — it is a plain importable map and works on the client (it is **not** server-only) — but its paths are **absolute** while `useReverse` mount-prefixes, so it is correct only at the root mount (under a non-root mount it double-prefixes), and importing it pulls every route name and pattern in the app into the client bundle (a small names-to-paths map — not components or loaders), versus the per-module map which exposes only one module's names. So the per-module map is preferred for in-module links; the named-routes map is the escape hatch for global names in components that render only at the root mount. Anywhere else, build the URL on the server ("Links into another module" below).
 
 ```tsx
 "use client";
@@ -458,7 +458,7 @@ Components call `useAccountReverse()`; a renamed or moved module changes one
 file. The wrapper resolves like `useReverse`: against the nearest `include()`
 mount, so call a module's hook from components under that module's own mount.
 Inside a nested module it builds a wrong URL with no error; pass
-cross-module links from the server there.
+cross-module links from the server there ("Links into another module").
 
 ### How it resolves
 
@@ -468,6 +468,42 @@ cross-module links from the server there.
 4. Appends a query string when a search object is passed (typed from the route's `search` schema; `undefined`/`null` values are skipped).
 
 The returned function is memoized on the routes map, mount, and current params, so it is safe to pass to memoized children.
+
+### Links into another module
+
+Step 2 joins every name with the nearest `include()` mount, whichever map you pass. So a module's `routes` map is right only in components rendered under that module's own mount, and `NamedRoutes` (absolute paths) only at the root mount. Neither mistake throws. In a client component of a project module mounted at `/:accountId/:projectId`, on `/acme/web/issues/5`:
+
+```tsx
+import { routes as accountRoutes } from "../urls/account.gen.js"; // mounted at /:accountId
+import { NamedRoutes } from "../router.named-routes.gen.js";
+
+useReverse(accountRoutes)(".settings"); // "/acme/web/settings": the project's mount, not the account's
+useReverse(NamedRoutes)("account.settings"); // "/acme/web/acme/settings": double prefix
+// wanted: "/acme/settings"
+```
+
+There is no client API for a link that crosses modules under a nested mount. Build it on the server, where global names resolve fully and fill the mount's params from the current URL, and pass it down as a prop or loader data:
+
+```tsx
+// server layout or handler in the project module
+const links = {
+  account: ctx.reverse("account.settings"), // "/acme/settings"
+  blog: ctx.reverse("blog.index"),
+};
+return <CrossNav links={links} />;
+
+// client component
+function CrossNav({ links }: { links: { account: string; blog: string } }) {
+  return (
+    <nav>
+      <Link to={links.account}>Account settings</Link>
+      <Link to={links.blog}>Blog</Link>
+    </nav>
+  );
+}
+```
+
+Loader data is the better carrier for chrome that follows a param: a layout handler is kept across param changes, while a layout loader re-runs when its `revalidate()` compares that param (a layout loader is held on navigation by default).
 
 ### Mount-relativity
 
@@ -542,28 +578,7 @@ Both happen synchronously during `reverse()` — wrap calls in try/catch (or an 
 
 ### The leading dot is optional
 
-`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server. A module's `routes` map is right only inside that module's own mount: it resolves against the current mount, so another module's map gives a wrong URL with no error, and `useReverse(NamedRoutes)` is correct only at the root mount (under a mount it double-prefixes). There is no client API for links that cross modules under a nested mount. Build them on the server, where global names resolve fully, and pass them down:
-
-```tsx
-// server layout or handler
-const links = {
-  blog: ctx.reverse("blog.index"),
-  cart: ctx.reverse("shop.cart"),
-};
-return <CrossNav links={links} />;
-
-// client component
-function CrossNav({ links }: { links: { blog: string; cart: string } }) {
-  return (
-    <nav>
-      <Link to={links.blog}>Blog</Link>
-      <Link to={links.cart}>Cart</Link>
-    </nav>
-  );
-}
-```
-
-Loader data is the better carrier for chrome that follows a param: a layout handler is kept across param changes, while a layout loader re-runs when its `revalidate()` compares that param (a layout loader is held on navigation by default).
+`reverse("post")` and `reverse(".post")` resolve **identically** — the leading dot is cosmetic. The map you import IS the scope, so there is no separate global namespace to disambiguate and the dot carries no meaning; it exists only as a readability convention and for parity with `ctx.reverse(".name")` on the server.
 
 ### Codegen
 
