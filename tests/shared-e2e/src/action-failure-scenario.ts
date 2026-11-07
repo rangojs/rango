@@ -292,16 +292,6 @@ export function runActionFailureTests(
   test("urls() route: a loader that throws redirect() on its rerun after a delete action navigates to its target, and the layout keeps its instance", async ({
     page,
   }) => {
-    // Known drift, as on main: the action lane plants LoaderRedirect as the
-    // outlet's children in place of the StreamedLoaderErrorBoundary-wrapped
-    // content (packages/rangojs-router/src/segment-system.tsx, the
-    // `!isAction && isLoaderRedirectNode` sites), so the route's wrapper chain
-    // loses a link while it redirects. The layout above is untouched.
-    expectConsole(page, {
-      allow: [
-        /I5 drift at outlet:\S+: wrapper chain link \d+ changed from StreamedLoaderErrorBoundary to nothing/,
-      ],
-    });
     const run = randomUUID();
     await page.goto(options.url(`${options.serverPath}/items/7?run=${run}`));
     await expect(page.getByTestId("af-item-name")).toHaveText("item 7");

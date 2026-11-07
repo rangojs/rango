@@ -932,23 +932,28 @@ and neither does any `forceAwait` lane (a fully prefetched
 click, back/forward, cached segments, leaving an intercept, stale
 revalidation): only the document lane does. A stale revalidation whose
 loader threw commits nothing at all and is logged (`partial-update.ts`). Every settled lane takes
-`buildLoaderStreams` with `settle` (`segment-system.tsx:323`): every loader is
+`buildLoaderStreams` with `settle` (`segment-system.tsx:325`): every loader is
 still awaited before the commit, so the commit is one commit with no
 fallback, and each settled entry is handed to its read through
 `loaderStreams`, the channel a navigation uses. A plain error stays out of
 the build-time decode, so its `errorBoundary()` fallback rides the throw as
 the `LOADER_ERROR_FALLBACK` marker (`decode-loader-results.ts`
 `decodeLoaderEntry`) and `StreamedLoaderErrorBoundary` renders it
-(`route-content-wrapper.tsx:86`) unless a nearer boundary catches first.
+(`route-content-wrapper.tsx:96`) unless a nearer boundary catches first.
 `notFound()` and `redirect()` are control flow and are still placed at build
 time, in the segment's content. A `redirect()` must never take the
 document-lane shortcut that replaces the whole page there
 (`!settleLoaders && isLoaderRedirectNode` in `segment-system.tsx`): a delete action
 whose item loader then redirects to the list would unmount every layout
-before the redirect navigation mounted them again. The planted node replaces
-the segment's `StreamedLoaderErrorBoundary`-wrapped content, so the wrapper
-chain loses a link while it redirects (an `I5 drift` the redirect e2e
-allows, as main does); the layouts above keep their instance. The read
+before the redirect navigation mounted them again. The build hands the node
+to the segment's `StreamedLoaderErrorBoundary` as `settledFallback`, and the
+boundary renders it in place of its children, where it renders a marker a
+read throws. So the wrapper chain is the content's while it redirects, the
+layouts above keep their instance, and a `notFound()` fallback a navigation's
+read threw keeps its instance when an action's rerun settles it again. The
+build used to plant the node in place of the boundary instead, which dropped
+that link (an `I5 drift` the redirect e2e had to allow) and mounted the
+fallback anew on each lane change. The read
 decodes a settled entry synchronously (`use-loader.tsx:74`),
 so nothing suspends (suspense-contract.md, rule 3) and the wrapper chain is
 the same on every lane (rule 4).
@@ -979,8 +984,8 @@ when its `resetKey` (the segment's route and params) changed, so an
 `errorBoundary()` fallback stayed after a later action or same-route
 navigation whose rerun succeeded. Its `reset` prop is now the segment's
 route-and-params key followed by the `loaderData` of each loader of the
-segment and of its ancestors (`segment-system.tsx:695`), and it resets when
-one of them is a different object (`route-content-wrapper.tsx:72`). The
+segment and of its ancestors (`segment-system.tsx:700`), and it resets when
+one of them is a different object (`route-content-wrapper.tsx:82`). The
 ancestors matter because a read walks up the chain: a route that reads its
 layout's loader catches that loader's marker at its own boundary, so it has
 to reset when the layout's loader reruns, not only its own (the first
@@ -1007,7 +1012,7 @@ What it does not cover, each keeping its earlier behaviour:
 - An `intercept()` slot's loaders ride on the slot as one aggregate, decoded
   by the slot's `LoaderResolver` while React renders, above the slot's
   content. So do a parallel slot's loaders under the slot's own `loading()`
-  (`segment-system.tsx:850`, slots take no streams).
+  (`segment-system.tsx:857`, slots take no streams).
 - A no-JS form post renders the whole document after the action, so a loader
   that throws there behaves as on a page load, with no call to resolve.
 
