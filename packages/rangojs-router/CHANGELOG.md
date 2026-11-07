@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `clientUrls()` click no longer shows the destination under a server layout its answer re-renders
+
+**Before.** A click between the routes of a `clientUrls()` group presented
+the destination at once, in an optimistic frame, under the server layouts on
+screen. When a layout above the group re-renders by its `revalidate()` for
+that destination (a category template whose rule compares the category),
+the frame showed the destination under the source page's render of it for
+one server round trip: a product page under the category hero, which the
+answer then removed.
+
+**Now.** The server asks the `revalidate()` rules of the segments above the
+group (layouts, their loaders, orphan layouts and parallels) what they read
+of the destination when it renders a group page, and ships it with the page.
+A click to a destination that changes what they read, or past a rule that
+re-renders on every navigation or reads the destination's URL or route name,
+gets no frame: the page on screen stays until the answer commits, as a
+server route's navigation does. A destination that keeps what they read
+(product to cart, under a category rule) is presented at once as before. Groups with no rule above them are unchanged.
+
+```ts
+// A template above the group, re-rendered when the category changes.
+layout(Template, () => [
+  revalidate(
+    ({ currentParams, nextParams }) =>
+      currentParams.category !== nextParams.category || undefined,
+  ),
+  include("/", shopGroup), // /c/:category, /p/:productId, /cart
+]);
+// /c/audio -> /p/1: no frame (category changes); the hero never shows above product 1.
+// /p/1 -> /cart: frame at once (no category either side).
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

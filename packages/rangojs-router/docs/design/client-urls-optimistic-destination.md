@@ -53,6 +53,7 @@ Decisions taken with the maintainer (2026-09-12):
 | Fully prefetched click                                         | commits from cache with no fallback frame                                  | unchanged; the optimistic branch is replaced by the commit in the same beat         |
 | Middleware or loader redirect / error                          | optimistic branch discarded at commit                                      | unchanged                                                                           |
 | Intercept target                                               | local presentation declined                                                | unchanged                                                                           |
+| Destination a server layout's `revalidate()` re-renders        | local presentation declined                                                | unchanged                                                                           |
 | Hard load                                                      | shell after middleware and `ssr: "await"` loaders                          | unchanged                                                                           |
 
 The same-route row is deliberately untouched: held data and `revalidate()`

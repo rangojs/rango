@@ -52,6 +52,13 @@ vi.mock("../../server/loader-registry.js", () => ({
   getLoaderLazy: getLoaderLazyMock,
 }));
 
+/** What a group route's handler reads of its ctx (chromeReadsOf). */
+const HANDLER_CTX = {
+  params: {},
+  url: new URL("http://localhost/"),
+  routeName: undefined,
+};
+
 function AppLayout(): null {
   return null;
 }
@@ -493,8 +500,8 @@ describe("client URL server projection", () => {
     ]);
 
     const handlerElement = (
-      entry.handler as unknown as () => React.ReactElement
-    )();
+      entry.handler as unknown as (ctx: object) => React.ReactElement
+    )(HANDLER_CTX);
     expect(handlerElement.type).toBe(ClientUrlsRoot);
     expect(handlerElement.props).toEqual({
       definition: reference,
@@ -832,8 +839,8 @@ describe("client URL server projection", () => {
     // ClientUrlsRoot receives the prefix so beginClientUrlNavigation can
     // decline presentations the intercept will claim.
     const handlerElement = (
-      detail.handler as unknown as () => React.ReactElement
-    )();
+      detail.handler as unknown as (ctx: object) => React.ReactElement
+    )(HANDLER_CTX);
     expect((handlerElement.props as { namePrefix?: string }).namePrefix).toBe(
       "clientGroup",
     );

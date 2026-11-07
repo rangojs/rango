@@ -4,6 +4,7 @@ import { startTransition } from "react";
 import { sameMountInstance } from "../router/substitute-pattern-params.js";
 import type { ClientUrlPatterns } from "./types.js";
 import type { TransitionWhenFn } from "../types/segments.js";
+import { chromeKeeps, type ChromeReads } from "./chrome-reads.js";
 
 export interface ClientUrlNavigationIntent {
   readonly routeId: string;
@@ -59,6 +60,9 @@ interface ActiveClientUrlGroup {
    * while an optimistic frame is. Registered at commit.
    */
   readonly routeId: string | undefined;
+  /** ClientUrlsRoot's `chrome`: the destinations the server segments above
+   *  the group stay right for. */
+  readonly chrome: ChromeReads | undefined;
   readonly setIntent: (intent: ClientUrlNavigationIntent | null) => void;
   intent?: ClientUrlNavigationIntent | null;
 }
@@ -101,6 +105,7 @@ export function registerClientUrlGroup(
   setIntent: (intent: ClientUrlNavigationIntent | null) => void,
   routeId?: string,
   foreign?: readonly string[],
+  chrome?: ChromeReads,
 ): () => void {
   const group: ActiveClientUrlGroup = {
     definition,
@@ -108,6 +113,7 @@ export function registerClientUrlGroup(
     namePrefix,
     foreign,
     routeId,
+    chrome,
     setIntent,
   };
   activeGroup = group;
@@ -168,6 +174,19 @@ export function beginClientUrlNavigation(
       : record.name
     : undefined;
   if (canonicalName && activeInterceptTargets.has(canonicalName)) return null;
+
+  // Decline a frame the server segments above the group would not stay right
+  // for: the canonical commit re-renders them by their revalidate(), so the
+  // frame would show the destination under the committed page's chrome for a
+  // round trip (a category hero above a product). The committed page's
+  // values, so they hold while a frame is on screen too. A same-route intent
+  // from the committed page swaps nothing and keeps its pending state.
+  if (
+    match.routeKey !== group.routeId &&
+    !chromeKeeps(group.chrome, match.params)
+  ) {
+    return null;
+  }
 
   const state = buildState?.();
 
