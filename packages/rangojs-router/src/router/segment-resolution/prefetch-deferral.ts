@@ -21,11 +21,13 @@
  * placeholder over content that is on screen would replace it with a fallback,
  * or make the click wait where a plain navigation would not.
  *
- * "Holds" is what the request listed in `_rsc_segments` (PrefetchDeferral.held),
- * the set buildMatchResult (match-result.ts) filters the response with. Not
- * the set resolution works on: the match deletes a route's id from that one to
- * force a same-route render from an intercept source (match-api.ts), and a
- * unit deferred on that ground would be dropped from the response as held.
+ * "Holds" is MatchContext.clientSegmentSet (PrefetchDeferral.held): what the
+ * request listed in `_rsc_segments`, plus the clientUrls() layout() loader
+ * copies the page holds, the ids buildMatchResult (match-result.ts) filters
+ * the response with. A held segment the match renders anyway
+ * (MatchContext.forceRender, a same-route render from an intercept source)
+ * stays held here: a unit deferred on it would be dropped from the response
+ * as held, and the click would get nothing for it.
  */
 
 import {
@@ -48,6 +50,12 @@ import {
 } from "../../prefetch-markers.js";
 import { WIRE } from "../../wire-params.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
+import { clientHeldOf } from "../match-context.js";
+import {
+  NOTHING_HELD,
+  rendersAsNew,
+  type ResolutionPassInput,
+} from "./resolution-pass.js";
 
 /**
  * What a request says it is, read once when its context is created
@@ -133,7 +141,7 @@ export interface PrefetchDeferral {
    * cache() boundary, a ppr or Prerender route): no unit at or below it.
    */
   readonly storedFrom: number;
-  /** The segment ids the request listed as held (`_rsc_segments`). */
+  /** The segment ids the client holds (MatchContext.clientSegmentSet). */
   readonly held: ReadonlySet<string>;
   /**
    * Segment ids of the handler units this prefetch skips: every unit that is
@@ -376,8 +384,6 @@ export function partialDeferralMode(request: {
   return request.kind;
 }
 
-export const NOTHING_HELD: ReadonlySet<string> = new Set();
-
 /**
  * The plan for one match, or undefined when the tree declares no flag and the
  * request is not a fill (the common case: nothing to carry). `held` is the
@@ -457,17 +463,17 @@ export function isFillRequest(ctx: HandlerContext<any, any>): boolean {
 
 /**
  * A fill's whole revalidation rule (R5): send a segment the client does not
- * hold, keep one it holds, and consult nothing else (no revalidate()
- * predicate, no params or search comparison, no trace entry). Undefined on
- * any other request, where revalidation decides. `held` is the set the
- * deciding site resolves with.
+ * hold or the match forces (rendersAsNew), keep any other it holds, and
+ * consult nothing else (no revalidate() predicate, no params or search
+ * comparison, no trace entry). Undefined on any other request, where
+ * revalidation decides.
  */
 export function fillSends(
   ctx: HandlerContext<any, any>,
   segmentId: string,
-  held: ReadonlySet<string>,
+  held: Pick<ResolutionPassInput, "client" | "forceRender">,
 ): boolean | undefined {
-  return isFillRequest(ctx) ? !held.has(segmentId) : undefined;
+  return isFillRequest(ctx) ? rendersAsNew(held, segmentId) : undefined;
 }
 
 /**
@@ -481,6 +487,7 @@ export function interceptFillSkips(
     handlerContext: HandlerContext<any, any>;
     isIntercept: boolean;
     clientSegmentSet: ReadonlySet<string>;
+    forceRender?: string;
   },
   segment: string | { id: string; namespace?: string },
 ): boolean {
@@ -489,9 +496,7 @@ export function interceptFillSkips(
     if (isInterceptSegment(segment)) return false;
     segment = segment.id;
   }
-  return (
-    fillSends(match.handlerContext, segment, match.clientSegmentSet) === true
-  );
+  return fillSends(match.handlerContext, segment, clientHeldOf(match)) === true;
 }
 
 const RECORD_OPEN: RecordUse = { read: true, write: true, refresh: true };

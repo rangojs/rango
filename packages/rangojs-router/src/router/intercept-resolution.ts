@@ -389,7 +389,7 @@ export async function resolveInterceptEntry<TEnv>(
   // A fill keeps a slot the client holds: neither its handler nor its layout
   // runs, only the loaders the client lacks (match-result.ts leaves the null
   // slot out of the response).
-  if (fillSends(context, slotSegmentId, pass.client) === false) {
+  if (fillSends(context, slotSegmentId, pass) === false) {
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 

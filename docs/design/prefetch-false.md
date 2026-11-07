@@ -576,12 +576,16 @@ the request is a fill:
   is always a POST and a capture always runs the full match, so no real
   request can show those conditions apart.
 - `held`: the client's segment ids as the request listed them in
-  `_rsc_segments`. Deferral reads this set and no other. It is the set
-  `buildMatchResult` filters the response with, and it is not the set
-  resolution works on: the match drops a route's id from that one to force a
-  same-route render from an intercept source. Deferring on the forced set
-  skipped the handler of a route the response then left out as held, so the
-  click got nothing for it.
+  `_rsc_segments`, plus the `clientUrls()` `layout()` loader copies the page
+  holds: `MatchContext.clientSegmentSet`, the set resolution and the cache
+  middleware read too. `buildMatchResult` filters the response with the same
+  ids (it sends every loader segment, so the copies do not matter there). A
+  same-route render from an intercept source does not drop the route's id
+  from it: the match names that segment `MatchContext.forceRender`, which only
+  the new-or-held decisions read (`rendersAsNew`). When the forced render was
+  a deletion from the set resolution works on, deferral had to keep a second
+  set: deferring on the forced one skipped the handler of a route the
+  response then left out as held, so the click got nothing for it.
 - `skipped` and `record`: for a prefetch, the segment ids of the units this
   request skips, and how the request may use the route's `cache()` record
   (`RecordUse`: `read`, `write` and `refresh`). `defersUnit()` is a lookup on
