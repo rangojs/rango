@@ -386,10 +386,8 @@ export function createNavigationStore(
    * that rotated nothing: a receiver that cannot adopt a newer state marks its
    * caches stale instead of flushing them and rotating.
    */
-  function broadcastInvalidation(
-    soft: boolean,
-    rangoState: string = getRangoState(),
-  ): void {
+  function broadcastInvalidation(soft: boolean): void {
+    const rangoState = getRangoState();
     // Only broadcast if cross-tab sync is enabled
     if (!crossTabSync) return;
 

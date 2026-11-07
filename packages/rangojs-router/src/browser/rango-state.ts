@@ -243,8 +243,7 @@ export function invalidateRangoState(): void {
 export function bumpRangoStateWriteWhenUnbacked(): void {
   const read = readCookie(cookieName);
   if (read.readable && read.value !== null) return;
-  const bumped = mirror === null ? null : bumpStateWrite(mirror);
-  if (bumped !== null) mirror = bumped;
+  if (mirror !== null) mirror = bumpStateWrite(mirror) ?? mirror;
 }
 
 /**
