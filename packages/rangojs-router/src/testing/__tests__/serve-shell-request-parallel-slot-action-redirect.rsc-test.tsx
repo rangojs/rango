@@ -81,6 +81,11 @@ async function alwaysRedirecting(): Promise<Response> {
   return redirect(REDIRECT_TO);
 }
 
+/** A handler that returns the redirect synchronously, so it never streams. */
+function syncRedirect(): React.ReactNode | Response {
+  return redirect(REDIRECT_TO);
+}
+
 interface Metadata {
   segments: ResolvedSegment[];
   matched: string[];
@@ -283,6 +288,28 @@ describe("a parallel slot handler that redirects from an action's revalidation",
       }),
     );
     expect(routeOf(routeOpened)?.component).toBeInstanceOf(Promise);
+  });
+
+  it("follows a synchronous redirect a slot handler returns under loading() on a navigation", async () => {
+    // A synchronous Response is not streamed: it short-circuits the
+    // navigation, as a route handler's does.
+    const acted = await serveShellRequest(
+      makeRouter({ slotHandler: syncRedirect }),
+      "/item",
+      { partial: { from: "/page", segments: [] } },
+    );
+    expect(acted.response.status).toBe(204);
+    expect(acted.response.headers.get("X-RSC-Redirect")).toBe(REDIRECT_HEADER);
+
+    const routeActed = await serveShellRequest(
+      makeRouter({ onRoute: true, slotHandler: syncRedirect }),
+      "/item",
+      { partial: { from: "/page", segments: [] } },
+    );
+    expect(routeActed.response.status).toBe(acted.response.status);
+    expect(routeActed.response.headers.get("X-RSC-Redirect")).toBe(
+      acted.response.headers.get("X-RSC-Redirect"),
+    );
   });
 
   it("follows a redirect a slot handler without loading() returns on a navigation", async () => {

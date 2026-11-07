@@ -410,6 +410,52 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
   });
 
+  it("throws a synchronous Response a streamed slot handler returns, instead of rendering it", async () => {
+    // A synchronous Response is not a promise, so it never streams: it
+    // short-circuits the answer as a route handler's does.
+    const response = new Response(null, { status: 204 });
+    const slotHandler = vi.fn(() => response);
+    const context = createContext();
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [createParallelEntry(slotHandler)],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    await expect(
+      resolveParallelSegments(
+        {
+          context,
+          client: new Set(),
+          params: {},
+          prevParams: {},
+          request: context.request,
+          prevUrl: context.url,
+          nextUrl: context.url,
+          routeKey: "/blog",
+          deps,
+        },
+        entry,
+        false,
+      ),
+    ).rejects.toBe(response);
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+  });
+
   describe("static slot value with loading false", () => {
     // A non-function slot value is the slot's content as declared: a
     // Promise (a React 19 ReactNode) goes to render as is, never awaited by

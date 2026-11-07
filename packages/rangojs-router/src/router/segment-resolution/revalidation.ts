@@ -857,7 +857,9 @@ async function resolveParallelSlotComponent<TEnv>(
             });
           } else {
             doneHandler();
-            component = result as ReactNode;
+            // A synchronous Response still short-circuits, as a route's does:
+            // only a promise keeps the streamed branch.
+            component = handleHandlerResult(result);
           }
         } else {
           // A static value (a Promise included) goes to render as is. A
