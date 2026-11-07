@@ -34,7 +34,7 @@ import type {
 } from "../../types";
 import type { SegmentRevalidationResult } from "../types.js";
 import type { InterceptResult } from "../router-context.js";
-import { FRESH, type ResolutionPass } from "./resolution-pass.js";
+import { FRESH, rendersAsNew, type ResolutionPass } from "./resolution-pass.js";
 import {
   debugLog,
   pushRevalidationTraceEntry,
@@ -156,11 +156,11 @@ function revalidationInputOf<TEnv>(
 }
 
 /**
- * Whether a segment the client holds (`pass.client`, the set resolution works
- * on) renders again. A fill keeps it (prefetch-deferral.ts fillSends): no
- * revalidate() predicate runs and nothing is traced or observed. Any other
- * request asks the segment's revalidate() chain, and `onEvaluated` sees that
- * answer.
+ * Whether a segment the client holds, and the match does not force
+ * (rendersAsNew), renders again. A fill keeps it (prefetch-deferral.ts
+ * fillSends): no revalidate() predicate runs and nothing is traced or
+ * observed. Any other request asks the segment's revalidate() chain, and
+ * `onEvaluated` sees that answer.
  */
 async function revalidateHeld<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -174,7 +174,7 @@ async function revalidateHeld<TEnv>(
     onEvaluated?: (shouldRevalidate: boolean) => void;
   },
 ): Promise<boolean> {
-  const fill = fillSends(pass.context, held.segment.id, pass.client);
+  const fill = fillSends(pass.context, held.segment.id, pass);
   if (fill !== undefined) return fill;
   const shouldRevalidate = await evaluateRevalidation({
     ...revalidationInputOf(pass),
@@ -360,7 +360,7 @@ async function loadersToRerun<TEnv>(
       const segmentId = segmentIds[index]!;
       const shouldRun = await revalidate(
         async () => {
-          if (!pass.client.has(segmentId)) {
+          if (rendersAsNew(pass, segmentId)) {
             if (isTraceActive()) {
               pushRevalidationTraceEntry({
                 segmentId,
@@ -707,6 +707,7 @@ export async function resolveLoadersOnly<TEnv>(
     handlerContext: pass.context,
     isIntercept: !!walk?.interceptResult,
     clientSegmentSet: pass.client,
+    forceRender: pass.forceRender,
   };
   for (const entry of entries) {
     if (entry.type === "route" && walk?.interceptResult) continue;
@@ -927,7 +928,7 @@ export async function resolveParallelSegments<TEnv>(
     const parallelId = `${entry.shortCode}.${slot}`;
 
     const isFullRefetch = clientSegmentIds.size === 0;
-    const isNewParent = !clientSegmentIds.has(entry.shortCode);
+    const isNewParent = rendersAsNew(pass, entry.shortCode);
 
     // A slot's loaders (never cached) are deduped per parallel entry and
     // emitted either before or after the slot segment per loaderOrder.
@@ -970,7 +971,7 @@ export async function resolveParallelSegments<TEnv>(
     let deferred = deferUnit(context, parallelId, "below");
     // A fill sends exactly the slots the client lacks, ahead of every rule
     // below (fillSends).
-    const fill = fillSends(context, parallelId, clientSegmentIds);
+    const fill = fillSends(context, parallelId, pass);
     let shouldResolve: boolean;
     if (fresh) {
       // FRESH: the slot is new; no trace entry, no decision event.
@@ -1000,7 +1001,7 @@ export async function resolveParallelSegments<TEnv>(
       let defaultOverride:
         | { value: boolean; reason: string; floor?: boolean }
         | undefined;
-      if (!clientSegmentIds.has(parallelId)) {
+      if (rendersAsNew(pass, parallelId)) {
         const value =
           parentChainDefault === "force-render"
             ? true
@@ -1105,8 +1106,9 @@ export async function resolveParallelSegments<TEnv>(
 }
 
 /**
- * Whether a partial pass re-renders a chain entry: one the client lacks, or a
- * held one whose revalidate() rules ask for it (revalidateHeld).
+ * Whether a partial pass re-renders a chain entry: one the client lacks or
+ * the match forces (rendersAsNew), or a held one whose revalidate() rules ask
+ * for it (revalidateHeld).
  */
 async function entryRevalidates<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -1114,14 +1116,14 @@ async function entryRevalidates<TEnv>(
   belongsToRoute: boolean,
 ): Promise<boolean> {
   const { context, params, routeKey } = pass;
-  const hasSegment = pass.client.has(entry.shortCode);
   debugLog("segment.revalidate", "entry presence check", {
     segmentId: entry.shortCode,
     entryType: entry.type,
-    clientHasSegment: hasSegment,
+    clientHasSegment: pass.client.has(entry.shortCode),
+    forced: entry.shortCode === pass.forceRender,
     belongsToRoute,
   });
-  if (!hasSegment) {
+  if (rendersAsNew(pass, entry.shortCode)) {
     if (isTraceActive()) {
       const segType =
         entry.type === "cache" ? "layout" : (entry.type as "layout" | "route");
@@ -1416,7 +1418,7 @@ async function orphanRevalidates<TEnv>(
   belongsToRoute: boolean,
 ): Promise<boolean> {
   const { context, params, routeKey } = pass;
-  if (!pass.client.has(orphan.shortCode)) {
+  if (rendersAsNew(pass, orphan.shortCode)) {
     if (isTraceActive()) {
       pushRevalidationTraceEntry({
         segmentId: orphan.shortCode,
@@ -1693,6 +1695,7 @@ export async function resolveAllSegments<TEnv>(
     handlerContext: context,
     isIntercept: !!interceptResult,
     clientSegmentSet: pass.client,
+    forceRender: pass.forceRender,
   };
 
   const boundary = pass.actionContext?.boundary;

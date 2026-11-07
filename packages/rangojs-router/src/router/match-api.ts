@@ -437,24 +437,23 @@ export async function createMatchContextForPartial<TEnv>(
 
   // The page's copy of a clientUrls() layout() loader under the route it
   // leaves holds the destination route's (client-urls/layout-loader-copies.ts).
-  const held = withLayoutLoaderCopies(
+  const clientSegmentSet = withLayoutLoaderCopies(
     nav.clientSegmentSet,
     snapshot.manifestEntry,
   );
 
-  // Make a mutable copy of clientSegmentSet so we can delete entries
-  // for same-route navigation forcing
-  const clientSegmentSet = new Set(held);
-
-  if (
+  // A navigation to the intercept source's own route renders the route
+  // segment the client holds (MatchContext.forceRender).
+  const forceRender =
     nav.isSameRouteNavigation &&
     snapshot.manifestEntry.type === "route" &&
     nav.hasInterceptSource
-  ) {
+      ? snapshot.manifestEntry.shortCode
+      : undefined;
+  if (forceRender) {
     debugLog("matchPartial.intercept", "forcing route segment render", {
-      segmentId: snapshot.manifestEntry.shortCode,
+      segmentId: forceRender,
     });
-    clientSegmentSet.delete(snapshot.manifestEntry.shortCode);
   }
 
   // Whether an intercept targets this route at all: the same walk as above
@@ -499,9 +498,7 @@ export async function createMatchContextForPartial<TEnv>(
     }),
     matched,
     cacheScope,
-    // What the page holds, not the copy forced above: see
-    // prefetch-deferral.ts.
-    held,
+    clientSegmentSet,
     interceptResult
       ? resolveInterceptDeferralScope(interceptResult.intercept)
       : undefined,
@@ -516,6 +513,7 @@ export async function createMatchContextForPartial<TEnv>(
     env,
     clientSegmentIds: nav.clientSegmentIds,
     clientSegmentSet,
+    forceRender,
     stale: nav.stale,
     heldBoundary: nav.heldBoundary,
     prevUrl: nav.prevUrl,

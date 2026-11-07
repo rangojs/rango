@@ -14,14 +14,16 @@
 
 import type { HandlerContext } from "../../types.js";
 import type { ActionContext, SegmentResolutionDeps } from "../types.js";
-import { NOTHING_HELD } from "./prefetch-deferral.js";
 
 /**
- * The segment ids the client holds, the set resolution works on (match-api.ts
- * may delete a route's id from the listed set to force a render). Empty on a
- * full refetch.
+ * The segment ids the client holds (MatchContext.clientSegmentSet). Empty on a
+ * full refetch. A held segment the match renders anyway stays in it and is
+ * named by ResolutionPassInput.forceRender.
  */
 export type ClientHeld = ReadonlySet<string>;
+
+/** A partial request's client that holds nothing (an empty `_rsc_segments`). */
+export const NOTHING_HELD: ClientHeld = new Set();
 
 /**
  * The client of a full match: it holds nothing and asks for nothing to be
@@ -41,6 +43,8 @@ export const FRESH: ClientHeld = new Set<string>();
 export interface ResolutionPassInput<TEnv = any> {
   readonly context: HandlerContext<any, TEnv>;
   readonly client: ClientHeld;
+  /** MatchContext.forceRender: a held segment the walk renders as new. */
+  readonly forceRender?: string;
   /** The matched route's params, stamped on every segment the walk emits. */
   readonly params: Record<string, string>;
   readonly prevParams: Record<string, string>;
@@ -80,6 +84,21 @@ export interface ResolutionPassInput<TEnv = any> {
 
 export interface ResolutionPass<TEnv = any> extends ResolutionPassInput<TEnv> {
   readonly deps: SegmentResolutionDeps<TEnv>;
+}
+
+/**
+ * The segment renders as new, with no revalidate() rule consulted: the client
+ * lacks it, or the match forces it (`forceRender`). Every new-or-held
+ * decision of a partial pass asks this: live (revalidation.ts), from a stored
+ * record (match-middleware/cache-lookup.ts) and a fill's
+ * (prefetch-deferral.ts fillSends). Prefetch deferral and the response filter
+ * read `client` alone: a forced segment is still held, never deferred.
+ */
+export function rendersAsNew(
+  held: Pick<ResolutionPassInput, "client" | "forceRender">,
+  segmentId: string,
+): boolean {
+  return segmentId === held.forceRender || !held.client.has(segmentId);
 }
 
 /**

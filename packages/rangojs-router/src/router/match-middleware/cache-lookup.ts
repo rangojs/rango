@@ -43,6 +43,7 @@
 import type { InternalHandlerContext, ResolvedSegment } from "../../types.js";
 import { isPprEntry, type EntryData } from "../../server/context.js";
 import {
+  clientHeldOf,
   rendersLive,
   resolutionPassInput,
   type MatchContext,
@@ -50,7 +51,10 @@ import {
 } from "../match-context.js";
 import { getRouterContext, type RouterContext } from "../router-context.js";
 import type { PrevPage } from "../navigation-snapshot.js";
-import { freshPassInput } from "../segment-resolution/resolution-pass.js";
+import {
+  freshPassInput,
+  rendersAsNew,
+} from "../segment-resolution/resolution-pass.js";
 import { observeEvent } from "../instrument.js";
 import { pushRevalidationTraceEntry, isTraceActive } from "../logging.js";
 import { treeHasStreaming } from "./segment-resolution.js";
@@ -262,15 +266,15 @@ function cachedSegmentSends<TEnv>(
     return shouldRevalidate;
   };
 
+  const held = clientHeldOf(ctx);
+
   return (segment) => {
-    if (!ctx.clientSegmentSet.has(segment.id)) {
+    if (rendersAsNew(held, segment.id)) {
       return trace(segment, true, "new-segment");
     }
     // A fill keeps a held segment outright (fillSends), an intercept's
     // included.
-    if (
-      fillSends(ctx.handlerContext, segment.id, ctx.clientSegmentSet) === false
-    ) {
+    if (fillSends(ctx.handlerContext, segment.id, held) === false) {
       return false;
     }
     if (isInterceptSegment(segment)) return true;
@@ -359,14 +363,11 @@ function storedEntrySends<TEnv>(
     );
     return false;
   };
+  const held = clientHeldOf(ctx);
   const decide = (segment: ResolvedSegment): boolean | Promise<boolean> => {
-    if (!ctx.clientSegmentSet.has(segment.id)) return true;
+    if (rendersAsNew(held, segment.id)) return true;
     // A fill keeps it (fillSends).
-    const fill = fillSends(
-      ctx.handlerContext,
-      segment.id,
-      ctx.clientSegmentSet,
-    );
+    const fill = fillSends(ctx.handlerContext, segment.id, held);
     if (fill !== undefined) return fill;
     const ofSlot = isInterceptSegment(segment);
     const prev = ofSlot ? slotPrev : pagePrev;

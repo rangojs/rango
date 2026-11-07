@@ -186,8 +186,8 @@ export function buildMatchResult<TEnv>(
       }
       // A deferred unit (prefetch: false) has a null component and is sent:
       // only a segment the client does not hold is ever deferred, and
-      // deferral reads these same ids (prefetch-deferral.ts
-      // PrefetchDeferral.held), not the set the match forces renders with.
+      // deferral reads these ids too (MatchContext.clientSegmentSet, which
+      // adds only loader copies, prefetch-deferral.ts PrefetchDeferral.held).
       if (
         s.component !== null ||
         s.type === "loader" ||
