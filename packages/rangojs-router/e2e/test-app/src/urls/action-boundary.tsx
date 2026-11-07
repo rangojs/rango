@@ -5,7 +5,10 @@ import {
   ActionBoundaryCartLoader,
   ActionBoundaryNoteLoader,
 } from "./action-boundary.defs.js";
-import { slowActionBoundaryNote } from "./action-boundary.actions.js";
+import {
+  failActionBoundaryCart,
+  slowActionBoundaryNote,
+} from "./action-boundary.actions.js";
 import {
   ActionBoundaryBar,
   ActionBoundaryControls,
@@ -65,6 +68,12 @@ export const actionBoundaryPatterns = urls(
         () => (
           <div data-testid="ab-page">
             <ActionBoundaryControls />
+            {/* Posts without JavaScript too: a no-JS form action. */}
+            <form action={failActionBoundaryCart}>
+              <button type="submit" data-testid="ab-fail-form">
+                Add, then fail (form)
+              </button>
+            </form>
           </div>
         ),
         { name: "page" },

@@ -869,4 +869,37 @@ describe("a thrown action's boundary on the rewrite target", () => {
     });
     expect(sent.segments.filter((s) => s.type === "error")).toHaveLength(1);
   });
+
+  it("a no-JS form post renders the target's boundary inside the target's layout, with its loader's write", async () => {
+    stock = 0;
+    const result = await serveShellRequest(shop, "/deal/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(sellThenFail, {
+        id: "actions.ts#sellThenFailForm",
+        useActionState: false,
+      }),
+    });
+
+    expect(result.response.status).toBe(500);
+    expect(result.response.headers.get("x-rango-rewrite")).toBe("/goods/1");
+    expect(result.flight).toContain("goods layout");
+    expect(result.flight).toContain("goods boundary");
+    const { metadata: sent } = await deserializeResult<{
+      metadata: {
+        segments: Array<{
+          type: string;
+          loaderId?: string;
+          loaderData?: unknown;
+        }>;
+      };
+    }>(result.flight!);
+    const stockSegment = sent.segments.find(
+      (s) => s.loaderId === StockLoader.$$id,
+    );
+    expect(await stockSegment?.loaderData).toMatchObject({
+      ok: true,
+      data: 1,
+    });
+    expect(sent.segments.filter((s) => s.type === "error")).toHaveLength(1);
+  });
 });

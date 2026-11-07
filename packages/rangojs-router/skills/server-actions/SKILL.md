@@ -759,7 +759,9 @@ success, and nothing inside the outlet runs. A link from the page re-runs
 what the boundary replaced and everything under it; under the router's
 default boundary at the root, the whole page. Back to the page later
 restores it and revalidates it, which replaces the boundary with the route. An action sent from an intercept
-gets the boundary alone.
+gets the boundary alone. A form posted without JavaScript gets the same page
+as a document: the layouts above the boundary render around it with fresh
+loaders, and nothing at or below it runs.
 
 ```typescript
 // urls.tsx — inside the urls() callback

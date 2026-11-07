@@ -161,11 +161,19 @@ export function withSegmentResolution<TEnv>(
 
     const { resolveAllSegments } = getRouterContext<TEnv>();
 
-    // A full match (interceptResult null) is a FRESH pass.
+    // A full match (interceptResult null) is a FRESH pass. A no-JS form
+    // post's boundary document carries the action, cut at its boundary.
     const result = await ctx.Store.run(() =>
       resolveAllSegments(
         ctx.isFullMatch
-          ? freshPassInput(ctx.handlerContext, ctx.routeKey, ctx.matched.params)
+          ? freshPassInput(
+              ctx.handlerContext,
+              ctx.routeKey,
+              ctx.matched.params,
+              {
+                actionContext: ctx.actionContext,
+              },
+            )
           : resolutionPassInput(ctx),
         ctx.entries,
         {

@@ -12,6 +12,10 @@
  * throws anything else, gets the error segment alone (matchError,
  * router/match-api.ts).
  *
+ * A no-JS form post that throws into one gets the page as a document, cut at
+ * the boundary the same way: the layouts above it render around it, with
+ * their loaders fresh, and nothing at or below the outlet runs.
+ *
  * An earlier action's follow-up, owed to the page that shows the boundary,
  * holds it (`partial.boundary` beside `stale`): it re-renders every segment
  * above the boundary, as a request that holds nothing does, and nothing at
@@ -31,6 +35,7 @@ vi.mock(
 );
 
 import {
+  createActionForm,
   resetShellTestState,
   serveShellRequest,
   type ServeShellRequestOptions,
@@ -73,6 +78,8 @@ const NO_RUNS = {
 let cart = 0;
 let cartRuns = 0;
 let ratesFail = false;
+/** What the shop layout's handler throws, when set. */
+let shopThrows: Response | undefined;
 /** The cart loader's revalidate(): the default unless a case replaces it. */
 let cartRule = DEFAULT_RULE;
 /** The section loader's, likewise. */
@@ -132,6 +139,7 @@ const router = createRouter({
   urls(({ layout, path, loader, parallel, errorBoundary, revalidate }) => [
     layout(
       (ctx: HandlerContext) => {
+        if (shopThrows) throw shopThrows;
         ctx.use(Crumbs)("shop");
         return <main>shop</main>;
       },
@@ -306,6 +314,7 @@ beforeEach(async () => {
   cart = 0;
   cartRuns = 0;
   ratesFail = false;
+  shopThrows = undefined;
   cartRule = DEFAULT_RULE;
   sectionRule = DEFAULT_RULE;
   Object.assign(runs, NO_RUNS);
@@ -561,7 +570,9 @@ describe("a thrown action that keeps the error segment alone", () => {
       resolvedIds,
     });
     expect(shape(answer)).toEqual(shape(before.answer));
-    expect(warn.mock.calls.flat().join("\n")).not.toContain("revalidation");
+    expect(warn.mock.calls.flat().join("\n")).not.toContain(
+      "the render of the page above it",
+    );
   });
 
   it("an action whose revalidation throws a Response that is not a redirect, after a loader above the boundary ran: no push of that loader, and a warning", async () => {
@@ -584,7 +595,137 @@ describe("a thrown action that keeps the error segment alone", () => {
     expect(handles).toEqual({});
     expect(errors).toEqual([["action", "out of stock"]]);
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("whose revalidation threw a 403 Response"),
+      expect.stringContaining(
+        "the render of the page above it threw a 403 Response",
+      ),
+    );
+  });
+});
+
+/** A no-JS post of the page's `addThenFail` form: the document it gets. */
+function postThrowing(url: string): Promise<ServeShellRequestResult> {
+  return serveShellRequest(router, url, {
+    cacheStore: new MemorySegmentCacheStore(),
+    form: createActionForm(addThenFail, {
+      id: ADD_THEN_FAIL,
+      useActionState: false,
+    }),
+  });
+}
+
+describe("a no-JS form post that throws into an errorBoundary()", () => {
+  it("under its route's errorBoundary(): the document renders the layouts above the boundary, with the layout loader's write, and runs no route code", async () => {
+    const page = await documentOf("/product/1");
+    const before = { ...runs };
+    const result = await postThrowing("/product/1");
+
+    expect(result.response.status).toBe(500);
+    const { answer, handles } = await readAnswer(result);
+    expect(answer.isError).toBe(true);
+    expect(result.flight).toContain("product failed");
+    const route = idOf(page, (s) => s.type === "route");
+    const productLoader = idOf(page, (s) => s.loaderId === ProductLoader.$$id);
+    // The page's document, with the error in the route's place.
+    expect(answer.segments.map((s) => s.id)).toEqual(
+      page.segments.map((s) => s.id).filter((id) => id !== productLoader),
+    );
+    expect(errorIds(answer)).toEqual([route]);
+    expect(await sent(answer, CartLoader)).toBe(1);
+    expect(await sent(answer, RatesLoader)).toBe("rates");
+    expect(await sent(answer, ProductLoader)).toBeUndefined();
+    expect(runs).toEqual(before);
+    expect(errors).toEqual([["action", "out of stock"]]);
+    // The layout and its slot push their handle values; the route does not.
+    expect(
+      collectHandleData(Crumbs, handles, filterSegmentOrder(answer.matched)),
+    ).toEqual(["shop", "aside"]);
+  });
+
+  it("under a layout's errorBoundary(): cut at its child, the loaders above it fresh and the ones below not run", async () => {
+    const page = await documentOf("/shelf");
+    const before = { ...runs };
+    const result = await postThrowing("/shelf");
+
+    expect(result.response.status).toBe(500);
+    expect(result.flight).toContain("section failed");
+    const { answer } = await readAnswer(result);
+    const shelfLoader = idOf(page, (s) => s.loaderId === ShelfLoader.$$id);
+    expect(errorIds(answer)).toEqual([loaderParentId(shelfLoader)]);
+    expect(answer.segments.map((s) => s.type)).toContain("layout");
+    expect(await sent(answer, CartLoader)).toBe(1);
+    expect(await sent(answer, SectionLoader)).toBe("section:1");
+    expect(await sent(answer, ShelfLoader)).toBeUndefined();
+    expect(runs).toEqual(before);
+  });
+
+  it("under an orphan layout's errorBoundary(): the orphan and its slot render around the boundary", async () => {
+    const page = await documentOf("/deal");
+    const before = { ...runs };
+    const result = await postThrowing("/deal");
+
+    expect(result.response.status).toBe(500);
+    expect(result.flight).toContain("deals failed");
+    const { answer } = await readAnswer(result);
+    expect(errorIds(answer)).toEqual([idOf(page, (s) => s.type === "route")]);
+    const orphan = loaderParentId(
+      idOf(page, (s) => s.loaderId === PromoLoader.$$id),
+    );
+    expect(answer.matched).toEqual(
+      expect.arrayContaining([orphan, `${orphan}.@banner`]),
+    );
+    expect(await sent(answer, PromoLoader)).toBe("promo:1");
+    expect(await sent(answer, DealLoader)).toBeUndefined();
+    expect(runs).toEqual(before);
+  });
+
+  it("with no declared boundary the document is the default error boundary alone, as before", async () => {
+    const result = await postThrowing("/plain");
+    expect(result.response.status).toBe(500);
+    const { answer } = await readAnswer(result);
+    expect(answer.segments.map((s) => s.type)).toEqual(["error"]);
+    expect(await sent(answer, CartLoader)).toBeUndefined();
+  });
+
+  it("a redirect thrown by a layout above the boundary redirects, as from the re-render after a success", async () => {
+    shopThrows = redirect("/plain");
+    // The handler's own redirect handling lies outside serveShellRequest:
+    // the thrown Response reaches the caller.
+    const thrownBy = (served: Promise<unknown>): Promise<unknown> =>
+      served.then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    const succeeded = await thrownBy(
+      serveShellRequest(router, "/product/1", {
+        cacheStore: new MemorySegmentCacheStore(),
+        form: createActionForm(add, {
+          id: "a1b2c3#addForm",
+          useActionState: false,
+        }),
+      }),
+    );
+    const thrown = await thrownBy(postThrowing("/product/1"));
+
+    expect(succeeded).toBe(shopThrows);
+    expect(thrown).toBe(shopThrows);
+  });
+
+  it("a layout above the boundary that throws a Response that is not a redirect: the boundary alone, and a warning", async () => {
+    // The rsc project runs as production; the warning is development-only.
+    vi.stubEnv("NODE_ENV", "development");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    shopThrows = new Response(null, { status: 403 });
+    const result = await postThrowing("/product/1");
+
+    expect(result.response.status).toBe(500);
+    expect(result.flight).toContain("product failed");
+    const { answer, handles } = await readAnswer(result);
+    expect(answer.segments.map((s) => s.type)).toEqual(["error"]);
+    expect(handles).toEqual({});
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "the render of the page above it threw a 403 Response",
+      ),
     );
   });
 });

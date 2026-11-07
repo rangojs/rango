@@ -64,13 +64,16 @@ import {
 } from "./segment-resolution/prefetch-deferral.js";
 
 /**
- * Create match context for full requests (document/SSR).
+ * Create match context for full requests (document/SSR). An `actionContext`
+ * (a no-JS form post's error boundary document) makes the match an action's:
+ * it renders live and its walk is cut at `actionContext.boundary`.
  */
 export async function createMatchContextForFull<TEnv>(
   request: Request,
   env: TEnv,
   deps: MatchApiDeps<TEnv>,
   findInterceptForRoute: MatchApiDeps<TEnv>["findInterceptForRoute"],
+  actionContext?: ActionContext,
 ): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
   const reqCtx = _getRequestContext();
   const cleanUrl = reqCtx?.url ?? stripInternalParams(new URL(request.url));
@@ -232,8 +235,8 @@ export async function createMatchContextForFull<TEnv>(
     interceptResult: null,
     cacheScope,
     isIntercept: false,
-    actionContext: undefined,
-    isAction: false,
+    actionContext,
+    isAction: !!actionContext,
     routeMiddleware: snapshot.routeMiddleware,
     isFullMatch: true,
   };

@@ -521,9 +521,15 @@ export interface RangoInternal<
   readonly __defaultNotFoundBoundary?: RangoOptions<TEnv>["defaultNotFoundBoundary"];
   readonly __notFound?: RangoOptions<TEnv>["notFound"];
 
+  /**
+   * Full match. `actionContext` is set only by the no-JS form post's error
+   * boundary document: the walk renders live and is cut at
+   * `actionContext.boundary` (ActionContext.boundary).
+   */
   match(
     request: Request,
     input?: RouterRequestInput<TEnv>,
+    actionContext?: ActionContext,
   ): Promise<MatchResult>;
 
   /**
