@@ -259,6 +259,12 @@ answers with `X-RSC-Reload` and the client drops. Make each app's entry pages
 fast as documents (`ppr`, or `Prerender`), since every cross-app click lands
 on one.
 
+Two browser features make that document navigation feel close to a soft one:
+a cross-document view transition (`@view-transition { navigation: auto }` in
+the shared stylesheet; same origin only) and a Speculation Rules prerender of
+the links into other apps (Chromium). `/host-router` → "Making a cross-app
+navigation feel soft" has the snippets and what each needs on the server.
+
 ## Deploys
 
 Each `createRouter()` app has its own cache version, computed from the code
