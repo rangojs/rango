@@ -386,6 +386,20 @@ function resolveRoutePattern(
   return typeof entry === "string" ? entry : entry.path;
 }
 
+/**
+ * Route maps that hold every route of their router, include children too
+ * (router.ts adoptDiscoveredRouteMap). createReverse throws for an unknown
+ * name in one even while discovery is active: the placeholder exists only for
+ * names a lazy include has not registered yet, and a Static or Prerender bake
+ * would store it as a real link.
+ */
+const completeRouteMaps: WeakSet<object> = new WeakSet();
+
+/** @internal */
+export function markRouteMapComplete(routeMap: Record<string, string>): void {
+  completeRouteMaps.add(routeMap);
+}
+
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes,
 ): ReverseFunction<TRoutes & Record<string, string>> {
@@ -400,7 +414,10 @@ export function createReverse<TRoutes extends Record<string, string>>(
     if (!pattern) {
       // During build-time discovery, lazy includes haven't resolved yet.
       // Return a placeholder instead of crashing the build.
-      if ((globalThis as any).__rscRouterDiscoveryActive) {
+      if (
+        (globalThis as any).__rscRouterDiscoveryActive &&
+        !completeRouteMaps.has(routeMap)
+      ) {
         return `/__unresolved_reverse/${name}`;
       }
       throw new Error(`Unknown route: ${name}`);

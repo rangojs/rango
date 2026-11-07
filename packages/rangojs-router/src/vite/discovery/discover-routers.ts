@@ -453,6 +453,24 @@ async function discoverRoutersPass(
     for (const [routerId, value] of map) setter(routerId, value);
   }
 
+  // Each router's own name map, and the realm's global one, were seeded from
+  // named-routes.gen.ts, which a build rewrites only after this function
+  // returns. The bake below resolves ctx.reverse and router.reverse against
+  // the router's map (router.ts adoptDiscoveredRouteMap), and the build's PPR
+  // shell capture, later in this realm, resolves middleware ctx.reverse
+  // against the global one (build-shell-capture.ts). Production installs the
+  // same merged map through the routes manifest module (setCachedManifest).
+  // Build only: dev serves requests from this realm (node preset) and
+  // propagateDiscoveryState (dev-server-phase.ts) owns its route data.
+  if (state.isBuildMode) {
+    for (const [routerId, routeMap] of newPerRouterManifestDataMap) {
+      registry.get(routerId)?.adoptDiscoveredRouteMap?.(routeMap);
+    }
+    if (typeof serverMod.setCachedManifest === "function") {
+      serverMod.setCachedManifest({ ...newMergedRouteManifest });
+    }
+  }
+
   // Expand prerender routes and render static handlers (build mode only)
   await expandPrerenderRoutes(state, rscEnv, registry, allManifests);
   await renderStaticHandlers(state, rscEnv, registry);

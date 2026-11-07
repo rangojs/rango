@@ -415,6 +415,7 @@ Public API (`Rango` interface):
 Internal API (`RangoInternal`, not exported):
 
 - `.match()`, `.matchPartial()`, `.matchError()`, `.previewMatch()`, `.matchForPrerender()`, `.renderStaticSegment()`
+- `.adoptDiscoveredRouteMap()`: build-time discovery replaces the `named-routes.gen.ts` seed with the map it generated before the Static/Prerender bake (`vite/discovery/discover-routers.ts`)
 
 ### URL Typing and Generation
 

@@ -316,6 +316,23 @@ interface BuildContext<TParams> {
 `set`, `reverse`), and `Static()` handlers receive `StaticBuildContext`
 (`build`, `dev`, `env`, `get`, `set`, `use`).
 
+Every `reverse` in the bake (`ctx.reverse` of a Prerender or Static handler,
+and `router.reverse` called from one) resolves against the route map discovery
+just generated, not the committed `<router>.named-routes.gen.ts`. You might
+expect the gen file to be current, but the build rewrites it only after
+`discoverRouters()` returns, and the bake runs inside it. Include children
+reach the router's name map only from that file or a lazy expansion, so a
+route added since the last gen write used to fail the build with
+`Unknown route` (and `router.reverse` baked `/__unresolved_reverse/<name>`).
+`discoverRouters()` now hands each router its generated map
+(`adoptDiscoveredRouteMap`, `src/router.ts`) before the bake: names the gen
+file still holds but the tree no longer declares are dropped, so the bake
+resolves exactly what the live worker resolves, and an unknown name throws from
+`router.reverse` too. It also installs the merged map as the realm's global
+one (`setCachedManifest`, as the production routes manifest module does), which
+the build's PPR shell capture later gives middleware `ctx.reverse`. Pinned by
+`src/vite/discovery/__tests__/bake-discovered-route-map.rsc-test.tsx`.
+
 When `buildEnv` is configured in the rango() Vite plugin options, `ctx.env`
 provides the build-time bindings (e.g., KV, D1). This is NOT the live request
 env — it is shared across all prerender invocations for the build. Without

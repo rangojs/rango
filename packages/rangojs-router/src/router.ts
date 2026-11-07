@@ -13,7 +13,11 @@ import {
   DEV_DISCOVERY_PROBE_HEADER,
   isValidDevDiscoveryEpoch,
 } from "./dev-discovery-protocol.js";
-import { createReverse, type ReverseFunction } from "./reverse.js";
+import {
+  createReverse,
+  markRouteMapComplete,
+  type ReverseFunction,
+} from "./reverse.js";
 import {
   resolvePrerenderVersion,
   resolveRouterVersions,
@@ -776,6 +780,39 @@ export function createRouter<TEnv = any>(
     );
   }
 
+  /**
+   * Replace the generated-file seed with the route map discovery just built.
+   * The seed (`$$routeNames`, `<router>.named-routes.gen.ts`) is written only
+   * after discovery returns (build-discovery-phase.ts), while the Static and
+   * Prerender bake runs inside discovery (discover-routers.ts). Include
+   * children reach mergedRouteMap only from the seed or a lazy expansion, so a
+   * route added since the last gen write threw `Unknown route` in ctx.reverse
+   * and baked `/__unresolved_reverse/...` from router.reverse. Only the seed
+   * is replaced, so the bake resolves what a production request resolves: the
+   * gen file written from this same map is the production seed, and a name
+   * routes() registered keeps its registered pattern there too (it overwrites
+   * the seed at module load). Seeded names discovery no longer produces are
+   * dropped. The map is then complete, so router.reverse throws for an
+   * unknown name instead of returning its discovery-time placeholder
+   * (reverse.ts createReverse). Called by build-time discovery only.
+   */
+  function adoptDiscoveredRouteMap(routeMap: Record<string, string>): void {
+    for (const name of seededNames) {
+      if (!Object.hasOwn(routeMap, name)) {
+        delete mergedRouteMap[name];
+        seededNames.delete(name);
+      }
+    }
+    for (const [name, pattern] of Object.entries(routeMap)) {
+      if (Object.hasOwn(mergedRouteMap, name) && !seededNames.has(name)) {
+        continue;
+      }
+      mergedRouteMap[name] = pattern;
+      seededNames.add(name);
+    }
+    markRouteMapComplete(mergedRouteMap);
+  }
+
   // Shared reverse function (also the value behind router.reverse).
   const reverseFn = createReverse(mergedRouteMap);
   const reverseLoose = reverseFn as unknown as (
@@ -1216,6 +1253,7 @@ export function createRouter<TEnv = any>(
     },
     matchForPrerender,
     renderStaticSegment,
+    adoptDiscoveredRouteMap,
     matchPartial: (
       request: Request,
       input: RouterRequestInput<TEnv> = {},
