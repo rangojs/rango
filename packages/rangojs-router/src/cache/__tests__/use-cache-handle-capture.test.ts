@@ -240,6 +240,28 @@ const lcRefresh = (() => {
   return { dep, Dep, outer, flags };
 })();
 
+// A loader the cached function starts and returns unawaited: its run pushes
+// once in the body and once after the call returned.
+const Outliving = (createLoader as Function)(
+  async (ctx: any) => {
+    ctx.use(Crumbs)("dep-early");
+    await new Promise((r) => setTimeout(r, 30));
+    ctx.use(Crumbs)("dep-late");
+    return "dep";
+  },
+  undefined,
+  "test#UseCacheOutliving",
+);
+const returnsLoaderPromise = registerCachedFunction(
+  async (ctx: any) => {
+    ctx.use(Crumbs)("own");
+    return { dep: ctx.use(Outliving) };
+  },
+  "test#returnsLoaderPromise",
+  "default",
+);
+let awaitOutliving = true;
+
 let router: any;
 let cacheStore: MemorySegmentCacheStore;
 
@@ -392,6 +414,17 @@ beforeAll(async () => {
         { name: `uc_${s.Caller.$$id.split("_")[1]}` },
         () => [loader(s.Caller)],
       ),
+    ),
+    path(
+      "/outliving",
+      async (ctx: any) => {
+        ctx.use(Crumbs)("home");
+        await returnsLoaderPromise(ctx);
+        // The same run on a miss (memoized); a run of its own on a hit.
+        if (awaitOutliving) await ctx.use(Outliving);
+        return createElement("div", null, "outliving");
+      },
+      { name: "ucOutliving" },
     ),
     path(
       "/lcRefresh",
@@ -637,6 +670,24 @@ describe('"use cache" reading a loader that is also read live (#928)', () => {
     const refreshed = await serve("/dep-nested");
     expect(depNested.dep.runs).toBe(5);
     expect(refreshed).toEqual(["outer", "pre", "dep-v5", "post"]);
+  });
+});
+
+describe('"use cache" MISS delivering its diverted pushes', () => {
+  it("a loader the body started pushes after the call returned: its earlier pushes stay", async () => {
+    // The miss delivers the run's diverted pushes as that run's, so its
+    // later push follows them rather than replacing them as a replay.
+    const miss = await serve("/outliving");
+    expect(miss).toEqual(["home", "own", "dep-early", "dep-late"]);
+
+    // The entry recorded what the run pushed while the body ran.
+    awaitOutliving = false;
+    try {
+      const hit = await serve("/outliving");
+      expect(hit).toEqual(["home", "own", "dep-early"]);
+    } finally {
+      awaitOutliving = true;
+    }
   });
 });
 

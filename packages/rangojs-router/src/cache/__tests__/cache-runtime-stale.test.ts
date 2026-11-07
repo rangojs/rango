@@ -72,13 +72,22 @@ vi.mock("../segment-codec.js", async () => {
 // a raw object too, so existing fixtures that set `handles` as a Record still
 // drive appendHandles with the same reference.
 const mockAppendHandles = vi.fn();
-vi.mock("../handle-snapshot.js", () => ({
-  appendHandles: (...args: any[]) => mockAppendHandles(...args),
-  encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
-  decodeHandles: vi.fn(async (s: any) =>
+const mockDeliverRecordedPushes = vi.fn();
+vi.mock("../handle-snapshot.js", async () => {
+  const { teeHandlesThrough } = await import("./helpers/tee-through.js");
+  const encodeHandles = vi.fn(async (h: any) => JSON.stringify(h));
+  const decodeHandles = vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
-  ),
-}));
+  );
+  return {
+    appendHandles: (...args: any[]) => mockAppendHandles(...args),
+    deliverRecordedPushes: (...args: any[]) =>
+      mockDeliverRecordedPushes(...args),
+    encodeHandles,
+    decodeHandles,
+    teeHandles: teeHandlesThrough(encodeHandles, decodeHandles),
+  };
+});
 
 // Mock internal debug
 vi.mock("../../internal-debug.js", () => ({
@@ -584,7 +593,12 @@ describe("use cache stale revalidation handle preservation", () => {
       waitUntil: undefined, // No waitUntil — runs inline
     });
 
-    const fn = async (_ctx: any) => "fresh-result";
+    const livePush = mockHandleStore.push;
+    const pushed = { label: "a" };
+    const fn = async (_ctx: any) => {
+      mockHandleStore.push("crumbs", "caller-seg", pushed);
+      return "fresh-result";
+    };
     const cached = registerCachedFunction(fn, "test-fn-miss", "default");
 
     const result = await cached(taintedCtx);
@@ -594,9 +608,55 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(mockStore.setItem).toHaveBeenCalledTimes(1);
     const setItemOptions = mockStore.setItem.mock.calls[0][2];
     expect(setItemOptions).toBeDefined();
-    // handles is the encoded string produced by encodeHandles when a capture
-    // exists (the raw Record is never stored — it would corrupt non-scalars)
-    expect(setItemOptions.handles).toBeDefined();
+    // handles is the encoded string produced by encodeHandles (the raw Record
+    // is never stored — it would corrupt non-scalars)
+    const recorded = JSON.parse(setItemOptions.handles);
+    expect(Object.values(recorded)).toEqual([{ crumbs: [{ label: "a" }] }]);
+    // The live push is diverted; the page gets the decoded copy, a new
+    // object, before the call returns.
+    expect(livePush).not.toHaveBeenCalled();
+    expect(mockAppendHandles).not.toHaveBeenCalled();
+    expect(mockDeliverRecordedPushes).toHaveBeenCalledTimes(1);
+    const [delivered, store, segmentId] =
+      mockDeliverRecordedPushes.mock.calls[0]!;
+    expect(delivered).toEqual(recorded);
+    expect(Object.values(delivered as object)[0].crumbs[0]).not.toBe(pushed);
+    expect(store).toBe(mockHandleStore);
+    expect(segmentId).toBe("caller-seg");
+  });
+
+  it("a miss whose body throws delivers its pushes as made, and stores nothing", async () => {
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockHandleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60 } },
+      _handleStore: mockHandleStore,
+      waitUntil: undefined,
+    });
+    const value = { label: "before-throw" };
+    const cached = registerCachedFunction(
+      async (_ctx: any) => {
+        mockHandleStore.push("crumbs", "caller-seg", value);
+        throw new Error("body down");
+      },
+      "test-fn-miss-throws",
+      "default",
+    );
+
+    await expect(cached(makeTaintedCtx())).rejects.toThrow("body down");
+
+    expect(mockStore.setItem).not.toHaveBeenCalled();
+    expect(mockDeliverRecordedPushes).toHaveBeenCalledTimes(1);
+    const [delivered] = mockDeliverRecordedPushes.mock.calls[0]!;
+    expect(Object.values(delivered as object)[0].crumbs[0]).toBe(value);
   });
 
   it("concurrent cache misses sharing the same ctx keep the guard until all finish", async () => {
@@ -1095,21 +1155,25 @@ describe("use cache stale revalidation handle preservation", () => {
         }),
       setItem: vi.fn().mockResolvedValue(undefined),
     };
+    const handleStore = {
+      push: vi.fn(),
+      settled: Promise.resolve(),
+      getDataForSegment: vi.fn().mockReturnValue({}),
+    };
     mockGetRequestContext.mockReturnValue({
       _cacheStore: mockStore,
       _cacheProfiles: { default: { ttl: 60, swr: 120 } },
-      _handleStore: {
-        push: vi.fn(),
-        settled: Promise.resolve(),
-        getDataForSegment: vi.fn().mockReturnValue({}),
-      },
+      _handleStore: handleStore,
       waitUntil: (fn: () => Promise<void>) => {
         waitUntilFns.push(fn);
       },
     });
 
     const cached = registerCachedFunction(
-      async (_ctx: unknown, key: string) => `fresh-${key}`,
+      async (_ctx: unknown, key: string) => {
+        handleStore.push("crumbs", "caller-seg", key);
+        return `fresh-${key}`;
+      },
       "encode-scope",
       "default",
     );
@@ -1117,9 +1181,10 @@ describe("use cache stale revalidation handle preservation", () => {
     await cached(makeTaintedCtx(), "stale");
     for (const task of waitUntilFns) await task();
 
+    // The miss starts its handles' encode first: the page waits on its copy.
     expect(encodeScoped).toEqual([
-      "value:true",
       "handles:true",
+      "value:true",
       "value:true",
       "handles:true",
     ]);

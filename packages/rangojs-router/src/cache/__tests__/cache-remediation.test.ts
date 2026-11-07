@@ -278,6 +278,48 @@ describe("handle capture concurrency", () => {
     const seg3Data = store.getDataForSegment("seg3");
     expect(seg3Data["title"]).toEqual(["B-2"]);
   });
+
+  it("a diverting capture keeps a push from the captures enclosing it, and its redelivery from the captures inside it", async () => {
+    const { redeliverPushes } = await import("../handle-capture.js");
+    const store = createHandleStore();
+    // outer encloses diverting, which encloses inner (start order).
+    const outer = startHandleCapture(store);
+    const diverting = startHandleCapture(store, {
+      divert: true,
+      keepContexts: true,
+    });
+    const inner = startHandleCapture(store);
+
+    store.push("crumbs", "seg", "original");
+    diverting.stop();
+    // The diverting capture delivers its copy while inner is still active.
+    redeliverPushes(diverting.capture, () => {
+      store.push("crumbs", "seg", "copy");
+    });
+    inner.stop();
+    outer.stop();
+
+    expect(inner.capture.data["seg"]?.["crumbs"]).toEqual(["original"]);
+    expect(diverting.capture.data["seg"]?.["crumbs"]).toEqual(["original"]);
+    expect(diverting.capture.contexts?.["seg"]?.["crumbs"]).toHaveLength(1);
+    expect(outer.capture.data["seg"]?.["crumbs"]).toEqual(["copy"]);
+    expect(store.getDataForSegment("seg")["crumbs"]).toEqual(["copy"]);
+  });
+
+  it("a diverted push into a completed store throws as the push would", async () => {
+    const store = createHandleStore();
+    store.seal();
+    await store.fullySettled;
+    for await (const _ of store.stream()) {
+      // drain: completes the store
+    }
+    const diverting = startHandleCapture(store, { divert: true });
+
+    expect(() => store.push("crumbs", "seg", "late")).toThrow(
+      /pushed after handle collection completed/,
+    );
+    diverting.stop();
+  });
 });
 
 // ============================================================================

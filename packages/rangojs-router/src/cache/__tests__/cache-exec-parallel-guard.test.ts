@@ -57,13 +57,20 @@ vi.mock("../segment-codec.js", async () => {
   };
 });
 
-vi.mock("../handle-snapshot.js", () => ({
-  appendHandles: vi.fn(),
-  encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
-  decodeHandles: vi.fn(async (s: any) =>
+vi.mock("../handle-snapshot.js", async () => {
+  const { teeHandlesThrough } = await import("./helpers/tee-through.js");
+  const encodeHandles = vi.fn(async (h: any) => JSON.stringify(h));
+  const decodeHandles = vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
-  ),
-}));
+  );
+  return {
+    appendHandles: vi.fn(),
+    deliverRecordedPushes: vi.fn(),
+    encodeHandles,
+    decodeHandles,
+    teeHandles: teeHandlesThrough(encodeHandles, decodeHandles),
+  };
+});
 
 function makeRequestCtx() {
   return {

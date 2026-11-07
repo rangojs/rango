@@ -769,6 +769,7 @@ export const NamedRoutes = {
   txKeepC: "/tx-keep/c",
   txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
+  "useCacheHandleLazy.shape": "/use-cache-handle-lazy/:shape",
   "useCacheMemo.binding": "/use-cache-memo/binding",
   "useCacheMemo.handlerFirst": "/use-cache-memo/handler-first",
   "useCacheMemo.plain": "/use-cache-memo/plain",

@@ -132,6 +132,7 @@ import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
 import { cacheScopeGuardPatterns } from "./urls/cache-scope-guard.js";
 import { identityRawPatterns } from "./urls/identity-raw.js";
 import { useCacheMemoPatterns } from "./urls/use-cache-memo.js";
+import { useCacheHandleLazyPatterns } from "./urls/use-cache-handle-lazy.js";
 import { colocatedLoaderPrerenderPatterns } from "./urls/colocated-loader-prerender.js";
 import { colocatedFastRefreshPatterns } from "./urls/colocated-fast-refresh.js";
 import { parallelLoaderRevalPatterns } from "./urls/parallel-loader-reval.js";
@@ -2017,6 +2018,11 @@ export const urlpatterns = urls(
       // "use cache" refuses a memoized loader value that read cookies() (#1011)
       include("/use-cache-memo", useCacheMemoPatterns, {
         name: "useCacheMemo",
+      }),
+
+      // "use cache" handle pushes holding lazy state encode inside the guard
+      include("/use-cache-handle-lazy", useCacheHandleLazyPatterns, {
+        name: "useCacheHandleLazy",
       }),
 
       // rendered() barrier tests (loader reads handle data after handlers settle)

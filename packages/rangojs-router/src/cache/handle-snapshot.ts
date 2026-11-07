@@ -6,7 +6,12 @@
  * during segment resolution and stored alongside cached segments.
  */
 
-import { replayLoaderPush } from "./handle-capture.js";
+import {
+  redeliverPushes,
+  replayLoaderPush,
+  type HandleCapture,
+} from "./handle-capture.js";
+import { runInsideLoaderBodyScope } from "../server/context.js";
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore, RecordAuthority } from "../server/handle-store.js";
 import type { HandleOwners, SegmentHandleData } from "./types.js";
@@ -61,6 +66,39 @@ export async function encodeHandles(
 ): Promise<string> {
   if (!hasHandleData(handles)) return "";
   return encodeHandleValue(handles, onError);
+}
+
+/** A capture's Flight encode and a decoded copy of it (teeHandles). */
+export interface TeedHandles {
+  /** The copy: settles when the root row arrives; later rows stream in. */
+  decoded: Promise<HandleRecord>;
+  /** What encodeHandles would return for the same record. */
+  serialized: Promise<string>;
+}
+
+/**
+ * Encode a capture once and decode a copy of it as the encode streams: a
+ * "use cache" miss delivers the copy, as a hit delivers a stored record, and
+ * stores the same bytes (cache-runtime.ts). Undefined for an empty capture,
+ * null when the encode could not start. Call it inside the execution's
+ * scopes: the encode starts any lazy state the values hold.
+ */
+export async function teeHandles(
+  handles: HandleRecord,
+  onError?: (error: unknown) => void,
+): Promise<TeedHandles | null | undefined> {
+  if (!hasHandleData(handles)) return undefined;
+  const { teeResult } = await import("./segment-codec.js");
+  const teed = teeResult(handles, onError);
+  if (!teed) return null;
+  return {
+    decoded: teed.decoded as Promise<HandleRecord>,
+    serialized: withTimeout(
+      teed.serialized,
+      HANDLE_ENCODE_TIMEOUT_MS,
+      null,
+    ).then((encoded) => encoded ?? ""),
+  };
 }
 
 export function decodeHandles(encoded: string): Promise<HandleRecord | null> {
@@ -253,6 +291,62 @@ export async function restoreRecordHandles(
 }
 
 /**
+ * The loader a record key's group belongs to: `${seq}:${loaderId}`, empty
+ * for `${seq}:` and for a key without ":" (a segment id, from a record
+ * written before owner keys or a caller without a segment).
+ */
+function recordKeyOwner(key: string): string {
+  const colon = key.indexOf(":");
+  return colon < 0 ? "" : key.slice(colon + 1);
+}
+
+/**
+ * Deliver a "use cache" MISS's recorded pushes, which its capture diverted
+ * (`handles`: the decoded copy of `capture.data`, or that data itself), to
+ * the store as they were made: each in the async context it was made in
+ * (`capture.contexts`), so the store credits it to the loader runs around
+ * it as it did the live push (HandleStore.push), and an inner HIT's replay
+ * of a loader's pushes as that replay (keys in `replayed`). So a loader's
+ * run replaces its copies with these pushes, and a later push of the same
+ * run follows them instead of replacing them. Where the runtime keeps no
+ * context, a loader's push is made inside that loader's body. Nothing is
+ * claimed: each push was made for this request. `segmentId` redirects every
+ * value to one segment (the caller's), as appendHandles does.
+ */
+export function deliverRecordedPushes(
+  handles: Record<string, SegmentHandleData>,
+  handleStore: HandleStore,
+  segmentId: string | undefined,
+  capture: HandleCapture,
+  replayed: ReadonlySet<string>,
+): void {
+  redeliverPushes(capture, () => {
+    for (const [key, segHandles] of Object.entries(handles)) {
+      const owner = recordKeyOwner(key);
+      // A loader's run (not an inner HIT's replay of its pushes).
+      const runOwner = owner && !replayed.has(key) ? owner : undefined;
+      const target = segmentId ?? key;
+      for (const [handleName, values] of Object.entries(segHandles)) {
+        const contexts = capture.contexts?.[key]?.[handleName];
+        values.forEach((value, i) => {
+          const push = (): void => {
+            if (owner && !runOwner) {
+              replayLoaderPush(handleStore, handleName, target, value, owner);
+            } else {
+              handleStore.push(handleName, target, value);
+            }
+          };
+          const context = contexts?.[i];
+          if (context) context(push);
+          else if (runOwner) runInsideLoaderBodyScope(push, runOwner);
+          else push();
+        });
+      }
+    }
+  });
+}
+
+/**
  * Append recorded handle pushes to the store, in recorded order, via push()
  * so active captures and loader-scope tagging see them like live pushes. For
  * a cached unit that shares its segments with live pushes ("use cache");
@@ -288,10 +382,8 @@ export function appendHandles(
   claim: ((loaderId: string) => boolean) | undefined,
   unitLoader?: string,
 ): void {
-  const ownerOf = (key: string): string | undefined => {
-    const colon = key.indexOf(":");
-    return (colon < 0 ? "" : key.slice(colon + 1)) || unitLoader;
-  };
+  const ownerOf = (key: string): string | undefined =>
+    recordKeyOwner(key) || unitLoader;
   const claims = new Map<string, boolean>();
   const ask = (owner: string | undefined): void => {
     if (owner !== undefined && !claims.has(owner)) {
