@@ -59,7 +59,7 @@ For **document-level** CSS, prefer the explicit `?url` + `<link precedence>` for
 
 ## Cross-app navigation (host router)
 
-If you're mounting multiple apps under one [host router](/docs/rango/guides/host-router), you do **not** need to coordinate CSS across apps. A client-side navigation that crosses an app boundary is a **full document load** — the server returns `X-RSC-Reload` on an app switch — so the target app's entire document (its stylesheets, theme, meta) is re-established by the target app's own load. Each app owns its document; how one app renders a stylesheet has no effect on another.
+If you're mounting multiple apps under one [host router](/docs/rango/guides/host-router), you do **not** need to coordinate CSS across apps. A client-side navigation that crosses an app boundary is a **full document load** — the browser loads the target app's document — so the target app's entire document (its stylesheets, theme, meta) is re-established by the target app's own load. Each app owns its document; how one app renders a stylesheet has no effect on another.
 
 In particular, apps may disagree on `precedence` for a stylesheet they share by `href` — for example every app's `@import "tailwindcss"` compiling to one hashed asset — without React's by-`href` dedup dropping it.
 

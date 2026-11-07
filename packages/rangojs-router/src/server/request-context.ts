@@ -987,6 +987,14 @@ export interface RequestContext<
   _routerId?: string;
 
   /**
+   * @internal The paths of the origin this app owns, from the host routers
+   * that dispatched the request (src/app-bounds.ts, read from
+   * server/app-bounds-scope.ts). Every document payload carries it
+   * (full-payload.ts payloadAppBounds).
+   */
+  _appBounds?: import("../app-bounds.js").AppBounds;
+
+  /**
    * @internal Cache versions of the router serving this request. The cache
    * factory builds a store per request without knowing the router, so a store
    * reads its key versions from here, lazily, the same way CFCacheStore

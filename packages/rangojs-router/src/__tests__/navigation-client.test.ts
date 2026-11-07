@@ -85,6 +85,7 @@ import {
 } from "../browser/navigation-client";
 import { registerCommittedPageReader } from "../browser/navigation-store-handle";
 import { enterActionFence, __resetActionFence } from "../browser/action-fence";
+import { setAppBounds } from "../browser/app-bounds";
 
 describe("navigation-client", () => {
   beforeEach(() => {
@@ -567,6 +568,63 @@ describe("navigation-client", () => {
     await vi.waitFor(() =>
       expect((window as any).location.href).toBe("/products"),
     );
+  });
+
+  it("loads another app's page as a document without fetching it", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn();
+    const client = createNavigationClient({ createFromFetch } as any);
+    // The app is mounted at /current under a host router; /app-b is another
+    // app's mount, which the server would only answer with X-RSC-Reload.
+    setAppBounds([[["/current", true]]]);
+    try {
+      let settled = false;
+      void client
+        .fetchPartial({
+          targetUrl: "/app-b/page",
+          previousUrl: "/current",
+          segmentIds: ["root"],
+          routerId: "client-app",
+        })
+        .finally(() => {
+          settled = true;
+        });
+
+      expect((window as any).location.href).toBe("/app-b/page");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createFromFetch).not.toHaveBeenCalled();
+      expect(cancelAllPrefetchesMock).not.toHaveBeenCalled();
+      await Promise.resolve();
+      // The page unloads: the navigation never settles into a commit.
+      expect(settled).toBe(false);
+    } finally {
+      setAppBounds(undefined);
+    }
+  });
+
+  it("navigates within the app's own mount as before", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const createFromFetch = vi.fn(
+      async (responsePromise: Promise<Response>) => {
+        await responsePromise;
+        return { metadata: { isPartial: true } };
+      },
+    );
+    const client = createNavigationClient({ createFromFetch } as any);
+    setAppBounds([[["/current", true]]]);
+    try {
+      await client.fetchPartial({
+        targetUrl: "/current/next",
+        previousUrl: "/current",
+        segmentIds: ["root"],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect((window as any).location.href).toBe("http://localhost/current");
+    } finally {
+      setAppBounds(undefined);
+    }
   });
 
   it("lets the reload header win over a router-id mismatch (no double reload)", async () => {

@@ -33,6 +33,7 @@ import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import { ENVIRONMENT_DEFAULT_PREFETCH } from "../browser/prefetch/default-strategy.js";
 import { subscribeToPrefetchScopeChange } from "../browser/link-interceptor.js";
+import { setAppBounds } from "../browser/app-bounds.js";
 
 let location: URL;
 let stateListeners: Set<() => void>;
@@ -383,5 +384,71 @@ describe("Link default prefetch fallback", () => {
     rootMounted = false;
     expect(prefetchObserver.cleanup).toHaveBeenCalledTimes(2);
     expect(listeners.size).toBe(0);
+  });
+});
+
+describe("Link into another app under the same host router", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    rootMounted = true;
+    location = new URL(window.location.href);
+    stateListeners = new Set();
+    vi.clearAllMocks();
+    // This app is mounted at /app-a; /app-b is another app's mount.
+    setAppBounds([[["/app-a", true]]]);
+  });
+
+  afterEach(() => {
+    setAppBounds(undefined);
+    if (rootMounted) act(() => root.unmount());
+    container.remove();
+  });
+
+  /** Render a Link to `to`, click it, and report what the Link chose. */
+  function clickLinkTo(to: string): {
+    browserNavigates: boolean;
+    navigate: ReturnType<typeof vi.fn>;
+  } {
+    const navigate = vi.fn(async () => {});
+    const value = { ...ctxValue, navigate } as NavigationStoreContextValue;
+    act(() => {
+      root.render(
+        <NavigationStoreContext.Provider value={value}>
+          <Link to={to}>target</Link>
+        </NavigationStoreContext.Provider>,
+      );
+    });
+    let browserNavigates = false;
+    // Read the Link's choice, then keep the test document where it is.
+    container.addEventListener(
+      "click",
+      (event) => {
+        browserNavigates = !event.defaultPrevented;
+        event.preventDefault();
+      },
+      { once: true },
+    );
+    act(() => {
+      container
+        .querySelector("a")!
+        .dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+    });
+    return { browserNavigates, navigate };
+  }
+
+  it("leaves the click to the browser, a document navigation", () => {
+    const { browserNavigates, navigate } = clickLinkTo("/app-b/page");
+    expect(browserNavigates).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("still navigates in place within the app's own mount", () => {
+    const { navigate } = clickLinkTo("/app-a/next");
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate.mock.calls[0]![0]).toBe("/app-a/next");
   });
 });

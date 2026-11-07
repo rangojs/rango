@@ -20,7 +20,11 @@ import { executeMiddleware } from "../router/middleware.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getRequestId, setRequestId } from "../router/telemetry.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
-import { payloadInitialTheme, payloadLocation } from "./full-payload.js";
+import {
+  payloadAppBounds,
+  payloadInitialTheme,
+  payloadLocation,
+} from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import type { MatchResult } from "../types.js";
@@ -428,6 +432,7 @@ function renderPeResponse<TEnv>(
       ...payloadLocation(getRequestContext(), url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
+      ...payloadAppBounds(getRequestContext()),
       segments: attachTransitionWhen(match.segments, getRequestContext()),
       matched: match.matched,
       diff: match.diff,
@@ -583,6 +588,7 @@ function renderPeErrorResponse<TEnv>(
       ...payloadLocation(getRequestContext(), url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
+      ...payloadAppBounds(getRequestContext()),
       segments: attachTransitionWhen(errorResult.segments, getRequestContext()),
       matched: errorResult.matched,
       diff: errorResult.diff,

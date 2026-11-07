@@ -90,6 +90,117 @@ function sharedCacheShellTests(f: { url: (url?: string) => string }): void {
   });
 }
 
+/**
+ * app-a is mounted at localhost/app-a and app-b at localhost/app-b. A link
+ * from one into the other is a document navigation by nature (each app has
+ * its own router and React root): the browser makes it itself, with no
+ * prefetch and no RSC request the server could only answer with
+ * X-RSC-Reload. Called from the dev and the production describe.
+ */
+function crossAppDocumentNavigationTests(f: {
+  url: (url?: string) => string;
+}): void {
+  test.describe("links into another app's mount", () => {
+    /**
+     * What the page requests for app-b's paths, in order, up to app-b's
+     * document request: `rsc` for an RSC request (prefetch or navigation),
+     * then `document`. app-b's own requests after its load are not recorded.
+     */
+    function requestsIntoAppB(page: Page): string[] {
+      const seen: string[] = [];
+      page.on("request", (request) => {
+        if (seen.includes("document")) return;
+        const url = new URL(request.url());
+        if (url.pathname !== "/app-b" && !url.pathname.startsWith("/app-b/")) {
+          return;
+        }
+        if (request.resourceType() === "document") seen.push("document");
+        else if (url.searchParams.has("_rsc_partial")) seen.push("rsc");
+      });
+      return seen;
+    }
+
+    const ways = [
+      { name: "a Link", testid: "app-a-nav-app-b" },
+      { name: "a plain anchor", testid: "app-a-plain-app-b" },
+      { name: "router.push()", testid: "app-a-push-app-b" },
+    ];
+    for (const way of ways) {
+      test(`${way.name} loads app-b's document with no RSC request`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        const seen = requestsIntoAppB(page);
+
+        await page.goto(f.url("/app-a"));
+        await waitForHydration(page);
+        // Hover is an intent prefetch for a link of the app's own.
+        await testId(page, "app-a-nav-app-b").hover();
+        await testId(page, "app-a-plain-app-b").hover();
+
+        await using __ = await expectFullReload(page);
+        await testId(page, way.testid).click();
+        await expect(testId(page, "app-b-home")).toBeVisible({
+          timeout: 10000,
+        });
+        await expect(testId(page, "app-shell-marker")).toHaveAttribute(
+          "data-app-shell",
+          "b",
+        );
+        expect(seen).toEqual(["document"]);
+      });
+    }
+
+    test("a link within the app's own mount stays an RSC navigation", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+      const rsc: string[] = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.searchParams.has("_rsc_partial")) rsc.push(url.pathname);
+      });
+
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await using __ = await expectNoReload(page);
+      await testId(page, "app-a-nav-page").click();
+      await expect(testId(page, "app-a-page")).toBeVisible();
+      expect(rsc).toContain("/app-a/page");
+    });
+
+    // The guard is a client hint; the server stays the authority. An RSC
+    // request into another app from a page that sent one anyway (a page
+    // loaded before the guard shipped) is answered with a document reload.
+    test("the server still answers an RSC request into another app with X-RSC-Reload", async ({
+      page,
+    }) => {
+      // app-a's own RSC request for one of its pages: the viewport prefetch
+      // in production, the click's navigation in development.
+      const ownRequest = page.waitForRequest((request) => {
+        const url = new URL(request.url());
+        return (
+          url.pathname === "/app-a/page" && url.searchParams.has("_rsc_partial")
+        );
+      });
+      await page.goto(f.url("/app-a"));
+      await waitForHydration(page);
+      await testId(page, "app-a-nav-page").click();
+
+      // The same request, sent to app-b's mount instead.
+      const crossApp = new URL((await ownRequest).url());
+      crossApp.pathname = "/app-b";
+      const response = await page.request.get(crossApp.href, {
+        maxRedirects: 0,
+      });
+      expect(response.status()).toBe(200);
+      expect(
+        new URL(response.headers()["x-rsc-reload"]!, crossApp).pathname,
+      ).toBe("/app-b");
+    });
+  });
+}
+
 // ----- DEV MODE -----
 
 test.describe("multi-router (dev)", () => {
@@ -99,6 +210,7 @@ test.describe("multi-router (dev)", () => {
   });
 
   sharedCacheShellTests(f);
+  crossAppDocumentNavigationTests(f);
 
   test.describe("per-router search schemas (same-named routes)", () => {
     test("site /lookup parses with site's schema, not admin's", async ({
@@ -450,37 +562,6 @@ test.describe("multi-router (dev)", () => {
       await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
     });
 
-    test("cross-app navigation uses different routerIds", async ({ page }) => {
-      using _ = expectNoPageError(page);
-
-      const rscRequests: string[] = [];
-      page.on("request", (req) => {
-        if (req.url().includes("_rsc_partial")) {
-          rscRequests.push(req.url());
-        }
-      });
-
-      await page.goto(f.url("/app-a"));
-      await waitForHydration(page);
-
-      // Intra-app navigation
-      await testId(page, "app-a-nav-page").click();
-      await expect(testId(page, "app-a-page")).toBeVisible();
-
-      const appARid = new URL(rscRequests[0]).searchParams.get("_rsc_rid");
-
-      // Cross-app navigation to app-b
-      await testId(page, "app-a-nav-app-b").click();
-      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
-
-      // The cross-app request should still carry app-a's rid
-      // (the server detects the mismatch and returns a full response)
-      const crossAppReq = rscRequests.find((r) => r.includes("/app-b"));
-      expect(crossAppReq).toBeTruthy();
-      const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
-      expect(crossAppRid).toBe(appARid); // client still thinks it's app-a
-    });
-
     test("cross-app SPA navigation triggers a full document reload", async ({
       page,
     }) => {
@@ -496,9 +577,10 @@ test.describe("multi-router (dev)", () => {
       );
 
       // Crossing the app boundary is a HARD document navigation, not a soft
-      // swap — the server returns X-RSC-Reload for an app switch so the target
-      // app's whole document (shell, CSS, theme, warmup, prefetch-TTL) is
-      // re-established. See request-classification.ts (mode "app-switch").
+      // swap, so the target app's whole document (shell, CSS, theme, warmup,
+      // prefetch-TTL) is re-established. The client knows app-a's mount from
+      // the host router (host/app-bounds.ts) and leaves the click to the
+      // browser; the server's app-switch reload stays the backstop.
       await using __ = await expectFullReload(page);
 
       await testId(page, "app-a-nav-app-b").click();
@@ -567,9 +649,10 @@ test.describe("multi-router (dev)", () => {
     // Regression for the cross-app -> target-404 reload bypass: navigating
     // across an app boundary to a route that does NOT exist in the target app
     // must still hard-reload, not render the target's 404 in-place under the
-    // source app's document. The app-switch reload check runs BEFORE route
-    // resolution (see request-classification.ts), so a missing target route
-    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    // source app's document. The client sends a link outside its own mount
+    // to a document navigation, and the server's app-switch reload check runs
+    // BEFORE route resolution (see request-classification.ts), so a missing
+    // target route reloads instead of 404-ing in place either way.
     test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
       page,
     }) => {
@@ -624,9 +707,9 @@ test.describe("multi-router (dev)", () => {
     // stylesheet applies regardless of how the source rendered the href.
     // This test pins the consumer-visible outcome (shared stylesheet applies
     // after the switch) and the reload mechanism (expectFullReload). With the
-    // reload in place the by-href dedup path is unreachable by construction, so
-    // the cross-app missing-route (404 bypass) test is what catches a disabled
-    // app-switch check.
+    // reload in place the by-href dedup path is unreachable by construction;
+    // "the server still answers an RSC request into another app with
+    // X-RSC-Reload" is what catches a disabled app-switch check.
     test("cross-app reload re-applies a stylesheet shared across apps", async ({
       page,
     }) => {
@@ -771,6 +854,7 @@ test.describe("multi-router (production)", () => {
   });
 
   sharedCacheShellTests(f);
+  crossAppDocumentNavigationTests(f);
 
   test.describe("per-router search schemas (same-named routes)", () => {
     test("site /lookup parses with site's schema, not admin's", async ({
@@ -1072,35 +1156,6 @@ test.describe("multi-router (production)", () => {
       await expect(testId(page, "app-b-home-title")).toHaveText("App B Home");
     });
 
-    test("cross-app navigation uses different routerIds", async ({ page }) => {
-      using _ = expectNoPageError(page);
-
-      const rscRequests: string[] = [];
-      page.on("request", (req) => {
-        if (req.url().includes("_rsc_partial")) {
-          rscRequests.push(req.url());
-        }
-      });
-
-      await page.goto(f.url("/app-a"));
-      await waitForHydration(page);
-
-      // Intra-app navigation
-      await testId(page, "app-a-nav-page").click();
-      await expect(testId(page, "app-a-page")).toBeVisible();
-
-      const appARid = new URL(rscRequests[0]).searchParams.get("_rsc_rid");
-
-      // Cross-app navigation to app-b
-      await testId(page, "app-a-nav-app-b").click();
-      await expect(testId(page, "app-b-home")).toBeVisible({ timeout: 10000 });
-
-      const crossAppReq = rscRequests.find((r) => r.includes("/app-b"));
-      expect(crossAppReq).toBeTruthy();
-      const crossAppRid = new URL(crossAppReq!).searchParams.get("_rsc_rid");
-      expect(crossAppRid).toBe(appARid);
-    });
-
     test("cross-app SPA navigation triggers a full document reload", async ({
       page,
     }) => {
@@ -1114,9 +1169,11 @@ test.describe("multi-router (production)", () => {
         "a",
       );
 
-      // Crossing the app boundary is a HARD document navigation (server returns
-      // X-RSC-Reload for an app switch), so the target app's whole document is
-      // re-established. See request-classification.ts (mode "app-switch").
+      // Crossing the app boundary is a HARD document navigation, not a soft
+      // swap, so the target app's whole document (shell, CSS, theme, warmup,
+      // prefetch-TTL) is re-established. The client knows app-a's mount from
+      // the host router (host/app-bounds.ts) and leaves the click to the
+      // browser; the server's app-switch reload stays the backstop.
       await using __ = await expectFullReload(page);
 
       await testId(page, "app-a-nav-app-b").click();
@@ -1184,9 +1241,10 @@ test.describe("multi-router (production)", () => {
     // Regression for the cross-app -> target-404 reload bypass: navigating
     // across an app boundary to a route that does NOT exist in the target app
     // must still hard-reload, not render the target's 404 in-place under the
-    // source app's document. The app-switch reload check runs BEFORE route
-    // resolution (see request-classification.ts), so a missing target route
-    // reloads instead of throwing RouteNotFoundError and 404-ing in place.
+    // source app's document. The client sends a link outside its own mount
+    // to a document navigation, and the server's app-switch reload check runs
+    // BEFORE route resolution (see request-classification.ts), so a missing
+    // target route reloads instead of 404-ing in place either way.
     test("cross-app navigation to a missing target route reloads (no in-place 404)", async ({
       page,
     }) => {
@@ -1241,9 +1299,9 @@ test.describe("multi-router (production)", () => {
     // stylesheet applies regardless of how the source rendered the href.
     // This test pins the consumer-visible outcome (shared stylesheet applies
     // after the switch) and the reload mechanism (expectFullReload). With the
-    // reload in place the by-href dedup path is unreachable by construction, so
-    // the cross-app missing-route (404 bypass) test is what catches a disabled
-    // app-switch check.
+    // reload in place the by-href dedup path is unreachable by construction;
+    // "the server still answers an RSC request into another app with
+    // X-RSC-Reload" is what catches a disabled app-switch check.
     test("cross-app reload re-applies a stylesheet shared across apps", async ({
       page,
     }) => {

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Changed: a link into another app under `createHostRouter()` loads its document straight away
+
+**Before.** Under a host router that mounts apps on one origin (for example
+`host(["example.com/shop"])` beside `host(["example.com"])`), a `<Link>`,
+an intercepted `<a>` or `router.push()` from one app into the other's mount
+first sent an RSC request with the current app's router id. The server could
+only answer it with `X-RSC-Reload`, and the client then loaded the document.
+A viewport or hover prefetch of such a link sent the same request and threw
+the answer away. A cross-app click cost one wasted round trip before the
+document load began, and every prefetched cross-app link one more.
+
+**Now.** The host router tells each app which paths of the origin it owns,
+and the app's document carries that. A link outside them is a plain document
+navigation: `<Link>` and the link interceptor leave the click to the browser,
+prefetch skips it, and `router.push()` (or a redirect) into another app loads
+the document without asking the server first. Nothing to configure. Links
+within an app are unchanged, an app that owns every path of its host (one app
+per host) sends nothing extra, and the server still answers a stale cross-app
+request with `X-RSC-Reload`.
+
+```tsx
+// worker.rsc.tsx
+hostRouter.host(["example.com/shop"]).lazy(() => import("./apps/shop"));
+hostRouter.host(["example.com"]).lazy(() => import("./apps/site"));
+
+// In the site app: a document navigation, with no prefetch and no RSC request
+<Link to="/shop/cart">Cart</Link>;
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

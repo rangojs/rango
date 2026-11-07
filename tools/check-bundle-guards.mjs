@@ -299,7 +299,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.125KB on 2026-11-07 for links into another app under
+// createHostRouter(), measured on cloudflare-basic from main 5260819 53997B ->
+// 54133B (+136B gzip; main sat 19B under the old limit). The document payload
+// names the paths of the origin the app owns (host/app-bounds.ts), and the
+// client sends an href outside them to a document navigation:
+// browser/app-bounds.ts isOtherAppHref, read by Link and the link
+// interceptor's click (left to the browser), the prefetch loader (skipped)
+// and fetchPartial (router.push() and redirects load the document at once).
+// None of it can load lazily: it runs on every click and every prefetch. By
+// the owner's rule above: 54133B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

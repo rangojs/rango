@@ -225,10 +225,10 @@ on the swap (React dedups stylesheets by `href`), and the theme, warmup and
 prefetch settings, which are document-lifetime, would remount or never take
 effect. A document load re-establishes the target app's whole document.
 
-| The other app is                                               | Link with                                                                                         | What happens                                                                                                                                                                         |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| On another host (`app.example.com`)                            | an absolute URL: `<Link to="https://app.example.com/">` or `<a href>`                             | Another origin is external to `<Link>` (`src/browser/react/Link.tsx`) and to the plain-anchor interceptor: the browser navigates, nothing is prefetched                              |
-| On the same origin under a path (`host(["example.com/docs"])`) | `<Link to="/docs" reloadDocument prefetch="none">` or `<a href="/docs" data-no-intercept="true">` | A document navigation at the click. A plain same-origin `<Link>` also ends in a document load, after a wasted round trip: the server answers the partial request with `X-RSC-Reload` |
+| The other app is                                               | Link with                                                             | What happens                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| On another host (`app.example.com`)                            | an absolute URL: `<Link to="https://app.example.com/">` or `<a href>` | Another origin is external to `<Link>` (`src/browser/react/Link.tsx`) and to the plain-anchor interceptor: the browser navigates, nothing is prefetched                                                                                                           |
+| On the same origin under a path (`host(["example.com/docs"])`) | a plain path: `<Link to="/docs">` or `<a href="/docs">`               | A document navigation at the click. The host router tells each app which paths of the origin it owns, so `<Link>` and the interceptor leave the click to the browser, nothing is prefetched, and `router.push("/docs")` loads the document without an RSC request |
 
 ```tsx
 // src/shared/origins.ts
@@ -253,11 +253,12 @@ export function TopNav() {
 }
 ```
 
-`reloadDocument` alone does not stop the prefetch: without
-`prefetch="none"`, a visible link still sends one, which the other app
-answers with `X-RSC-Reload` and the client drops. Make each app's entry pages
-fast as documents (`ppr`, or `Prerender`), since every cross-app click lands
-on one.
+A same-origin link only knows it crosses apps when the host router
+dispatched the page: a sub-app served some other way (a `.map()` handler
+proxying to another worker) carries no bounds, its cross-app links ask the
+server first, and the server answers with `X-RSC-Reload`. Mark those with
+`reloadDocument prefetch="none"`. Make each app's entry pages fast as
+documents (`ppr`, or `Prerender`), since every cross-app click lands on one.
 
 ## Deploys
 

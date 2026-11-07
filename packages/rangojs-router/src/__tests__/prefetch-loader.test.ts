@@ -168,6 +168,25 @@ describe("lazy prefetch loader", () => {
     expect(runtime.prefetchDirect).not.toHaveBeenCalled();
   });
 
+  it("never prefetches another app's page under the same host router", async () => {
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost", href: "http://localhost/app-a" },
+    });
+    const loader = await import("../browser/prefetch/loader");
+    const { setAppBounds } = await import("../browser/app-bounds");
+    setAppBounds([[["/app-a", true]]]);
+
+    loader.prefetchDirect("/app-b", ["root"]);
+    loader.prefetchQueued("/app-b/page", ["root"]);
+    loader.prefetchDirect("/app-a/page", ["root"]);
+
+    await vi.waitFor(() => expect(runtime.prefetchDirect).toHaveBeenCalled());
+    expect(runtime.prefetchDirect.mock.calls.map((call) => call[0])).toEqual([
+      "/app-a/page",
+    ]);
+    expect(runtime.prefetchQueued).not.toHaveBeenCalled();
+  });
+
   it("forwards cancellation once the runtime is loaded", async () => {
     const loader = await import("../browser/prefetch/loader");
     loader.prefetchDirect("/first", []);

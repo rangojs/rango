@@ -31,6 +31,10 @@ export const router = createRouter({
       () => [loader(BrandLoader, () => [cache({ ttl: 300 })])],
     ),
     path("/b-account", () => <main>App B account</main>, { name: "account" }),
+    // Served under app A's host too (worker.rsc.tsx).
+    path("/b-mount", () => <main data-testid="b-mount">App B mount</main>, {
+      name: "mount",
+    }),
     path(
       "/nav",
       async (ctx) => (

@@ -83,6 +83,12 @@ export interface RscPayload {
     initialTheme?: Theme;
     /** URL prefix for all routes (from createRouter({ basename })). */
     basename?: string;
+    /**
+     * The paths of this origin the app owns, from the host routers that
+     * dispatched the request (src/app-bounds.ts). Document payloads only;
+     * absent when the app owns every path.
+     */
+    appBounds?: import("../app-bounds.js").AppBounds;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
     /**

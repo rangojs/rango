@@ -141,6 +141,12 @@ export interface RscMetadata {
   initialTheme?: Theme;
   /** URL prefix for all routes (from createRouter({ basename })). */
   basename?: string;
+  /**
+   * The paths of this origin the app owns, from the host routers that
+   * dispatched the document request (src/app-bounds.ts). Read once at boot
+   * (browser/app-bounds.ts); absent when the app owns every path.
+   */
+  appBounds?: import("../app-bounds.js").AppBounds;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
   /**

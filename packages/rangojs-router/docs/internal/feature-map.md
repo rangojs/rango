@@ -450,6 +450,30 @@ The existing partial Flight fetch, global middleware, server match, history, and
 commit path remain authoritative. Hard SSR and hydration use the materialized
 server projection.
 
+Cross-app links under `createHostRouter()`: the host router hands the app it
+dispatches to the paths of the origin that app owns. `host/app-bounds.ts`
+`appBoundsTable` builds one host router's table and `runWithAppBounds` scopes
+it (AsyncLocalStorage) around the matched route's middleware and handler;
+nested host routers stack. The app's RSC handler reads it once
+(`server/app-bounds-scope.ts` `currentAppBounds`) onto the request context
+(`_appBounds`, inherited by every derived render pass). The two sides reach one
+AsyncLocalStorage through a global symbol and share no module: a module the
+host entry and a router both import moves every app's cache version when the
+host entry changes (`vite/__tests__/cache-versions-build.test.ts`). Every
+document payload spreads `payloadAppBounds(reqCtx)` into `metadata.appBounds`
+(`rsc/full-payload.ts`, the 404 document in `rsc/handler.ts`, both PE documents
+in `rsc/progressive-enhancement.ts`); it is absent when the app owns every
+path. `src/app-bounds.ts` holds the types and the browser's path rule
+(`pathHasPrefix`, a copy of `host/pattern-matcher.ts` `matchPattern`'s, pinned
+equal by `host/__tests__/app-bounds.test.ts`; `isOtherAppPath`). The browser
+reads the bounds once at boot (`browser/app-bounds.ts` `setAppBounds`), and
+`isOtherAppHref` sends an href another app serves to a document navigation:
+`Link` and the link interceptor leave the click to the browser,
+`prefetch/loader.ts` skips the prefetch, and `fetchPartial`
+(`browser/navigation-client.ts`) sets `location.href` before any fetch. The
+bounds are a hint: the server's `app-switch` plan (`X-RSC-Reload`) stays the
+authority for a request that arrives anyway.
+
 ### Data Loading
 
 - `loader()` declarations, `createLoader()`, `useLoader()`, `useFetchLoader()`

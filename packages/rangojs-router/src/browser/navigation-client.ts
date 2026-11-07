@@ -45,6 +45,7 @@ import { getCommittedPage } from "./navigation-store-handle.js";
 import type { SourcePage } from "../prefetch-source-scope.js";
 import { cancelAllPrefetches } from "./prefetch/loader.js";
 import { writePartialParams } from "./wire-protocol.js";
+import { isOtherAppHref } from "./app-bounds.js";
 
 /**
  * The completed prefetch a navigation adopts: the one stored under its
@@ -134,6 +135,15 @@ export function createNavigationClient(
         fill,
         acceptStalePrefetch = false,
       } = options;
+
+      // Another app under the same host router serves the target
+      // (app-bounds.ts): load its document now instead of after the server's
+      // X-RSC-Reload. Reached by router.push() and redirects; Link and the
+      // link interceptor leave such a click to the browser.
+      if (isOtherAppHref(targetUrl)) {
+        window.location.href = targetUrl;
+        return new Promise<FetchPartialResult>(() => {});
+      }
 
       // The page left, absolute: the router store keeps a committed URL as
       // navigate() was given it, often a path. The header and the source

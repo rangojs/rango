@@ -11,6 +11,7 @@ import {
 import { observeForPrefetch } from "./prefetch/observer.js";
 import { subscribeToPrefetchCacheInvalidation } from "./prefetch/invalidation.js";
 import { notifyListeners } from "./notify-listeners.js";
+import { isOtherAppHref } from "./app-bounds.js";
 import type { PrefetchStrategy } from "../router/prefetch-default.js";
 
 const ELIGIBILITY_ATTRIBUTES = {
@@ -216,6 +217,12 @@ function isEligiblePlainAnchor(link: HTMLAnchorElement): boolean {
 
   // Skip links explicitly marked external
   if (link.hasAttribute(ELIGIBILITY_ATTRIBUTES.external)) {
+    return false;
+  }
+
+  // Another app under the same host router serves it: a document navigation
+  // the browser makes itself (app-bounds.ts)
+  if (isOtherAppHref(link.href)) {
     return false;
   }
 

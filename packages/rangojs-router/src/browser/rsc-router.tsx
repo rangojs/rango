@@ -43,6 +43,7 @@ import {
 } from "./prefetch/loader.js";
 import { publishRangoMarker } from "./rango-marker.js";
 import { setAppVersion } from "./app-version.js";
+import { setAppBounds } from "./app-bounds.js";
 import {
   isInterceptSegment,
   splitInterceptSegments,
@@ -394,6 +395,7 @@ export async function initBrowserApp(
   });
 
   setAppVersion(version);
+  setAppBounds(initialPayload.metadata?.appBounds);
 
   // Initialize the in-memory prefetch cache (TTL + max size) and the prefetch
   // queue concurrency from server config. A TTL of 0 disables the cache;

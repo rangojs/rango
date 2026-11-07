@@ -48,7 +48,7 @@ export function Document({ children }: { children: ReactNode }) {
 
 You do **not** need to coordinate CSS across apps mounted under one host router.
 A client-side navigation that crosses an app boundary is a **full document load**
-(the server returns `X-RSC-Reload` on an app switch — see `/host-router`), so the
+(the browser loads the target app's document — see `/host-router`), so the
 target app's entire document — its stylesheets, theme, meta — is re-established
 by the target app's own load. Each app owns its document; how one app renders a
 stylesheet has no effect on another. In particular, apps may disagree on

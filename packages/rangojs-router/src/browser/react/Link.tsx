@@ -42,6 +42,7 @@ import {
   subscribeToAdaptiveStrategyChange,
 } from "../prefetch/default-strategy.js";
 import { getAppVersion } from "../app-version.js";
+import { isOtherAppHref } from "../app-bounds.js";
 import { prefixBasename } from "../../router/basename.js";
 import type { PrefetchStrategy } from "../../router/prefetch-default.js";
 
@@ -295,8 +296,9 @@ export const Link: ForwardRefExoticComponent<
       // External links - let browser handle normally
       if (isExternal) return;
 
-      // Force document navigation if requested
-      if (reloadDocument) return;
+      // Force document navigation if requested, or when another app under
+      // the same host router serves the target (app-bounds.ts).
+      if (reloadDocument || isOtherAppHref(resolvedTo)) return;
 
       // Allow modifier keys for opening in new tab/window
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
