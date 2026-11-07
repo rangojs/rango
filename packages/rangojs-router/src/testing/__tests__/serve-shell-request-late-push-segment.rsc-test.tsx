@@ -7,10 +7,11 @@
  * each segment's handler and moves it on as resolution continues, so a push a
  * component makes after its await read the pin of whatever ran last: an async
  * component handed a layout's ctx named the child route's segment, one handed
- * a slot's ctx named the route's. A layout's or slot's ctx carries its own
+ * a slot's ctx named the next slot's. A layout's or slot's ctx carries its own
  * segment (withSegmentScope, router/handler-context.ts), and its `use` runs in
- * that segment's runAsSegment scope, so the push function it creates is bound
- * to it.
+ * that segment's runAsSegment scope, so the push function it creates, and the
+ * loader it starts, are bound to it, as is the segment a `"use cache"` call
+ * given the ctx records under.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -27,6 +28,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -37,8 +39,25 @@ import { cachedCrumb } from "./fixtures/streamed-handle-owner-data.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
+/** Pushes with the loader ctx it is run for. */
+const CrumbsLoader = createLoader(async (ctx) => {
+  ctx.use(Crumbs)("loader");
+  return null;
+});
+
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Starts a loader with the ctx it was handed, once the walk is over. */
+async function LoaderPush({
+  ctx,
+}: {
+  ctx: HandlerContext<any, any>;
+}): Promise<React.ReactNode> {
+  await wait(10);
+  await ctx.use(CrumbsLoader);
+  return <p>loader</p>;
 }
 
 /** Pushes through a "use cache" call given the ctx, once the walk is over. */
@@ -135,6 +154,24 @@ describe("a late push through the ctx a handler handed out", () => {
       messages,
     );
     expect(pushedSegments(messages)).toEqual(["M0L0L0R0.@a"]);
+  });
+
+  it("names the layout's segment for a loader it starts", async () => {
+    const messages: string[] = [];
+    await serve(
+      urls(({ path, layout }) => [
+        layout(
+          (ctx) => (
+            <main>
+              <LoaderPush ctx={ctx} />
+            </main>
+          ),
+          () => [path("/p", () => <p>page</p>, { name: "p" })],
+        ),
+      ]),
+      messages,
+    );
+    expect(pushedSegments(messages)).toEqual(["M0L0L0"]);
   });
 
   it('names the layout\'s segment for a "use cache" call given its ctx', async () => {
