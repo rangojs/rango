@@ -44,6 +44,7 @@ import {
   type SegmentCacheStore,
   type VercelRuntimeCache,
 } from "../../cache/index.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 import {
   getRecord,
   record,
@@ -640,6 +641,75 @@ describe.each(ALL_STORES)(
       const { next } = await staleRefresh(to);
       expect(next.response.status).toBe(200);
       expect(next.flight).toContain("record-cached");
+    });
+  },
+);
+
+describe.each(SWR_SEGMENT_STORES)(
+  "route cache() intercept record on the %s store, stale refresh",
+  (kind) => {
+    function RecordModal(): React.ReactNode {
+      answer();
+      return <dialog>record-modal</dialog>;
+    }
+
+    async function staleRefresh(to: Outcome) {
+      const clock = movableClock();
+      const cacheStore = createStore(kind);
+      const router = createRouter({ cache: { store: cacheStore } }).routes(
+        urls(({ path, cache, layout, intercept, notFoundBoundary }) => [
+          cache({ ttl: 1, swr: 300 }, () => [
+            layout(
+              () => <main>list-layout</main>,
+              () => [
+                notFoundBoundary(<p>declared-not-found</p>),
+                path("/list", () => <ul>list</ul>, { name: "list" }),
+                path("/item/:id", () => <article>item</article>, {
+                  name: "item",
+                }),
+                intercept("@modal", ".item", RecordModal),
+              ],
+            ),
+          ]),
+        ]),
+      );
+      const list = await serveShellRequest(router, "/list", {
+        cacheStore,
+        partial: true,
+      });
+      const { metadata } = await deserializeResult<{
+        metadata: { matched: string[] };
+      }>(list.flight!);
+      const open = () =>
+        serveShellRequest(router, "/item/1", {
+          cacheStore,
+          partial: { from: "/list", segments: metadata.matched },
+        });
+      const first = await open();
+      expect(first.flight).toContain("record-modal");
+      await settle();
+      clock.advance(1_500);
+      outcome = to;
+      runs = 0;
+      const stale = await open();
+      expect(stale.flight).toContain("record-modal");
+      await settle();
+      expect(runs).toBe(1);
+      runs = 0;
+      const next = await open();
+      await settle();
+      return next;
+    }
+
+    it("notFound(): the record is retired and the next open runs the intercept", async () => {
+      const next = await staleRefresh("notFound");
+      expect(runs).toBe(1);
+      expect(next.flight).not.toContain("record-modal");
+    });
+
+    it.each(RETAINED)("%s: the stored record keeps serving", async (to) => {
+      const next = await staleRefresh(to);
+      expect(next.flight).toContain("record-modal");
     });
   },
 );

@@ -1245,6 +1245,65 @@ describe("use cache stale revalidation handle preservation", () => {
     expect(mockStore.setItem.mock.calls[0][2].ttl).toBe(60);
   });
 
+  it("foregroundOnAction: a foreground refresh that throws notFound() retires the stale entry", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const mockStore = {
+      getItem: vi.fn(),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: {
+        "swr-action": { ttl: 60, swr: 120, foregroundOnAction: true },
+      },
+      _inActionRevalidation: true,
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+    mockStore.getItem.mockResolvedValueOnce({
+      value: JSON.stringify("stale-result"),
+      shouldRevalidate: true,
+    });
+    const { notFound } = await import("../../errors.js");
+    const { RETIRED_ITEM } = await import("../retired-entry.js");
+    const cached = registerCachedFunction(
+      async () => notFound("gone"),
+      "fg-action-gone",
+      "swr-action",
+    );
+
+    await expect(cached()).rejects.toThrow("gone");
+    await Promise.all(waitUntilFns.map((f) => f()));
+    expect(mockStore.setItem).toHaveBeenCalledTimes(1);
+    expect(mockStore.setItem.mock.calls[0][1]).toBe(RETIRED_ITEM);
+  });
+
+  it("a miss whose function throws notFound() writes nothing", async () => {
+    const waitUntilFns: Array<() => Promise<void>> = [];
+    const mockStore = {
+      getItem: vi.fn().mockResolvedValue(null),
+      setItem: vi.fn().mockResolvedValue(undefined),
+    };
+    mockGetRequestContext.mockReturnValue({
+      _cacheStore: mockStore,
+      _cacheProfiles: { default: { ttl: 60, swr: 120 } },
+      waitUntil: (fn: () => Promise<void>) => {
+        waitUntilFns.push(fn);
+      },
+    });
+    const { notFound } = await import("../../errors.js");
+    const cached = registerCachedFunction(
+      async () => notFound("gone"),
+      "miss-gone",
+      "default",
+    );
+
+    await expect(cached()).rejects.toThrow("gone");
+    await Promise.all(waitUntilFns.map((f) => f()));
+    expect(mockStore.setItem).not.toHaveBeenCalled();
+  });
+
   it("foregroundOnAction: a stale entry on a plain navigation still keeps SWR", async () => {
     // Same profile (foregroundOnAction: true) but NOT in an action revalidation
     // (a plain GET navigation). The opt-in only applies to action re-renders, so
