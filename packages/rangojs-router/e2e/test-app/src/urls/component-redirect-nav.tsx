@@ -7,10 +7,10 @@ import { Link, Outlet } from "@rangojs/router/client";
 // The Flight error row's digest names the target (rsc/render-pipeline.ts), and
 // the browser follows it: before the navigation commits when the segment's
 // component is the one that threw (segment-system.tsx renderSegments), from
-// the router's root boundary when React meets it only while it renders (nested
-// in the handler's element, behind loading(), or thrown by a handler that
-// streams under loading()). The layout's <input> keeps
-// what the test typed only if the layout never unmounted.
+// the page segment's router boundary when React meets it only while it
+// renders (nested in the handler's element, behind loading(), or thrown by a
+// handler that streams under loading()). The layout's <input> keeps what the
+// test typed only if the layout never unmounted.
 
 function ThrowSync(): React.ReactNode {
   throw redirect("/component-redirect-nav/target", 302);

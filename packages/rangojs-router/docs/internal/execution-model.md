@@ -1068,14 +1068,25 @@ The browser reads it back (`decodedRedirectOf`) in two places:
   not the page that redirected.
 - **While React renders.** A redirect React meets only in render (an async
   component nested inside the handler's element, one behind `loading()`, a
-  streamed handler's thrown `Response`) reaches `RootErrorBoundary`
-  (`root-error-boundary.tsx`), which renders `LoaderRedirect` instead of the error
-  page: a replace navigation to the target, or `location.replace` for an
-  `{ external: true }` target. The page that redirected was committed, so the
-  boundary's subtree unmounts for that frame; that is the cost of a redirect the
-  render reports after the commit. The public `<ErrorBoundary>`
+  streamed handler's thrown `Response`) reaches the router boundary of the
+  segment that rendered it: `StreamedLoaderErrorBoundary`
+  (`route-content-wrapper.tsx`), which `renderSegments` puts around every
+  segment's children and `renderSlotContent` (`client.tsx`) around every slot's
+  content. It renders `LoaderRedirect` in place of that segment: a replace
+  navigation to the target, or `location.replace` for an `{ external: true }`
+  target. The page that redirected was committed, so that segment's content is
+  empty for the frame the target takes to arrive; the layouts above it never
+  unmount. Why not leave it to `RootErrorBoundary`? Its fallback replaces
+  everything under the root, so every layout remounted on the target and lost
+  its state (a typed `<input>`, `useState`). The boundary clears the redirect
+  when it is handed another delivery of its segment (`owner`, the
+  `ResolvedSegment` object: a re-rendered segment is a new one, a held one the
+  same), not only on its loader-data `reset`: a redirect to the same route and
+  params with no loaders would otherwise keep rendering the spent
+  `LoaderRedirect` over the target. `RootErrorBoundary` keeps its own redirect
+  branch for anything above every segment. The public `<ErrorBoundary>`
   (`client.tsx`) rethrows such an error from its render, without its fallback or
-  `onError`, so an app boundary between the component and the root does not
+  `onError`, so an app boundary between the component and the segment does not
   swallow the redirect. (An app's own error boundary class does not know the
   digest and will catch it.) This path has no hop count, like a loader's
   `LoaderRedirect`: two pages that redirect to each other this way keep
@@ -1093,7 +1104,7 @@ the boundary too: the bridge follows a same-origin target only.
 
 A document load of such a page is a different question: the server's HTML step
 answers it, as a shell error or inside a `loading()` boundary, with no redirect
-status. The hydrated page then reaches `RootErrorBoundary` and lands on the
+status. The hydrated page then reaches the segment's boundary and lands on the
 target: in production for every shape, in dev only behind `loading()`, because
 dev rethrows a shell error to the host, whose 500 page never hydrates ("A
 server-render shell error answers a recovery document"). The SSR render does not
@@ -1104,8 +1115,11 @@ Tests: `testing/__tests__/component-redirect-navigation.rsc-test.tsx` (userland,
 through `serveShellRequest`: what the navigation's Flight answer carries for each
 shape), `__tests__/segment-system.test.tsx` ("a segment component that threw
 redirect()"), `testing/__tests__/render-route-component-redirect.test.tsx`
-(userland, through `renderRoute`: the root boundary follows one, through an
-app's `<ErrorBoundary>` too), `ssr/__tests__/ssr-handler.test.tsx` (not
+(userland, through `renderRoute`: the page's boundary follows one with the
+layout above kept, to the same route too, through an app's `<ErrorBoundary>`
+as well), `__tests__/streamed-loader-error-boundary.test.tsx` (when the
+boundary clears it), `__tests__/parallel-outlet-redirect.test.tsx` (a slot's
+redirect replaces the slot alone), `ssr/__tests__/ssr-handler.test.tsx` (not
 reported), and the
 `component redirect on navigation` e2e describes in
 `e2e/component-redirect-nav.test.ts` and

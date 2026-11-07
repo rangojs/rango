@@ -25,6 +25,7 @@ import {
   AuditedRouteContent,
   RouteContentWrapper,
   LoaderBoundary,
+  StreamedLoaderErrorBoundary,
 } from "./route-content-wrapper.js";
 import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
@@ -100,6 +101,16 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
     result = auditedSlot(result);
   }
+
+  // The segment's own router boundary, as renderSegments gives every segment:
+  // a slot component's `throw redirect()` that React meets while it renders
+  // replaces the slot alone, and the layout that renders the slot stays
+  // mounted.
+  result = (
+    <StreamedLoaderErrorBoundary reset={[segment.id]} owner={segment}>
+      {result}
+    </StreamedLoaderErrorBoundary>
+  );
 
   if (segment.mountPath) {
     return (
@@ -410,8 +421,9 @@ export class ErrorBoundary extends Component<
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
       // A server component's `throw redirect()` is not this boundary's error:
-      // rethrown to RootErrorBoundary, which follows it and resets with the
-      // target's tree (this boundary stays in its error state otherwise).
+      // rethrown to the segment's StreamedLoaderErrorBoundary, which follows
+      // it and resets with the target's tree (this boundary stays in its
+      // error state otherwise).
       if (decodedRedirectOf(this.state.error)) throw this.state.error;
       const { fallback } = this.props;
 

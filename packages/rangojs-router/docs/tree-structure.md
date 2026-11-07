@@ -61,8 +61,9 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
     a from/to comparison): if one render path appended params and another did
     not, the keys would differ and React would remount.
 
-- `src/route-content-wrapper.tsx` - `LoaderBoundary` and `RouteContentWrapper`.
-  These add structural depth (Suspense boundaries) to the React tree.
+- `src/route-content-wrapper.tsx` - `LoaderBoundary`, `RouteContentWrapper` and
+  `StreamedLoaderErrorBoundary`. These add structural depth (Suspense and
+  error boundaries) to the React tree.
 
 - `src/browser/server-action-bridge.ts` - Merges server action segments with
   cached segments. Must preserve cached `loading` values to prevent tree drift.
@@ -85,19 +86,21 @@ like `useActionState`, refs, and local state. This is extremely hard to debug.
    cached `loading` value if it differs from the server value. The server may
    return different `loading` values based on `isSSR` context.
 
-4. A loader entry is a wrapper too: a segment with loaders gets a
-   `StreamedLoaderErrorBoundary` (`renderSegments`), so the loader segments a
-   layout holds must not differ between render paths. A route's loaders
-   inherited into a child layout with parallel slots are one such case:
-   whether the copy is redundant is decided from the route entry, the same on
-   every request (`inheritedCopyRedundant` in
+4. Every segment's children sit in a `StreamedLoaderErrorBoundary`
+   (`renderSegments`), and every slot's content in one (`renderSlotContent`,
+   `client.tsx`), whatever the segment holds. It catches read-site loader
+   markers and a component's `throw redirect()` that React meets while it
+   renders, so the segment's ancestors stay mounted. Do not make it
+   conditional again: when only loader-bearing segments had it, a layout that
+   gained or lost a loader entry between two renders remounted with its
+   Outlet. The loader segments a layout holds should still agree between
+   render paths. A route's loaders inherited into a child layout with parallel
+   slots are one such case: whether the copy is redundant is decided from the
+   route entry, the same on every request (`inheritedCopyRedundant` in
    `router/segment-resolution/revalidation.ts`), never from a segment's
    `loading`, which is `null` on a `loading(fallback, { ssr: false })`
    document and the fallback on its partials. The walkers never resolve a
-   redundant copy, on any request: dropping one later only beside the route's
-   own copy sent it alone on an action or a same-route navigation that held
-   the route's loader (its `revalidate()` declines), so the layout gained a
-   loader entry and remounted.
+   redundant copy, on any request.
    `src/testing/__tests__/inherited-loader-copy.rsc-test.tsx` pins it on the
    document, a navigation and an action, with and without the route's loader
    held.

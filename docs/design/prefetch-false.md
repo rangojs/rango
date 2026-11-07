@@ -1685,9 +1685,8 @@ it so:
 - **The skeleton.** The prefetch sends a placeholder for every segment the
   deferred work covers, with the fields the wrapper chain is built from: id,
   type, namespace, the `loading` fallback, `transition`, a slot's name, a
-  loader's id, `belongsToRoute`, the mount path. `renderSegments` wraps a
-  segment's content in `StreamedLoaderErrorBoundary` only when the segment
-  has loaders and takes the per-loader streams lane only then, so the loader
+  loader's id, `belongsToRoute`, the mount path. `renderSegments` takes the
+  per-loader streams lane only when the segment has loaders, so the loader
   placeholders matter as much as the unit's.
 - **A slot with no `loading()`.** A slot's chain is built where the layout
   renders it (`renderSlotContent` in `src/client.tsx`), and it wraps a slot

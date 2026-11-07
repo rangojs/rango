@@ -1,10 +1,17 @@
 // @vitest-environment happy-dom
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { useEffect } from "react";
 import { StreamedLoaderErrorBoundary } from "../route-content-wrapper.js";
 import { LOADER_ERROR_FALLBACK } from "../decode-loader-results.js";
+import { renderRedirectDigest } from "../errors.js";
+
+// LoaderRedirect navigates through the router context; here it only names
+// its target.
+vi.mock("../loader-redirect.js", () => ({
+  LoaderRedirect: ({ to }: { to: string }) => <p>redirecting to {to}</p>,
+}));
 
 afterEach(cleanup);
 
@@ -12,6 +19,13 @@ function Throwing(): null {
   const error = new Error("loader failed") as Error & Record<symbol, unknown>;
   error[LOADER_ERROR_FALLBACK] = <p>fallback for route one</p>;
   throw error;
+}
+
+/** A component's `throw redirect()`, as the Flight client decodes its row. */
+function Redirecting(): null {
+  throw Object.assign(new Error("decoded"), {
+    digest: renderRedirectDigest({ to: "/target" }),
+  });
 }
 
 describe("StreamedLoaderErrorBoundary", () => {
@@ -80,6 +94,69 @@ describe("StreamedLoaderErrorBoundary", () => {
       </StreamedLoaderErrorBoundary>,
     );
     expect(result.getByText("fallback for route one")).toBeDefined();
+  });
+
+  describe("a component's redirect", () => {
+    beforeEach(() => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("follows it in place of the segment's children", () => {
+      const result = render(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={{}}>
+          <Redirecting />
+        </StreamedLoaderErrorBoundary>,
+      );
+      expect(result.getByText("redirecting to /target")).toBeDefined();
+    });
+
+    it("keeps following it while the segment delivery is the same", () => {
+      const owner = {};
+      const result = render(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={owner}>
+          <Redirecting />
+        </StreamedLoaderErrorBoundary>,
+      );
+      result.rerender(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={owner}>
+          <p>unrelated re-render</p>
+        </StreamedLoaderErrorBoundary>,
+      );
+      expect(result.getByText("redirecting to /target")).toBeDefined();
+    });
+
+    // The same route and params, rendered again (a redirect to the same
+    // page with another search): the spent redirect must not stay on screen.
+    it("clears it when a new delivery of the segment arrives under the same reset", () => {
+      const result = render(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={{}}>
+          <Redirecting />
+        </StreamedLoaderErrorBoundary>,
+      );
+      result.rerender(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={{}}>
+          <p>target</p>
+        </StreamedLoaderErrorBoundary>,
+      );
+      expect(result.getByText("target")).toBeDefined();
+    });
+
+    it("leaves a loader's caught marker to the reset alone", () => {
+      const result = render(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={{}}>
+          <Throwing />
+        </StreamedLoaderErrorBoundary>,
+      );
+      result.rerender(
+        <StreamedLoaderErrorBoundary reset={["R0"]} owner={{}}>
+          <p>new delivery, same loader data</p>
+        </StreamedLoaderErrorBoundary>,
+      );
+      expect(result.getByText("fallback for route one")).toBeDefined();
+    });
   });
 
   it("does not remount healthy children when its loader data changes", () => {

@@ -691,18 +691,25 @@ for (const strict of [false, true]) {
     it("I5 alone for a link below the segment's outlet: the content under it is what remounts", async () => {
       const layout = seg({ id: "L0", type: "layout", component: <Layout /> });
       const route = seg({ id: "R0", type: "route" });
-      await mount(await renderSegments([layout, route]));
+      const loader = (loaderData: unknown) =>
+        seg({ id: "R0D0.data", type: "loader", loaderId: "data", loaderData });
+      await mount(
+        await renderSegments([layout, route, loader({ value: 1 })], {
+          forceAwait: true,
+        }),
+      );
 
-      // A loader on the route puts the loader error boundary into its chain.
+      // A settled loader notFound() puts its not-found UI where the route's
+      // error boundary was.
       const drifted = await renderSegments(
         [
           layout,
           route,
-          seg({
-            id: "R0D0.data",
-            type: "loader",
-            loaderId: "data",
-            loaderData: { value: 1 },
+          loader({
+            __loaderResult: true,
+            ok: false,
+            notFound: true,
+            fallback: <p>missing</p>,
           }),
         ],
         { forceAwait: true },
@@ -712,7 +719,7 @@ for (const strict of [false, true]) {
       expect(counters()).toEqual({ ...ZERO, drifts: 1 });
       expect(audited()).toEqual([
         expect.stringContaining(
-          "I5 drift at outlet:R0: wrapper chain link 1 changed from nothing to StreamedLoaderErrorBoundary",
+          "I5 drift at outlet:R0: wrapper chain link 1 changed from StreamedLoaderErrorBoundary to nothing",
         ),
       ]);
     });

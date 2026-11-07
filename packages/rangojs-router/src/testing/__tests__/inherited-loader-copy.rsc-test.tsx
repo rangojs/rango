@@ -6,9 +6,8 @@
  * route's own loader segments, the copy is redundant and never resolved.
  *
  * Which copies a payload carries must agree on every request of a route: a
- * layout that holds a loader entry on one render and none on the next gains
- * or loses its StreamedLoaderErrorBoundary (segment-system.tsx), so React
- * remounts it and its Outlet (docs/tree-structure.md). The decision is made
+ * layout must not hold a loader entry on one render and none on the next
+ * (docs/tree-structure.md, rule 4). The decision is made
  * from the route entry, the same on the document and on partials
  * (inheritedCopyRedundant):
  *

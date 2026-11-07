@@ -182,8 +182,8 @@ export interface RenderSegmentsOptions {
   /**
    * Build the tree even when a segment component threw redirect(), instead
    * of throwing the ServerRedirect a navigation follows before it commits
-   * (followRenderRedirect): RootErrorBoundary follows it once React renders
-   * it. For a caller that hands the build's promise to NavigationProvider,
+   * (followRenderRedirect): the segment's StreamedLoaderErrorBoundary
+   * follows it once React renders it. For a caller that hands the build's promise to NavigationProvider,
    * whose use() of it runs above every boundary, so a rejection there is an
    * uncaught error: the first tree and an HMR refetch (rsc-router.tsx).
    */
@@ -417,7 +417,9 @@ function isLoaderRedirectNode(node: ReactNode): boolean {
  * // <RootLayout>
  * //   <RootErrorBoundary>
  * //     <OutletProvider segment={BlogLayout} parallel={[Sidebar]}>
- * //       <BlogPost />
+ * //       <StreamedLoaderErrorBoundary>
+ * //         <BlogPost />
+ * //       </StreamedLoaderErrorBoundary>
  * //     </OutletProvider>
  * //   </RootErrorBoundary>
  * // </RootLayout>
@@ -444,7 +446,8 @@ export async function renderSegments(
   // read (buildLoaderStreams). Only the document lane decodes in the build.
   const settleLoaders = !!(forceAwait || isAction);
   // Whether a segment component that threw redirect() is followed before the
-  // commit (followRenderRedirect) or left to RootErrorBoundary.
+  // commit (followRenderRedirect) or left to the segment's
+  // StreamedLoaderErrorBoundary.
   const followsRenderRedirect = !isAction && !commitRenderRedirect;
 
   const segDebug = INTERNAL_RANGO_DEBUG;
@@ -593,8 +596,9 @@ export async function renderSegments(
       try {
         resolvedComponent = await component;
       } catch (error) {
-        // A redirect stays the rejected promise: RootErrorBoundary follows it
-        // when React reads it, instead of the action failing with it.
+        // A redirect stays the rejected promise: the segment's
+        // StreamedLoaderErrorBoundary follows it when React reads it, instead
+        // of the action failing with it.
         if (!decodedRedirectOf(error)) throw error;
       }
       if (segDebug) {
@@ -620,7 +624,8 @@ export async function renderSegments(
         } catch (error) {
           // A streamed handler's redirect: followed before the commit like a
           // component's (followRenderRedirect), or left as the rejected
-          // promise for RootErrorBoundary where this lane cannot follow it.
+          // promise for the segment's StreamedLoaderErrorBoundary where this
+          // lane cannot follow it.
           if (!decodedRedirectOf(error)) throw error;
           if (followsRenderRedirect) followRenderRedirect(error);
         }
@@ -709,24 +714,25 @@ export async function renderSegments(
     // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
 
-    // Loader-bearing segments get the router-owned error boundary around
-    // their children so a read-site loader error renders its errorBoundary()
+    // Every segment gets the router-owned error boundary around its
+    // children: a read-site loader error renders its errorBoundary()
     // fallback (LOADER_ERROR_FALLBACK marker on the thrown error) instead of
-    // escaping to app boundaries. Wrapped UNCONDITIONALLY on loader presence
-    // — streams and forceAwait lanes must produce the same tree shape or
-    // lane changes remount the subtree (docs/tree-structure.md).
-    if (loaderEntries.length > 0 || clientGroup) {
-      nodeContent = createElement(StreamedLoaderErrorBoundary, {
-        // Leaf first: tree.slice(i) is this segment and its ancestors. A
-        // read walks up the chain, so this boundary can catch an ancestor
-        // loader's marker and resets when that loader's data changes too.
-        reset: [
-          idParamsKey,
-          ...tree.slice(i).flatMap((n) => n.loaders.map((l) => l.loaderData)),
-        ],
-        children: nodeContent,
-      });
-    }
+    // escaping to app boundaries, and a component's `throw redirect()` that
+    // React meets only while it renders is followed here, below the
+    // segment's ancestors, instead of at RootErrorBoundary, which would
+    // unmount every layout. Unconditional, so neither loader presence nor
+    // the lane changes the tree shape (docs/tree-structure.md).
+    nodeContent = createElement(StreamedLoaderErrorBoundary, {
+      // Leaf first: tree.slice(i) is this segment and its ancestors. A
+      // read walks up the chain, so this boundary can catch an ancestor
+      // loader's marker and resets when that loader's data changes too.
+      reset: [
+        idParamsKey,
+        ...tree.slice(i).flatMap((n) => n.loaders.map((l) => l.loaderData)),
+      ],
+      owner: node.segment,
+      children: nodeContent,
+    });
 
     if (!clientGroup && loading !== undefined && loading !== null) {
       const loaderDataPromise = getMemoizedLoaderPromise(loaderEntries);
@@ -1026,7 +1032,8 @@ export async function renderSegments(
  * segment components (and a forceAwait lane's await of a `loading()`
  * segment's) is the client's one look before the commit; a redirect React
  * meets only while it renders (nested inside the segment's element, or behind
- * `loading()` on a streaming lane) reaches RootErrorBoundary instead. So does
+ * `loading()` on a streaming lane) reaches the segment's
+ * StreamedLoaderErrorBoundary instead, which keeps its ancestors mounted. So does
  * an `{ external: true }` target (the bridge only follows a same-origin one),
  * the action lane, whose caller would fail the action with the throw, and a
  * build with `commitRenderRedirect`.

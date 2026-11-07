@@ -245,14 +245,16 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
           "RootErrorBoundary",
           "  OutletProvider#M0L0",
           "    OutletProvider#M0L0L0R0-id=1",
-          "      <Page>",
-          "    <Layout>",
+          "      StreamedLoaderErrorBoundary",
+          "        <Page>",
+          "    StreamedLoaderErrorBoundary",
+          "      <Layout>",
         ],
       );
     },
   );
 
-  it("loading undefined with a loader: the loader's error boundary inside the OutletProvider", async () => {
+  it("loading undefined with a loader: the segment's error boundary inside the OutletProvider", async () => {
     await expectShape(
       () => [layout(), routeLoader(), route()],
       [
@@ -261,7 +263,8 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "    OutletProvider#M0L0L0R0-id=1",
         "      StreamedLoaderErrorBoundary",
         "        <Page>",
-        "    <Layout>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
@@ -275,13 +278,15 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "RootErrorBoundary",
         "  OutletProvider#M0L0",
         "    LoaderBoundary#loader-boundary-M0L0L0R0-id=1",
-        "      <Page>",
-        "    <Layout>",
+        "      StreamedLoaderErrorBoundary",
+        "        <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
 
-  it("loading false (never sent by the server) with a loader: the loader's error boundary inside the LoaderBoundary", async () => {
+  it("loading false (never sent by the server) with a loader: the segment's error boundary inside the LoaderBoundary", async () => {
     await expectShape(
       () => [layout(), routeLoader(), route({ loading: false })],
       [
@@ -290,7 +295,8 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "    LoaderBoundary#loader-boundary-M0L0L0R0-id=1",
         "      StreamedLoaderErrorBoundary",
         "        <Page>",
-        "    <Layout>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
@@ -302,14 +308,16 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "RootErrorBoundary",
         "  OutletProvider#M0L0",
         "    LoaderBoundary#loader-boundary-M0L0L0R0-id=1",
-        "      RouteContentWrapper#suspense-loading-M0L0L0R0",
-        "        <Page>",
-        "    <Layout>",
+        "      StreamedLoaderErrorBoundary",
+        "        RouteContentWrapper#suspense-loading-M0L0L0R0",
+        "          <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
 
-  it("loading truthy with a loader: LoaderBoundary, the loader's error boundary, then RouteContentWrapper", async () => {
+  it("loading truthy with a loader: LoaderBoundary, the segment's error boundary, then RouteContentWrapper", async () => {
     await expectShape(
       () => [
         layout(),
@@ -323,7 +331,8 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "      StreamedLoaderErrorBoundary",
         "        RouteContentWrapper#suspense-loading-M0L0L0R0",
         "          <Page>",
-        "    <Layout>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
@@ -335,9 +344,11 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "RootErrorBoundary",
         "  LoaderBoundary#loader-boundary-M0L0",
         "    OutletProvider#M0L0L0R0-id=1",
-        "      <Page>",
-        "    RouteContentWrapper#suspense-loading-M0L0",
-        "      <Layout>",
+        "      StreamedLoaderErrorBoundary",
+        "        <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      RouteContentWrapper#suspense-loading-M0L0",
+        "        <Layout>",
       ],
     );
   });
@@ -350,8 +361,10 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "  OutletProvider#M0L0",
         "    MountContextProvider",
         "      OutletProvider#M0L0L0R0-id=1",
-        "        <Page>",
-        "    <Layout>",
+        "        StreamedLoaderErrorBoundary",
+        "          <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
@@ -363,14 +376,16 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "RootErrorBoundary",
         "  OutletProvider#M0L0",
         "    OutletProvider#M0L0L0R0",
-        "      ViewTransition",
-        "        <Page>",
-        "    <Layout>",
+        "      StreamedLoaderErrorBoundary",
+        "        ViewTransition",
+        "          <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
 
-  it("clientUrls() group: one key per group mount and the error boundary, whatever loading() says", async () => {
+  it("clientUrls() group: one key per group mount, whatever loading() says", async () => {
     await expectShape(
       () => [
         layout(),
@@ -382,7 +397,8 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "    OutletProvider#cg:/shop",
         "      StreamedLoaderErrorBoundary",
         "        <Page>",
-        "    <Layout>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });
@@ -401,8 +417,10 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
             "  OutletProvider#M0L0",
             "    ViewTransition",
             `      OutletProvider#${key}`,
-            "        <Page>",
-            "    <Layout>",
+            "        StreamedLoaderErrorBoundary",
+            "          <Page>",
+            "    StreamedLoaderErrorBoundary",
+            "      <Layout>",
           ],
         );
       },
@@ -423,10 +441,13 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
           "  OutletProvider#M0L0",
           "    OutletProvider#M0L0L0",
           "      OutletProvider#M0L0L0R0",
-          "        ViewTransition",
-          "          <Page>",
+          "        StreamedLoaderErrorBoundary",
+          "          ViewTransition",
+          "            <Page>",
+          "      StreamedLoaderErrorBoundary",
+          "        <Layout>",
+          "    StreamedLoaderErrorBoundary",
           "      <Layout>",
-          "    <Layout>",
         ],
       );
       // Outside the scope both keep them.
@@ -437,9 +458,12 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
           "  OutletProvider#M0L0",
           "    OutletProvider#M0L0L0-id=1",
           "      OutletProvider#M0L0L0R0-id=1",
-          "        <Page>",
+          "        StreamedLoaderErrorBoundary",
+          "          <Page>",
+          "      StreamedLoaderErrorBoundary",
+          "        <Layout>",
+          "    StreamedLoaderErrorBoundary",
           "      <Layout>",
-          "    <Layout>",
         ],
       );
     });
@@ -469,8 +493,10 @@ describe("renderSegments tree shape, identical on SSR, navigation, back/forward 
         "RootErrorBoundary",
         "  OutletProvider#M0L0",
         "    OutletProvider#M0L0L0R0-id=1",
-        "      <Page>",
-        "    <Layout>",
+        "      StreamedLoaderErrorBoundary",
+        "        <Page>",
+        "    StreamedLoaderErrorBoundary",
+        "      <Layout>",
       ],
     );
   });

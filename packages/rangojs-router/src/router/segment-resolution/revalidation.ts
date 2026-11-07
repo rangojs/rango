@@ -280,9 +280,9 @@ export function ownerOf(
  * differs between requests: `loading(fallback, { ssr: false })` is `null` on
  * a document (applyDocumentModeLoading) and the fallback on partials, and the
  * walkers emit `loading(false)` as `null` too. A copy sent on one request and
- * not on the next gives the layout a loader entry it did not have, so
- * renderSegments wraps it in StreamedLoaderErrorBoundary and React remounts
- * it with its Outlet (docs/tree-structure.md). Resolving a redundant copy and
+ * not on the next gives the layout a loader entry it did not have, so its
+ * loader entries differ between render paths (docs/tree-structure.md, rule
+ * 4). Resolving a redundant copy and
  * dropping it from the payload later is not enough: when the route's own
  * loader is held (its revalidate() declines), the copy is new to the client,
  * so it re-runs and is sent without the route's copy beside it.

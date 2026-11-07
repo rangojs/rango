@@ -10,13 +10,14 @@ import { expect, test, type Page } from "@playwright/test";
  * click lands on the target instead of the error page.
  *
  * - The segment's own component threw (sync or async): followed before the
- *   navigation commits (segment-system.tsx renderSegments), so the layout
- *   stays mounted and Back returns to the page the click left.
+ *   navigation commits (segment-system.tsx renderSegments).
  * - React meets it only while it renders (nested in the handler's element,
  *   behind loading(), or thrown by an async handler that streams under
- *   loading()): the router's root boundary follows it with a replace
- *   (root-error-boundary.tsx), so Back still returns to the page the click
- *   left.
+ *   loading()): the page segment's router boundary follows it with a replace
+ *   (route-content-wrapper.tsx StreamedLoaderErrorBoundary).
+ *
+ * Either way the layout above the page stays mounted (its <input> keeps what
+ * the test typed) and Back returns to the page the click left.
  *
  * Fixture in each app, under /component-redirect-nav: a layout with an
  * <input data-testid="crn-input">, an errorBoundary(), an index of
@@ -37,27 +38,22 @@ const CASES = [
   {
     name: "an async component's redirect lands on the target, layout kept",
     link: "crn-link-async",
-    layoutKept: true,
   },
   {
     name: "a synchronous component's redirect lands on the target, layout kept",
     link: "crn-link-sync",
-    layoutKept: true,
   },
   {
-    name: "an async component nested in the handler's element lands on the target",
+    name: "an async component nested in the handler's element lands on the target, layout kept",
     link: "crn-link-nested",
-    layoutKept: false,
   },
   {
-    name: "an async component behind loading() lands on the target",
+    name: "an async component behind loading() lands on the target, layout kept",
     link: "crn-link-loading",
-    layoutKept: false,
   },
   {
-    name: "an async handler under loading() that throws redirect() lands on the target",
+    name: "an async handler under loading() that throws redirect() lands on the target, layout kept",
     link: "crn-link-handler-loading",
-    layoutKept: false,
   },
 ] as const;
 
@@ -77,10 +73,8 @@ export function runComponentRedirectNavTests(
       await expect(testId(page, "crn-target")).toBeVisible();
       await expect(testId(page, "crn-boundary")).toHaveCount(0);
       await expect(page.getByText("Internal Server Error")).toHaveCount(0);
-      if (c.layoutKept) {
-        // Followed before the commit: the layout never unmounted.
-        await expect(testId(page, "crn-input")).toHaveValue("kept");
-      }
+      // The layout never unmounted.
+      await expect(testId(page, "crn-input")).toHaveValue("kept");
 
       await page.goBack();
       await expect(page).toHaveURL(/\/component-redirect-nav\/?$/);

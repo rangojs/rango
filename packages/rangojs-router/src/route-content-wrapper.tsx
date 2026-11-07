@@ -10,6 +10,7 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { decodedRedirectOf } from "./errors.js";
 import { Defer, readDefer } from "./browser/defer.js";
 import type { BoundaryAudit } from "./suspense-audit.js";
 import {
@@ -20,14 +21,27 @@ import {
 import { SETTLED_THENABLE } from "./thenable-status.js";
 import { shallowEqual } from "./browser/react/shallow-equal.js";
 
+export interface StreamedLoaderErrorBoundaryProps {
+  children: ReactNode;
+  reset: unknown[];
+  /** The segment delivery whose component redirect a catch belongs to. */
+  owner?: unknown;
+}
+
+interface StreamedLoaderErrorBoundaryState {
+  error: unknown;
+  reset: unknown[];
+  owner: unknown;
+}
+
 /**
- * Router-owned error boundary for read-site loader errors. segment-system
- * wraps every loader-bearing segment's children in one (unconditionally —
- * streams and forceAwait lanes alike, so the tree shape never differs between
- * navigation lanes; see docs/tree-structure.md). A loader error thrown by a
- * suspending read carries its errorBoundary() fallback via
- * LOADER_ERROR_FALLBACK (decodeLoaderEntry); this boundary renders that node,
- * restoring the pre-streaming errorFallback-swap contract.
+ * Router-owned error boundary around every segment's children (segment-system
+ * renderSegments) and every slot's content (client.tsx renderSlotContent),
+ * whatever the segment holds and on every lane, so the tree shape never
+ * differs between requests or navigation lanes (docs/tree-structure.md). A
+ * loader error thrown by a suspending read carries its errorBoundary()
+ * fallback via LOADER_ERROR_FALLBACK (decodeLoaderEntry); this boundary
+ * renders that node, restoring the pre-streaming errorFallback-swap contract.
  *
  * Loader-thrown AUTHORITY SIGNALS ride sibling markers:
  * - LOADER_NOT_FOUND_FALLBACK (notFound()): renders the SERVER-RENDERED
@@ -38,15 +52,23 @@ import { shallowEqual } from "./browser/react/shallow-equal.js";
  *   producer when the rejection won the flush race).
  * - LOADER_REDIRECT (redirect()): mounts LoaderRedirect, which navigates.
  *
+ * A server component's `throw redirect()` that React meets only while it
+ * renders (nested in the handler's element, behind loading(), a streamed
+ * handler's thrown Response) is a Flight error whose digest names the target
+ * (errors.ts decodedRedirectOf). It mounts LoaderRedirect here too, so the
+ * segment's ancestors stay mounted while the navigation replaces it;
+ * RootErrorBoundary would unmount every layout for that frame.
+ *
  * Errors without any marker rethrow to the app's own boundaries.
  */
 export class StreamedLoaderErrorBoundary extends Component<
-  { children: ReactNode; reset: unknown[] },
-  { error: unknown; reset: unknown[] }
+  StreamedLoaderErrorBoundaryProps,
+  StreamedLoaderErrorBoundaryState
 > {
-  state: { error: unknown; reset: unknown[] } = {
+  state: StreamedLoaderErrorBoundaryState = {
     error: null,
     reset: this.props.reset,
+    owner: this.props.owner,
   };
 
   static getDerivedStateFromError(error: unknown): { error: unknown } {
@@ -64,12 +86,20 @@ export class StreamedLoaderErrorBoundary extends Component<
    * keeps its own: a later action or navigation that re-ran the loader clears
    * an error fallback left by an earlier failure, and a tree that re-ran
    * nothing here keeps it.
+   *
+   * A component's redirect belongs to the delivery of the segment that
+   * rendered it instead (`owner`): a re-rendered segment is a new object, a
+   * held one is the same. Keyed on loader data alone, a redirect to the same
+   * route (no loaders, same params) would keep rendering the spent
+   * LoaderRedirect over the target.
    */
   static getDerivedStateFromProps(
-    { reset }: { reset: unknown[] },
-    state: { reset: unknown[] },
-  ): { error: null; reset: unknown[] } | null {
-    return shallowEqual(reset, state.reset) ? null : { error: null, reset };
+    { reset, owner }: StreamedLoaderErrorBoundaryProps,
+    state: StreamedLoaderErrorBoundaryState,
+  ): Partial<StreamedLoaderErrorBoundaryState> | null {
+    if (!shallowEqual(reset, state.reset)) return { error: null, reset, owner };
+    if (owner === state.owner) return null;
+    return decodedRedirectOf(state.error) ? { error: null, owner } : { owner };
   }
 
   render(): ReactNode {
@@ -78,7 +108,7 @@ export class StreamedLoaderErrorBoundary extends Component<
       const marked = error as Record<PropertyKey, unknown>;
       const notFoundFallback = marked[LOADER_NOT_FOUND_FALLBACK];
       if (notFoundFallback !== undefined) return notFoundFallback as ReactNode;
-      const redirect = marked[LOADER_REDIRECT];
+      const redirect = marked[LOADER_REDIRECT] ?? decodedRedirectOf(error);
       if (redirect !== undefined) {
         const r = redirect as { to: string; state?: Record<string, unknown> };
         return <LoaderRedirect to={r.to} state={r.state} />;

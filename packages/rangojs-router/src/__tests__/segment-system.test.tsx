@@ -1000,9 +1000,15 @@ describe("segment-system", () => {
         });
         const layout = layoutOf(result);
         expect(layout.props.loaderStreams).toBeUndefined();
-        expect(
-          findAll(toTreeNode(result), MockStreamedLoaderErrorBoundary),
-        ).toEqual([]);
+        // Each segment's boundary resets on its id alone: no loader data.
+        const boundaries = findAll(
+          toTreeNode(result),
+          MockStreamedLoaderErrorBoundary,
+        );
+        expect(boundaries.map((b) => b.props.reset)).toEqual(
+          expect.arrayContaining([["L0"], ["L0R0"]]),
+        );
+        expect(boundaries.every((b) => b.props.reset.length === 1)).toBe(true);
         const [slot] = layout.props.parallel;
         expect(slot.loaderIds).toEqual(["loader0", "loader1"]);
         // No loading(): settled before the commit, as the server's await was.
@@ -2249,7 +2255,10 @@ describe("segment-system", () => {
       const contentOf = async (segment: ResolvedSegment) => {
         const tree = toTreeNode(await built(renderSegments([segment])));
         // Wrapped: an async function would adopt a promise it returns.
-        return [collectByType(tree, MockOutletProvider)[0].props.children];
+        return [
+          collectByType(tree, MockStreamedLoaderErrorBoundary)[0].props
+            .children,
+        ];
       };
 
       it("hands React a placeholder's hole with no loading() as its promise", async () => {

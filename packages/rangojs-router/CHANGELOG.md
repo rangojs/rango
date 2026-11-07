@@ -43,6 +43,41 @@ path("/dashboard", () => <RequireUser />, { name: "dashboard" });
 A document request is unchanged: the server answers it without a redirect
 status. In production the hydrated page then lands on the target.
 
+### Fixed: a component's `redirect()` met while React renders keeps the layouts mounted
+
+**Before.** When React met a component's `throw redirect()` only while it
+rendered the page (an async component nested in the handler's element, one
+behind `loading()`, an async handler streamed under `loading()`), the
+router's root boundary followed it: everything under the root unmounted for
+a frame and the target mounted the layouts again, so layout state (a
+half-typed `<input>`, a scroll position, `useState`) was lost. The same held
+for a redirect from a parallel or intercept slot's component.
+
+**Now.** The router's boundary on the page's own segment follows it, and
+the layouts above stay mounted while the navigation replaces the page; a
+slot's redirect replaces that slot alone. Nothing changes in your code.
+
+```tsx
+layout(<AccountShell />, () => [
+  path("/account/settings", () => (
+    <section>
+      {/* async, throws redirect("/account/sign-in") when signed out */}
+      <RequireUser />
+      <SettingsForm />
+    </section>
+  )),
+  path("/account/sign-in", () => <SignIn />),
+]);
+
+// Before: a click on /account/settings signed out landed on
+// /account/sign-in with <AccountShell> mounted again (its state reset).
+// Now: <AccountShell> keeps its instance and state.
+```
+
+An error boundary class of your own between the component and the page
+(not `<ErrorBoundary>` from `@rangojs/router/client`, which lets the
+redirect through) still catches the redirect as an error.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
