@@ -144,25 +144,22 @@ export function renderRedirectDigest(redirect: RenderRedirect): string {
  * rendered).
  */
 export function decodedRedirectOf(error: unknown): RenderRedirect | undefined {
-  if (!isFlightDecodedError(error)) return undefined;
-  const digest = (error as { digest: unknown }).digest;
+  const digest: unknown = isFlightDecodedError(error)
+    ? (error as { digest: unknown }).digest
+    : undefined;
   if (
     typeof digest !== "string" ||
     !digest.startsWith(RENDER_REDIRECT_DIGEST_PREFIX)
   ) {
     return undefined;
   }
-  let parsed: unknown;
+  // Written by renderRedirectDigest on the server, the only producer of the
+  // prefix: the JSON is a RenderRedirect.
   try {
-    parsed = JSON.parse(digest.slice(RENDER_REDIRECT_DIGEST_PREFIX.length));
+    return JSON.parse(digest.slice(RENDER_REDIRECT_DIGEST_PREFIX.length));
   } catch {
     return undefined;
   }
-  return typeof parsed === "object" &&
-    parsed !== null &&
-    typeof (parsed as RenderRedirect).to === "string"
-    ? (parsed as RenderRedirect)
-    : undefined;
 }
 
 /**
