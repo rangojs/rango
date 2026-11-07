@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a held layout's `revalidate()` re-sends it over a `Prerender()` route when the params stay the same
+
+**Before.** Served from its build-time bake, a `Prerender()` route asked a
+held parent layout's `revalidate()` rules only when the route params changed.
+Between two prerendered routes with equal params (`/a/1` to `/b/1`), on a
+search-only change and on a stale request, the client kept the layout it
+held, even with `revalidate(() => true)`. A layout whose bake depends on the
+route, such as a server-rendered active link, went on marking the previous
+page. The same navigation rendered live re-sent the layout.
+
+**Now.** The rules are asked whether or not the params changed, as on a live
+route, and a layout they ask for arrives as this route's baked copy, with its
+handle values. A layout with no rules, or whose rules decline, stays held as
+before. The route's own prerendered segments are unchanged: kept on equal
+params whatever the search, since a bake does not vary by search.
+
+```ts
+layout(Nav, () => [
+  // Nav marks the active route; its bake differs per route.
+  revalidate(() => true),
+  path("/a/:id", PrerenderedA, { name: "a" }),
+  path("/b/:id", PrerenderedB, { name: "b" }),
+]);
+// /a/1 -> /b/1: before, Nav still marked "a"; now it marks "b".
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

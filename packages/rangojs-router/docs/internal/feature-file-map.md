@@ -392,9 +392,9 @@ The public DOM seam is
   [browser/rsc-router.tsx](../../src/browser/rsc-router.tsx). A
   prerender entry marks it in
   [router/match-middleware/cache-lookup.ts](../../src/router/match-middleware/cache-lookup.ts)
-  (`storedEntrySends`) when, on equal params, it keeps a held segment whose
-  `revalidate()` it skipped, or the route's own segments on a search-only
-  change. A scoped partial is marked `_payloadSourceScoped`
+  (`storedEntrySends`) when, on equal params, it keeps the route's own
+  segments (a search-only change); a held segment with `revalidate()` is
+  marked by what its rules read (`evaluateRevalidation`), as on a live walk. A scoped partial is marked `_payloadSourceScoped`
   ([server/request-context.ts](../../src/server/request-context.ts)) and sent
   `NOT_REUSED` by `rsc/rsc-rendering.ts`, and
   [cache/document-cache-policy.ts](../../src/cache/document-cache-policy.ts)

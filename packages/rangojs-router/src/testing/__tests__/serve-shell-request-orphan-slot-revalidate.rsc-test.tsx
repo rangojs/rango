@@ -215,15 +215,12 @@ function cases(): Case[] {
 
 /**
  * Whether `target` sends the slot: a slot the client lacks always, a held one
- * as its rule says. A bake HIT consults no rule (storedEntrySends) when the
- * params did not change, and sends a route's own segments whenever they did.
+ * as its rule says, with the params changed or not. A bake HIT sends a route's
+ * own segments whenever the params changed (storedEntrySends).
  */
-function sends(target: Target, { shape, navigation, held }: Case): boolean {
-  const byRule = held === "nothing" || shape.rule;
-  if (target !== "prerender") return byRule;
-  if (shape.placement === "path") return true;
-  if (navigation === PARAMS_KEPT) return held === "nothing";
-  return byRule;
+function sends(target: Target, { shape, held }: Case): boolean {
+  if (target === "prerender" && shape.placement === "path") return true;
+  return held === "nothing" || shape.rule;
 }
 
 describe("an orphan layout's parallel slot follows its revalidate() rules, live, from cache() and from a Prerender() bake", () => {

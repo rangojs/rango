@@ -99,8 +99,8 @@ const router = createRouter({}).routes(
           ],
         ),
         // The same template above server routes, the cart prerendered: its
-        // stored entry asks the template's revalidate() only when the params
-        // changed (cache-lookup.ts storedEntrySends).
+        // stored entry asks the template's revalidate() as a live walk does
+        // (cache-lookup.ts storedEntrySends).
         layout(
           (ctx) => <Template category={categoryOf(ctx.params)} />,
           () => [
@@ -253,7 +253,7 @@ describe("a prefetch a revalidate() answered from the source page", () => {
 });
 
 describe("a prefetch of a prerendered target served from its stored entry", () => {
-  it("held the template from a page with the same params, its revalidate() not asked: the answer is scoped to pages with those params", async () => {
+  it("held the template from a page with the same params, as its revalidate() said: the answer is scoped to pages with those params", async () => {
     const wishlist = await standingOn("/baked/wishlist");
     const category = await standingOn("/baked/c/audio");
     const template = templateOf(wishlist).id;
@@ -271,7 +271,8 @@ describe("a prefetch of a prerendered target served from its stored entry", () =
     const answer = await metadataOf(fromWishlist);
     expect(answer.matched).toContain(template);
     expect(answer.diff).not.toContain(template);
-    // Equal params decided the keep: every param is in the group.
+    // The rule read the source's params: a category page is not in the
+    // group.
     expect(scopeOf(fromWishlist)).toBe("params; $k=");
     expect(sharedWith(fromWishlist, category)).toBe(false);
   });
