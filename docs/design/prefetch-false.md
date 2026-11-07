@@ -2189,7 +2189,12 @@ the intercept source (`X-RSC-Router-Intercept-Source`) and names the source
 as the page it is sent from, since from the target itself nothing
 intercepts. In the fill the intercept's handler and layout do not run (the
 client holds the slot), only the loaders the client lacks run, and every
-target-chain entry the client does not hold is skipped. An intercept has no
+target-chain entry the client does not hold is skipped. Whatever source
+answers, the live walk, a `cache()` record or a prerender entry, the match
+pipeline's last step (`withInterceptFill` in
+`match-middleware/intercept-resolution.ts`) drops any segment outside the
+slot that the client lacks, since it lies outside the fill's `matched`; a
+stored source replays none of its handle values. An intercept has no
 middleware of its own; the target route's middleware runs on the prefetch and
 the fill alike, as on every pass.
 

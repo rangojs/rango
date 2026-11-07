@@ -7,7 +7,7 @@
  * MIDDLEWARE OVERVIEW
  * ===================
  *
- * The pipeline consists of 5 middleware layers, each with a specific role:
+ * The pipeline consists of 6 middleware layers, each with a specific role:
  *
  * +-------------------------------------------------------------------------+
  * |                         MIDDLEWARE PIPELINE                             |
@@ -37,10 +37,16 @@
  * |      Strategy: Direct cache if all components present                   |
  * |                Proactive cache if null components (via waitUntil)       |
  * |                                                                         |
- * |  [5] BACKGROUND REVALIDATION (outermost)                                |
+ * |  [5] BACKGROUND REVALIDATION                                            |
  * |      Purpose: SWR - serve stale, revalidate in background               |
  * |      Triggers: When state.shouldRevalidate === true                     |
  * |      Action: Async resolution via waitUntil(), updates cache            |
+ * |                                                                         |
+ * |  [6] INTERCEPT FILL (outermost)                                         |
+ * |      Purpose: A fill that resolves an intercept sends only what the     |
+ * |               client lacks of the intercept, whatever the source        |
+ * |      Triggers: An intercept's fill; any other request skips the layer   |
+ * |      Action: Drops a segment outside the slot the client lacks          |
  * |                                                                         |
  * +-------------------------------------------------------------------------+
  *
@@ -60,6 +66,10 @@
  *   - Passes through all segments unchanged
  *   - Triggers side effects based on state
  *
+ * Pattern 4: Filter Middleware (intercept-fill)
+ *   - Passes through what the response sends, after every producer and
+ *     observer: cache-store still sees the whole render
+ *
  *
  * STATE FLAGS
  * ===========
@@ -75,7 +85,10 @@
 
 export { withCacheLookup } from "./cache-lookup.js";
 export { withSegmentResolution } from "./segment-resolution.js";
-export { withInterceptResolution } from "./intercept-resolution.js";
+export {
+  withInterceptFill,
+  withInterceptResolution,
+} from "./intercept-resolution.js";
 export { withCacheStore } from "./cache-store.js";
 export { withBackgroundRevalidation } from "./background-revalidation.js";
 export type { GeneratorMiddleware } from "./cache-lookup.js";

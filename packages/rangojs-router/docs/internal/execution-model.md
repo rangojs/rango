@@ -260,7 +260,10 @@ flagged loaders (on an intent prefetch, those marked `false`) and nothing of
 the target chain: its plan's
 scope is built from the intercept entry alone. Its fill names the intercept's source, as a
 request from the open modal does, and skips every target-chain entry the
-client does not hold. A flagged `loading()` inside `intercept()` defers
+client does not hold: the walks skip it by entry id, so its handler and
+loaders never run, and the match pipeline's last step (`withInterceptFill`)
+drops any segment outside the slot that the client lacks, from whichever
+source, a stored one included. A flagged `loading()` inside `intercept()` defers
 nothing.
 
 Every other request kind is untouched by the flag: a document request, a navigation with no prefetch to adopt, an action revalidation, back/forward, a

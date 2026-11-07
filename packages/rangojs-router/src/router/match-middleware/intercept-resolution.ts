@@ -108,6 +108,30 @@ import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog } from "../logging.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
+import {
+  interceptFillSkips,
+  isInterceptFill,
+} from "../segment-resolution/prefetch-deferral.js";
+
+/**
+ * A fill that resolves an intercept sends only what the client lacks of the
+ * intercept (interceptFillSkips): a segment outside the slot that the client
+ * does not hold is outside the intercept's `matched`, and the browser merges
+ * a fill's loader segments into the held tree (fillHoles), so one outside
+ * `matched` would land there. The match pipeline's last step, so it holds for
+ * every segment source, a new one included. Any other request gets the
+ * source itself, with no generator in between.
+ */
+export function withInterceptFill<TEnv>(
+  ctx: MatchContext<TEnv>,
+): GeneratorMiddleware<ResolvedSegment> {
+  if (!isInterceptFill(ctx)) return (source) => source;
+  return async function* (source) {
+    for await (const segment of source) {
+      if (!interceptFillSkips(ctx, segment)) yield segment;
+    }
+  };
+}
 
 /**
  * Creates intercept resolution middleware

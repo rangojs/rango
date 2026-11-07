@@ -470,11 +470,22 @@ export function fillSends(
   return isFillRequest(ctx) ? !held.has(segmentId) : undefined;
 }
 
+/** The request is a fill that resolves an intercept (interceptFillSkips). */
+export function isInterceptFill(match: {
+  handlerContext: HandlerContext<any, any>;
+  isIntercept: boolean;
+}): boolean {
+  return match.isIntercept && isFillRequest(match.handlerContext);
+}
+
 /**
  * A fill that resolves an intercept sends only what the client lacks of the
- * intercept: a target-chain entry (by id) or stored segment it does not hold
- * lies outside the intercept's `matched` (match-result.ts), so the fill skips
- * it. The intercept's own segments are never skipped.
+ * intercept: a target-chain entry (by id) or a segment it does not hold lies
+ * outside the intercept's `matched` (match-result.ts), so the fill skips it.
+ * The intercept's own segments are never skipped. withInterceptFill, the
+ * match pipeline's last step, drops such a segment whatever produced it; the
+ * resolution walks ask by entry id only so as not to run its handler or
+ * loaders.
  */
 export function interceptFillSkips(
   match: {
