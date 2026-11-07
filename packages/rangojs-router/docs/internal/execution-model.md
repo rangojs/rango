@@ -171,6 +171,22 @@ in the middle of a navigation: reloading its URL, by a document load or a
 refresh, renders the main page. Pinned by the `intercept-boundary` e2e (both
 apps, dev and production).
 
+The other commits that re-render the entry on screen follow the refresh's
+location-state rule too. An action's refetch (`storeOnly`: the follow-up and
+the repairs) and Back's background revalidation (`cacheOnly`) write no entry
+of their own, but the state the page's handler sets on that render merges
+into the entry on screen and into what readers show, in the commit of the
+re-rendered tree; once the user has left that entry, it is dropped
+(`navigation-transaction.ts` `addServerState`). A redirect answering any of
+them (a refresh, an action's refetch, Back's revalidation) is followed as
+Back/Forward follows one, replacing the entry (`followServerRedirect`;
+`refetchRoute` in `server-action-bridge.ts`), unless the user already left
+the page. A shallow navigation (`revalidate: false`) starts
+no transaction, so it aborts by hand a pending navigation to the entry it
+leaves (a refresh, a Back/Forward, a follow-up), which would otherwise
+commit the old URL over it. Pinned by the `location-state.commit` e2e (both
+apps, dev and production).
+
 ### 5) Prefetch, then fill (`prefetch: false`, `prefetch: "intent"`)
 
 A prefetch is a partial request sent early (`X-Rango-Prefetch`), and the

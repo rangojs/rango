@@ -51,6 +51,7 @@ function createStore() {
 function createEventController() {
   return {
     abortNavigation: vi.fn(),
+    getCurrentNavigation: vi.fn((): { url: string } | null => null),
     getHandleState: vi.fn(() => ({ data: {} })),
     getHydrationSnapshot: vi.fn(() => undefined),
     commitLocationState: vi.fn(),
@@ -399,6 +400,73 @@ describe("navigation-bridge revalidate: false", () => {
 // else on this path. A navigation that never reaches it carried `state` for
 // nothing: no entry is pushed and no reader hears of it, whether the bridge
 // renders an error boundary or drops the navigation.
+// A shallow navigation starts no transaction, so it supersedes by hand what
+// a transaction would: a pending navigation to the entry it leaves.
+describe("navigation-bridge revalidate: false during a pending navigation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  function setup(pendingUrl: string) {
+    vi.stubGlobal("window", {
+      location: {
+        href: "http://localhost/products?color=red",
+        origin: "http://localhost",
+      },
+      history: { state: {}, pushState: vi.fn(), replaceState: vi.fn() },
+    });
+    const store = createStore();
+    const eventController = {
+      ...createEventController(),
+      getCurrentNavigation: vi.fn(() => ({ url: pendingUrl })),
+      setLocation: vi.fn(),
+    };
+    const bridge = createNavigationBridge({
+      store: store as any,
+      client: {} as any,
+      eventController: eventController as any,
+      onUpdate: vi.fn(),
+      renderSegments: vi.fn(async () => "tree"),
+    });
+    return { bridge, eventController };
+  }
+
+  it.each([
+    {
+      label: "a refresh of the entry it leaves",
+      pendingUrl: "http://localhost/products?color=red",
+    },
+    {
+      label: "a relative navigation to the entry it leaves",
+      pendingUrl: "/products?color=red",
+    },
+    {
+      label: "a navigation to the entry it leaves, at another hash",
+      pendingUrl: "http://localhost/products?color=red#reviews",
+    },
+  ])(
+    "aborts $label, leaving a committed navigation's fill",
+    async ({ pendingUrl }) => {
+      const { bridge, eventController } = setup(pendingUrl);
+
+      await bridge.navigate("/products?color=blue", { revalidate: false });
+
+      expect(eventController.abortNavigation).toHaveBeenCalledExactlyOnceWith(
+        true,
+      );
+    },
+  );
+
+  it("lets a pending navigation to another entry go on", async () => {
+    const { bridge, eventController } = setup("http://localhost/checkout");
+
+    await bridge.navigate("/products?color=blue", { revalidate: false });
+
+    expect(eventController.abortNavigation).not.toHaveBeenCalled();
+  });
+});
+
 describe("navigation-bridge location state on a navigation that does not commit", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1425,6 +1493,47 @@ describe("navigation-bridge an action's error boundary the entry shows", () => {
     expect(mode).toEqual({ type: "stale-revalidation", boundary: "L0R0" });
   });
 
+  it("Back's revalidation answered with a redirect follows it in place of the entry", async () => {
+    const { bridge } = setup([layout(), layoutLoader(), routeLoader()], {
+      stale: true,
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchPartialUpdateMock
+      .mockRejectedValueOnce(new ServerRedirect("/login", undefined))
+      .mockResolvedValue(undefined);
+
+    await bridge.handlePopstate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(2);
+    const [url, , , , tx] = fetchPartialUpdateMock.mock.calls[1];
+    expect(url).toBe("http://localhost/login");
+    expect(tx).toMatchObject({ replace: true });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("Back's revalidation of a page the user left follows no redirect", async () => {
+    const { bridge } = setup([layout(), layoutLoader(), routeLoader()], {
+      stale: true,
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const left = new AbortController();
+    left.abort();
+    createNavigationTransactionMock.mockReturnValue({
+      handle: { signal: left.signal },
+      with: (overrides: Record<string, unknown>) => ({ ...overrides }),
+      [Symbol.dispose]: vi.fn(),
+    });
+    fetchPartialUpdateMock.mockRejectedValueOnce(
+      new ServerRedirect("/login", undefined),
+    );
+
+    await bridge.handlePopstate();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
+  });
+
   it("Back onto a fresh entry: the page holds the ids above the boundary, with no request", async () => {
     const { bridge, store } = setup([layout(), action(error())]);
 
@@ -1590,6 +1699,63 @@ describe("navigation-bridge refresh commits onto the entry on screen", () => {
     expect(replaceState).not.toHaveBeenCalled();
     expect(pushState).not.toHaveBeenCalled();
     expect(eventController.commitLocationState).not.toHaveBeenCalled();
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: "router.refresh()", crossTab: false },
+    { label: "the cross-tab refresh", crossTab: true },
+  ])(
+    "$label answered with a redirect follows it as a replace navigation carrying its state",
+    async ({ crossTab }) => {
+      const { bridge, onUpdate } = setup();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      fetchPartialUpdateMock
+        .mockRejectedValueOnce(
+          new ServerRedirect("/login?expired=1", {
+            __rsc_ls_reason: "expired",
+          }),
+        )
+        .mockResolvedValueOnce(undefined);
+
+      await bridge.refresh(crossTab);
+
+      expect(fetchPartialUpdateMock).toHaveBeenCalledTimes(2);
+      const [url, segmentIds, , , tx] = fetchPartialUpdateMock.mock.calls[1];
+      expect(url).toBe("http://localhost/login?expired=1");
+      // _skipCache: the redirect target renders whole.
+      expect(segmentIds).toEqual([]);
+      expect(tx).toMatchObject({
+        url: "http://localhost/login?expired=1",
+        replace: true,
+        state: { __rsc_ls_reason: "expired" },
+      });
+      expect(onUpdate).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a refresh whose redirects loop ends in the error boundary", async () => {
+    const { bridge, onUpdate } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchPartialUpdateMock.mockRejectedValue(
+      new ServerRedirect("/page", undefined),
+    );
+    await bridge.refresh();
+    expect(fetchPartialUpdateMock.mock.calls.length).toBeGreaterThan(1);
+    expect(onUpdate).toHaveBeenCalled();
+  });
+
+  it("a refresh redirected to another origin follows nothing and shows no error", async () => {
+    const { bridge, onUpdate } = setup();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchPartialUpdateMock.mockRejectedValueOnce(
+      new ServerRedirect("https://evil.example/login", undefined),
+    );
+
+    await bridge.refresh();
+
+    expect(fetchPartialUpdateMock).toHaveBeenCalledOnce();
     expect(onUpdate).not.toHaveBeenCalled();
   });
 

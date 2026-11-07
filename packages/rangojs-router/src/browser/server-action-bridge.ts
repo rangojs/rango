@@ -56,6 +56,7 @@ import { classifyActionOutcome } from "./action-coordinator.js";
 import { revalidationErrorOf } from "../decode-loader-results.js";
 import { getAppVersion } from "./app-version.js";
 import { writePartialParams } from "./wire-protocol.js";
+import { ServerRedirect } from "../errors.js";
 import {
   decideCommitGatedOff,
   findActionFormData,
@@ -360,6 +361,7 @@ export function createServerActionBridge(
       { replace: true, skipLoadingState: true },
     );
     run?.started(navTx.handle);
+    let redirect: ServerRedirect | undefined;
     try {
       const error = await fetchPartialUpdate(
         window.location.href,
@@ -380,9 +382,20 @@ export function createServerActionBridge(
         },
       );
       return { started: true, error };
+    } catch (error) {
+      // The page on screen now redirects: followed as a refresh follows one,
+      // unless the user already left it. The redirect's render is whole, so
+      // it settles what this refetch was for.
+      if (!(error instanceof ServerRedirect) || navTx.handle.signal.aborted) {
+        throw error;
+      }
+      redirect = error;
+      return { started: true };
     } finally {
       navTx[Symbol.dispose]();
       run?.ended(navTx.handle.signal.aborted && !navTx.handle.completed);
+      // After ended(): the navigation it starts does not leave this refetch.
+      if (redirect) void dispatchRedirect(redirect.url, redirect.state);
     }
   }
 

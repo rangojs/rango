@@ -14,6 +14,7 @@ import {
   returnToEvictedEntry,
   expectConsole,
   runRefreshLocationStateTests,
+  runRevalidationLocationStateTests,
 } from "@shared/e2e";
 import { useFixture, type Fixture } from "./fixture";
 import {
@@ -1255,6 +1256,9 @@ function commitSuite(f: Fixture) {
   });
 
   runRefreshLocationStateTests({
+    url: () => f.url("/location-state/load-more"),
+  });
+  runRevalidationLocationStateTests({
     url: () => f.url("/location-state/load-more"),
   });
 }

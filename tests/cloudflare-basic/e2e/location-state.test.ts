@@ -13,6 +13,7 @@ import {
   expectReaderMountedDuringHeldNavigationReadsEntryOnScreen,
   returnToEvictedEntry,
   runRefreshLocationStateTests,
+  runRevalidationLocationStateTests,
 } from "@shared/e2e";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
@@ -401,6 +402,9 @@ function describeCommit(mode: "dev" | "build") {
     });
 
     runRefreshLocationStateTests({
+      url: () => f.url("/location-state-load-more"),
+    });
+    runRevalidationLocationStateTests({
       url: () => f.url("/location-state-load-more"),
     });
   });

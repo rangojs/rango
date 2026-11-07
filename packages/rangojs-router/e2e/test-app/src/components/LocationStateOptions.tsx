@@ -67,7 +67,8 @@ function shownUrlOf(url: string | URL): string {
  * page it is shown in.
  *
  * `lm-refresh`, `lm-action`, `lm-more-flash` and `lm-server-mark` drive the
- * router.refresh() cases.
+ * router.refresh() cases. `lm-shallow` moves to `&view=compact` on the same
+ * page with `revalidate: false`.
  */
 export function LoadMoreList({ basePath }: { basePath: string }) {
   const carried = useLocationState(CarriedItems) ?? [];
@@ -162,6 +163,17 @@ export function LoadMoreList({ basePath }: { basePath: string }) {
         onClick={() => void router.refresh()}
       >
         Refresh
+      </button>{" "}
+      <button
+        type="button"
+        data-testid="lm-shallow"
+        onClick={() =>
+          void router.push(`${basePath}?page=${data.page}&view=compact`, {
+            revalidate: false,
+          })
+        }
+      >
+        Compact view, no fetch
       </button>{" "}
       <button
         type="button"
