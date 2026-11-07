@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: after a server action, a browser that blocks cookies no longer shows data from before it
+### Fixed: after a server action, a browser that blocks cookies no longer shows data from before it ([#1395](https://github.com/rangojs/rango/pull/1395))
 
 **Before.** A server action without a directive changed the `X-Rango-State`
 value through its response's `Set-Cookie`. Where the page cannot keep that
