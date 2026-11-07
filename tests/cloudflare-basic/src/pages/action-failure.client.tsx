@@ -11,6 +11,7 @@ import {
   useSearchParams,
 } from "@rangojs/router/client";
 import {
+  actionFailureArchiveItem,
   actionFailureDeleteItem,
   actionFailureSlow,
   actionFailureSwitch,
@@ -258,6 +259,19 @@ export function ActionFailureItemPage(): ReactNode {
         }
       >
         Delete
+      </button>
+      <button
+        type="button"
+        data-testid="af-item-archive"
+        onClick={() =>
+          settle(
+            actionFailureArchiveItem(search.get("run") ?? "none", id).then(
+              (result) => result.archived,
+            ),
+          )
+        }
+      >
+        Archive
       </button>
       <output data-testid="af-item-outcome">{outcome}</output>
     </div>

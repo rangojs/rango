@@ -313,6 +313,35 @@ export function runActionFailureTests(
     await expectKept(page, "af-items-layout");
   });
 
+  // An archive action whose item loader then throws notFound(): the route's
+  // notFoundBoundary() takes the route's content in place, under the route's
+  // loader error boundary, and the layout above keeps its instance. In dev
+  // the console guard fails the test on a wrapper-chain drift (I5).
+  test("urls() route: a loader that throws notFound() on its rerun after an archive action renders its notFoundBoundary() in place, and the layout keeps its instance", async ({
+    page,
+  }) => {
+    const run = randomUUID();
+    const itemUrl = `${options.serverPath}/items/8?run=${run}`;
+    await page.goto(options.url(itemUrl));
+    await expect(page.getByTestId("af-item-name")).toHaveText("item 8");
+    await page.waitForFunction(() =>
+      document.documentElement.hasAttribute("data-hydrated"),
+    );
+    await mark(page, "af-items-layout");
+
+    await page.getByTestId("af-item-archive").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-af-outcome",
+      "resolved:8",
+    );
+    await expect(page.getByTestId("af-item-gone")).toHaveText(
+      "The item is archived",
+    );
+    await expect(page.getByTestId("af-item")).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/items/8\\?run=${run}$`));
+    await expectKept(page, "af-items-layout");
+  });
+
   const data = [
     { name: "clientUrls() group", base: options.clientPath },
     { name: "urls() route", base: options.serverPath },
