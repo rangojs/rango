@@ -217,19 +217,16 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               ? (handler.handler as Handler<any, any, TEnv>)
               : () => handler;
 
-    // Capture namespace prefix on a Static handler for build-time reverse()
-    // resolution (the last-mount identity the collector falls back to), then
-    // record this mount: one artifact per (definition, mount scope), and the
-    // entry carries that artifact's key (staticArtifactKey).
+    // One artifact per (definition, mount scope): record this mount's bake scope
+    // (staticArtifactKey) for the entry, plus the namespace prefix the collector
+    // falls back to for a definition no DSL position mounted.
+    let staticArtifactId: string | undefined;
     if (isStaticHandler(handler) && handler.$$id) {
       if (ctx.namePrefix) {
         (handler as any).$$routePrefix = ctx.namePrefix;
       }
+      staticArtifactId = stampStaticDefScope(handler, routeName);
     }
-    const staticArtifactId =
-      isStaticHandler(handler) && handler.$$id
-        ? stampStaticDefScope(handler, routeName)
-        : undefined;
 
     const entry = {
       ...emptySegmentBase(),

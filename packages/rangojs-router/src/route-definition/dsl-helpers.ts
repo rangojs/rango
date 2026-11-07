@@ -1170,15 +1170,16 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const isStatic = isStaticHandler(handler);
   const unwrappedHandler = isStatic ? handler.handler : handler;
 
-  // Capture namespace prefix on static handler for build-time reverse() resolution
-  // (the last-mount identity the collector falls back to for an unmounted def).
-  if (isStatic && handler.$$id && ctx.namePrefix) {
-    (handler as any).$$routePrefix = ctx.namePrefix;
+  // One artifact per (definition, mount scope): record this mount's bake scope
+  // (staticArtifactKey) for the entry, plus the namespace prefix the collector
+  // falls back to for a definition no DSL position mounted.
+  let staticArtifactId: string | undefined;
+  if (isStatic && handler.$$id) {
+    if (ctx.namePrefix) {
+      (handler as any).$$routePrefix = ctx.namePrefix;
+    }
+    staticArtifactId = stampStaticDefScope(handler);
   }
-  // One artifact per (definition, mount scope): the mount records its bake
-  // scope, and the entry carries that artifact's key (staticArtifactKey).
-  const staticArtifactId =
-    isStatic && handler.$$id ? stampStaticDefScope(handler) : undefined;
 
   const urlPrefix = getUrlPrefix();
   const entry = {

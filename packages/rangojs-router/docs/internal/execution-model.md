@@ -2566,10 +2566,15 @@ Limits:
   resolve per mount, as they do live. Mounts in the same scope compose one key
   and share one artifact. The key holds only values both sides reproduce: the
   runtime rebuilds a route's entries per request (`router/manifest.ts`), where
-  the include's name prefix is exact but the mount's root scope is not yet
-  (build says scoped, runtime says root for a named include under a transparent
-  one). Root scope is still a bake input, so the nested-include limit above
-  holds per mount.
+  the include's name prefix is exact but the mount's root scope is not — build
+  discovery evaluates each include from a root store, so a named include under
+  a transparent one is stamped scoped, while the request-time rebuild restores
+  the captured parent scope and stamps the same mount root. Root scope is not a
+  bake input either: the mount records it for the bake's synthetic request
+  context (`renderStaticSegment`'s `reverse`) only, and the handler's own
+  `ctx.reverse` resolves root scope from the route registry
+  (`createStaticContext`), so no artifact's links depend on it. The
+  nested-include limit above holds per mount.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,

@@ -98,7 +98,13 @@ export interface StaticMount {
    * undefined only for a definition no DSL position mounted.
    */
   routeName: string | undefined;
-  /** getRootScoped() where the mount sits: the bake's bare-name fallback. */
+  /**
+   * getRootScoped() where the mount sits. Reaches the bake's synthetic request
+   * context (`renderStaticSegment`'s `reverse`) only: the handler's own
+   * `ctx.reverse` resolves root scope from the route registry
+   * (`createStaticContext`), so the artifact's links do not depend on it, and it
+   * stays out of `staticArtifactKey`.
+   */
   rootScoped: boolean | undefined;
   /** The mounting router, whose route map the bake resolves against. */
   routerId: string | undefined;
@@ -120,11 +126,14 @@ export interface StaticMount {
  * stamps it under the router's own evaluation store, and the runtime rebuilds
  * the route's entries per request (router/manifest.ts), where the include's
  * name prefix is the value both paths reproduce exactly. The mount's root scope
- * is a bake input, not part of the key: the two paths still disagree about it
- * for a named include nested under a transparent one (build says scoped,
- * runtime says root), and the runtime could not tell such mounts apart anyway.
- * Two mounts that share a key therefore share one artifact — as every mount of
- * a definition did before, so this never regresses one.
+ * stays out: it reaches the bake's synthetic request context only (the
+ * handler's `ctx.reverse` reads the route registry, `createStaticContext`), and
+ * the two paths disagree about it anyway — build discovery evaluates each
+ * include from a root store, so a named include under a transparent one is
+ * stamped scoped, while the request-time rebuild restores the captured parent
+ * scope and stamps it root. Two mounts that share a key therefore share one
+ * artifact — as every mount of a definition did before, so this never regresses
+ * one.
  *
  * Every value is percent-encoded, so a route name or router id containing "::"
  * cannot compose another mount's key (a collision would serve the wrong
