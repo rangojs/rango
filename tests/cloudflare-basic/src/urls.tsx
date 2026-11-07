@@ -423,6 +423,7 @@ import {
 } from "./pages/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
 import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
+import { prefetchPreloadsPatterns } from "./pages/prefetch-preloads.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
 import clientUrlsLoaderElementPatterns from "./client-urls-loader-element/urls.js";
@@ -1250,6 +1251,11 @@ export const urlpatterns = urls(
         // entry, the document cache (e2e/prefetch-stored.test.ts).
         include("/prefetch-stored", prefetchStoredPatterns, {
           name: "prefetchStored",
+        }),
+        // A viewport prefetch holds its page's image preloads until the click
+        // (e2e/prefetch-preloads.test.ts).
+        include("/prefetch-preloads", prefetchPreloadsPatterns, {
+          name: "prefetchPreloads",
         }),
         // Group behind a 5s middleware: pins optimistic presentation vs the
         // gated canonical request (e2e/client-urls-slow.test.ts). The landing

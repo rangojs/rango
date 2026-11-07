@@ -190,6 +190,7 @@ import {
 } from "./urls/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./urls/doc-cache-source.js";
 import { prefetchStoredPatterns } from "./urls/prefetch-stored.js";
+import { prefetchPreloadsPatterns } from "./urls/prefetch-preloads.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
 import { prefetchRenderErrorsPatterns } from "./urls/prefetch-render-errors.js";
@@ -1144,6 +1145,11 @@ export const urlpatterns = urls(
       // entry, the document cache (e2e/prefetch-stored.test.ts).
       include("/prefetch-stored", prefetchStoredPatterns, {
         name: "prefetchStored",
+      }),
+      // A viewport prefetch holds its page's image preloads until the click
+      // (e2e/prefetch-preloads.test.ts).
+      include("/prefetch-preloads", prefetchPreloadsPatterns, {
+        name: "prefetchPreloads",
       }),
       // Action revalidation over a clientUrls group: the group's projected
       // loaders re-run on the action follow-up (route-owned default true);
