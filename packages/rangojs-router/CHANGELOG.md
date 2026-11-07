@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a build after adding a route that a `Static()` or `Prerender()` handler links to no longer fails with `Unknown route`
+
+**Before.** The build-time bake resolved route names against the committed
+`<router>.named-routes.gen.ts`, which the build rewrites only after the bake
+has run. A route added inside an `include()` since the last write of that
+file was unknown to the bake: `ctx.reverse(".settings")` in a `Static()` or
+`Prerender()` handler failed `vite build` with
+`Unknown route: ".settings"`, and `router.reverse("admin.settings")` baked the
+link as `/__unresolved_reverse/admin.settings`. Dev resolved both. A name the
+gen file still held after its route was removed resolved at build while the
+deployed worker threw for it.
+
+**Now.** The bake resolves against the route map the build discovered from
+the route tree, the one it then writes to the gen file. A newly added route
+resolves on the first build, with no hand edit of the gen file. A name the
+router does not have, a removed route's included, now fails the bake with
+`Unknown route` from both `ctx.reverse` and `router.reverse`, as it fails at
+runtime; `router.reverse` no longer bakes an `/__unresolved_reverse/...` link
+for it. A `router.reverse` call at module level, before the build has
+discovered the routes, still returns that placeholder. The build still
+rewrites the gen file afterwards, so commit it as before: the route-name types
+come from it.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

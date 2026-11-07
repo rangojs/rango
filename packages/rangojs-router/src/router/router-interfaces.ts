@@ -566,6 +566,13 @@ export interface RangoInternal<
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
+   * Build-time discovery hands the router the route map it generated, before
+   * the Static/Prerender bake, so the bake's reverse does not resolve against
+   * a stale `named-routes.gen.ts` seed.
+   */
+  adoptDiscoveredRouteMap(routeMap: Record<string, string>): void;
+
+  /**
    * Preview match - returns the route, its params and route middleware
    * without segment resolution.
    */
