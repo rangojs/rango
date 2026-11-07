@@ -23,7 +23,12 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import {
+  scopeReverse,
+  type EntryData,
+  type InterceptEntry,
+  type ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -658,6 +663,13 @@ export async function matchForPrerender<TEnv = any>(
  * Creates a minimal BuildContext, calls the handler, and RSC-serializes
  * the component. Returns the encoded Flight string (or null on failure).
  * Used by the Vite plugin to collect static segment data at build time.
+ *
+ * `reverseScope` is the layout()/parallel() mount's dot-local scope
+ * (StaticMount.reverseScope): both the handler's ctx.reverse and the synthetic
+ * request context's reverse resolve `.name` through it, as the live handler's
+ * do via withReverseScope. Without it a nested include's name prefix is read as
+ * a route name and loses its last segment, and a root-scope mount has no prefix
+ * to resolve against at all.
  */
 export async function renderStaticSegment<TEnv = any>(
   handler: Function,
@@ -668,12 +680,27 @@ export async function renderStaticSegment<TEnv = any>(
   devMode?: boolean,
   routerId?: string,
   rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
 
   // Create a HandleStore to capture handle data pushed during rendering
   const handleStore = createHandleStore();
+
+  // Def-stamped value first: the collector passes the mount-time root-scope
+  // captured on the Static definition (stampStaticDefScope), which needs no
+  // registry lookup and survives name-prefix arguments.
+  const bakeRootScoped =
+    reverseScope?.rootScoped ??
+    rootScoped ??
+    (routeName ? isRouteRootScoped(routeName, routerId) : undefined);
+  // scopeReverse returns the plain reverse for a mount with no scope, so a
+  // path() mount keeps route-name resolution here as it does live.
+  const bakeReverse = scopeReverse(
+    createReverseFunction(mergedRouteMap, routeName, {}, bakeRootScoped),
+    reverseScope,
+  );
 
   // Minimal request context so setupBuildUse can find the HandleStore
   const stubRes = new Response(null, { status: 200 });
@@ -719,16 +746,7 @@ export async function renderStaticSegment<TEnv = any>(
     _renderBarrier: Promise.resolve(),
     _resolveRenderBarrier: () => {},
     _reportedErrors: new WeakSet<object>(),
-    reverse: createReverseFunction(
-      mergedRouteMap,
-      routeName,
-      {},
-      // Def-stamped value first: the collector passes the mount-time
-      // root-scope captured on the Static definition (stampStaticDefScope),
-      // which needs no registry lookup and survives name-prefix arguments.
-      rootScoped ??
-        (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
-    ),
+    reverse: bakeReverse,
     // Scope the bake context's own lookups (createStaticContext reads it
     // through the request ALS) per router as well.
     _routerId: routerId,
@@ -741,6 +759,7 @@ export async function renderStaticSegment<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      reverseScope,
     );
 
     // Set segment ID so handle pushes are keyed correctly

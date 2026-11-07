@@ -126,6 +126,13 @@ export async function loadManifest(
     // request takes its document-mode copy (getDocumentModeEntry, #1179).
     const lazyContext =
       entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
+    // The router this entry belongs to, so the DSL this rebuild re-evaluates
+    // scopes what it registers per router exactly as build discovery does:
+    // search schemas and route root scope (path() passes ctx.routerId to both),
+    // and the per-mount Static artifact key (stampStaticDefScope). Without it a
+    // Static() mount composed its key with no router and never matched the
+    // manifest the build wrote.
+    Store.routerId = entry.routerId ?? lazyContext?.routerId;
     const capturedParent =
       (lazyContext?.parent as EntryData | null | undefined) ?? Store.parent;
     const parentForContext = lazyContext

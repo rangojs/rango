@@ -217,6 +217,17 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
               ? (handler.handler as Handler<any, any, TEnv>)
               : () => handler;
 
+    // One artifact per (definition, mount scope): record this mount's bake scope
+    // (staticArtifactKey) for the entry, plus the namespace prefix the collector
+    // falls back to for a definition no DSL position mounted.
+    let staticArtifactId: string | undefined;
+    if (isStaticHandler(handler) && handler.$$id) {
+      if (ctx.namePrefix) {
+        (handler as any).$$routePrefix = ctx.namePrefix;
+      }
+      staticArtifactId = stampStaticDefScope(handler, routeName);
+    }
+
     const entry = {
       ...emptySegmentBase(),
       id: namespace,
@@ -244,7 +255,7 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
       ...(isStaticHandler(handler)
         ? {
             isStaticPrerender: true as const,
-            ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}),
+            ...(staticArtifactId ? { staticHandlerId: staticArtifactId } : {}),
           }
         : {}),
       ...(resolveResponseType(options)
@@ -256,13 +267,6 @@ export function createPathHelper<TEnv>(): PathFn<TEnv> {
         ? { ppr: options.ppr }
         : {}),
     };
-
-    if (isStaticHandler(handler) && handler.$$id) {
-      if (ctx.namePrefix) {
-        (handler as any).$$routePrefix = ctx.namePrefix;
-      }
-      stampStaticDefScope(handler, routeName);
-    }
 
     invariant(
       ctx.manifest.get(routeName) === undefined,

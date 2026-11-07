@@ -39,6 +39,7 @@ import {
   getContext,
   RangoContext,
   type MetricsStore,
+  type ReverseScope,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import {
@@ -763,6 +764,7 @@ export function createRouter<TEnv = any>(
     buildEnv?: TEnv,
     devMode?: boolean,
     rootScoped?: boolean,
+    reverseScope?: ReverseScope,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
@@ -773,6 +775,7 @@ export function createRouter<TEnv = any>(
       devMode,
       routerId,
       rootScoped,
+      reverseScope,
     );
   }
 
