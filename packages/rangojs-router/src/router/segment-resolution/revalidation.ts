@@ -34,7 +34,11 @@ import type {
 } from "../../types";
 import type { SegmentRevalidationResult } from "../types.js";
 import type { InterceptResult } from "../router-context.js";
-import { FRESH, type ResolutionPass } from "./resolution-pass.js";
+import {
+  FRESH,
+  streamsUnderLoading,
+  type ResolutionPass,
+} from "./resolution-pass.js";
 import {
   debugLog,
   pushRevalidationTraceEntry,
@@ -821,18 +825,22 @@ async function resolveParallelSlotComponent<TEnv>(
       handlerRan = true;
       const slotContext = withReverseScope(context, parallelEntry.reverseScope);
       const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
+      // A returned Response (redirect()) is thrown as a route handler's is
+      // (handleHandlerResult), outside the handler's span.
       const run = () =>
         typeof handler !== "function"
           ? handler
-          : observeSegmentHandler(
-              parallelId,
-              `${parallelEntry.id}.${slot}`,
-              handler,
-              slotContext,
+          : handleHandlerResult(
+              observeSegmentHandler(
+                parallelId,
+                `${parallelEntry.id}.${slot}`,
+                handler,
+                slotContext,
+              ),
             );
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
-        if (hasLoadingFallback) {
+        if (hasLoadingFallback && streamsUnderLoading(pass)) {
           const result = runAsSegment(parallelId, run);
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
@@ -1183,7 +1191,7 @@ async function resolveRouteComponent<TEnv>(
   pass: ResolutionPass<TEnv>,
   entry: Extract<EntryData, { type: "route" }>,
 ): Promise<ReactNode | { content: ReactNode }> {
-  const { context, params, routeKey, actionContext } = pass;
+  const { context, params, routeKey } = pass;
   // A static hit runs no handler: no handler metric, no span.
   const staticComponent = await tryStaticHandler(entry, entry.shortCode);
   if (staticComponent !== undefined) return staticComponent;
@@ -1200,7 +1208,7 @@ async function resolveRouteComponent<TEnv>(
     doneHandler();
     return result;
   }
-  if (!actionContext) {
+  if (streamsUnderLoading(pass)) {
     const result = handleHandlerResult(
       runAsSegment(entry.shortCode, () =>
         observeSegmentHandler(entry.shortCode, entry.id, handler, context),

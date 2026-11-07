@@ -358,6 +358,7 @@ import heldHandlesClientPatterns from "./pages/held-handles.client-urls.js";
 import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
 import { actionBoundaryPatterns } from "./pages/action-boundary.js";
 import { interceptBoundaryPatterns } from "./pages/intercept-boundary.js";
+import { slotRedirectPatterns } from "./pages/slot-redirect.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -3269,6 +3270,11 @@ export const urlpatterns = urls(
         // errorBoundary() (intercept-boundary.test.ts).
         include("/intercept-boundary", interceptBoundaryPatterns, {
           name: "interceptBoundary",
+        }),
+        // An intercept and parallel slots whose handlers return redirect()
+        // (slot-redirect.test.ts).
+        include("/slot-redirect", slotRedirectPatterns, {
+          name: "slotRedirect",
         }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.

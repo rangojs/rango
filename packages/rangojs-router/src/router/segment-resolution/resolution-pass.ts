@@ -83,6 +83,21 @@ export interface ResolutionPass<TEnv = any> extends ResolutionPassInput<TEnv> {
 }
 
 /**
+ * Whether a handler that declares loading() streams its result in this pass:
+ * never on an action. An action awaits every handler before it answers, so a
+ * redirect a handler returns or throws is the action's response (204 +
+ * X-RSC-Redirect); streamed, it would surface only inside the 200's payload.
+ * The route (resolveRouteComponent), parallel slot (resolveParallelSlotComponent)
+ * and intercept (resolveInterceptEntry) lanes all ask here: deciding it per
+ * lane let an intercept and a slot stream on an action while the route awaited.
+ */
+export function streamsUnderLoading(
+  pass: Pick<ResolutionPassInput, "actionContext">,
+): boolean {
+  return !pass.actionContext;
+}
+
+/**
  * The input of a full match's pass (FRESH). At build time the prerender
  * context's `request` is a throwing getter (handler-context.ts
  * createPrerenderContext): the pass carries undefined instead.

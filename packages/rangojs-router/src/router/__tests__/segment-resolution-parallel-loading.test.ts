@@ -206,10 +206,12 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
-    expect(result.segments[0]?.component).toBe(deferred.promise);
+    // Streamed: the handler's promise, through handleHandlerResult.
+    const component = result.segments[0]?.component;
+    expect(component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(component).resolves.toBe("done");
   });
 
   it("does not await orphan parallel handler promise in revalidation path when loading is set", async () => {
@@ -264,10 +266,10 @@ describe("segment-resolution parallel loading", () => {
     const parallelSegment = result.segments.find((s) => s.type === "parallel");
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(parallelSegment).toBeDefined();
-    expect(parallelSegment?.component).toBe(deferred.promise);
+    expect(parallelSegment?.component).toBeInstanceOf(Promise);
 
     deferred.resolve("done");
-    await deferred.promise;
+    await expect(parallelSegment?.component).resolves.toBe("done");
   });
 
   it("awaits parallel handler when loading is explicitly false", async () => {
@@ -329,6 +331,115 @@ describe("segment-resolution parallel loading", () => {
     expect(slotHandler).toHaveBeenCalledTimes(1);
     expect(result.segments).toHaveLength(1);
     expect(result.segments[0]?.type).toBe("parallel");
+  });
+
+  describe("a slot handler's redirect, as a route handler's", () => {
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+    function layoutWithSlot(handler: unknown, loading: unknown) {
+      return {
+        id: "blog.layout",
+        type: "layout",
+        shortCode: "L0",
+        handler: "layout",
+        loader: [],
+        layout: [],
+        parallel: [{ ...createParallelEntry(handler), loading }],
+        intercept: [],
+        middleware: [],
+        revalidate: [],
+        errorBoundary: [],
+        notFoundBoundary: [],
+      } as any;
+    }
+    function partialPass(context: any, actionContext?: object) {
+      return {
+        context,
+        client: new Set<string>(),
+        params: {},
+        prevParams: {},
+        request: context.request,
+        prevUrl: context.url,
+        nextUrl: context.url,
+        routeKey: "/blog",
+        deps,
+        ...(actionContext ? { actionContext } : {}),
+      };
+    }
+    const redirectTo = () =>
+      new Response(null, { status: 302, headers: { Location: "/x" } });
+    const isRedirect = (r: unknown) =>
+      r instanceof Response && r.headers.get("Location") === "/x";
+
+    it.each([
+      ["sync, no loading()", () => redirectTo(), false],
+      ["async, no loading()", async () => redirectTo(), false],
+      ["sync, loading()", () => redirectTo(), "sidebar-loading"],
+    ])(
+      "a returned Response (%s) is thrown, never rendered",
+      async (_, handler, loading) => {
+        const context = createContext();
+        await expect(
+          resolveParallelSegments(
+            partialPass(context),
+            layoutWithSlot(handler, loading),
+            false,
+          ),
+        ).rejects.toSatisfy(isRedirect);
+        await expect(
+          resolveParallelSegments(
+            makeFreshPass(context, deps, { routeKey: "/blog", params: {} }),
+            layoutWithSlot(handler, loading),
+            false,
+          ),
+        ).rejects.toSatisfy(isRedirect);
+      },
+    );
+
+    it("an async one under loading() streams as a rejection on a navigation", async () => {
+      const context = createContext();
+      const result = await resolveParallelSegments(
+        partialPass(context),
+        layoutWithSlot(async () => redirectTo(), "sidebar-loading"),
+        false,
+      );
+      await expect(result.segments[0]?.component).rejects.toSatisfy(isRedirect);
+    });
+
+    it.each([
+      ["returned", async () => redirectTo()],
+      [
+        "thrown",
+        async () => {
+          throw redirectTo();
+        },
+      ],
+    ])(
+      "an action awaits a loading() slot, so a %s one rejects the resolution",
+      async (_, handler) => {
+        const context = createContext();
+        await expect(
+          resolveParallelSegments(
+            partialPass(context, { actionId: "src/a.ts#act" }),
+            layoutWithSlot(handler, "sidebar-loading"),
+            false,
+          ),
+        ).rejects.toSatisfy(isRedirect);
+      },
+    );
+
+    it("an action hands a loading() slot's content settled", async () => {
+      const context = createContext();
+      const result = await resolveParallelSegments(
+        partialPass(context, { actionId: "src/a.ts#act" }),
+        layoutWithSlot(async () => "sidebar body", "sidebar-loading"),
+        false,
+      );
+      expect(result.segments[0]?.component).toBe("sidebar body");
+    });
   });
 
   describe("static slot value with loading false", () => {

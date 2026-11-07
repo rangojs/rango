@@ -298,12 +298,25 @@ beforeAll(async () => {
 type Projected = Record<string, unknown>;
 
 /**
- * A value as data the two walks can be compared on: promises settled, an
- * element as its type, key and props, collections by their entries, a
- * function by its name.
+ * A value as data the two walks can be compared on: promises settled (a
+ * rejection by its reason, a Response by its status), an element as its type,
+ * key and props, collections by their entries, a function by its name.
  */
 async function settled(value: unknown): Promise<unknown> {
-  if (value instanceof Promise) return { promise: await settled(await value) };
+  if (value instanceof Promise) {
+    let resolved: unknown;
+    try {
+      resolved = await value;
+    } catch (reason) {
+      return {
+        rejected:
+          reason instanceof Response
+            ? { status: reason.status }
+            : String(reason),
+      };
+    }
+    return { promise: await settled(resolved) };
+  }
   if (isValidElement(value)) {
     const type = value.type as string | { name?: string };
     return {
@@ -538,7 +551,17 @@ function walkRevalidating(
 
 /** The text a rendered value shows: its strings, elements unwrapped. */
 async function textOf(node: unknown): Promise<string> {
-  if (node instanceof Promise) return textOf(await node);
+  if (node instanceof Promise) {
+    let resolved: unknown;
+    try {
+      resolved = await node;
+    } catch (reason) {
+      return reason instanceof Response
+        ? `rejected: Response ${reason.status}`
+        : `rejected: ${String(reason)}`;
+    }
+    return textOf(resolved);
+  }
   if (typeof node === "string" || typeof node === "number") return `${node}`;
   if (Array.isArray(node)) {
     return (await Promise.all(node.map(textOf))).join("");
@@ -1284,7 +1307,9 @@ const CASES: Case[] = [
       "M0L0 layout",
       'M0L0L0 layout "root"',
       'M0L0L0L4 layout "response slot"',
-      "M0L0L0L4.@response parallel",
+      // Streamed: the returned Response rejects the slot's content, as a
+      // route handler's does (handleHandlerResult).
+      'M0L0L0L4.@response parallel "rejected: Response 204"',
       'M0L0L0L4R0 route "slot response"',
     ],
     expected: {},

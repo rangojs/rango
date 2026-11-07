@@ -421,12 +421,15 @@ layout has no routes of its own, too: the lookup continues at the layout that
 holds it and that layout's ancestors. The intercepted route's own
 boundaries are not consulted: the modal renders in the declaring layout's slot,
 not in the route. On a handler error the modal layout and the background page
-stay mounted, and the status is 500 / 404. A thrown `Response` (`redirect()`)
-still short-circuits the navigation.
+stay mounted, and the status is 500 / 404. A thrown or returned `Response`
+(`redirect()`) still short-circuits the navigation, as a route handler's does.
 
 With `loading()`, an async handler streams after the response has started, so
-its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
-in a client error boundary.
+its rejection is not caught on the server, and a `redirect()` it returns lands
+in the stream instead of redirecting (see `/route`, "Redirects"). Wrap the modal
+layout's `<Outlet />` in a client error boundary. A server action called from
+the open modal is the exception: its revalidation awaits the handler, so an
+error renders the boundary and a `redirect()` redirects.
 
 An `errorBoundary()` or `notFoundBoundary()` placed directly in the intercept's
 `use()` (or returned from its handler's `.use`) throws at definition time. Put

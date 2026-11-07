@@ -621,6 +621,9 @@ path(
 > so the redirect is rendered into the RSC stream instead of becoming an HTTP
 > redirect. For a real HTTP redirect, issue it from `middleware` or a
 > **synchronous** handler return — pre-stream redirect authority belongs there.
+> A server action's revalidation is the exception: it awaits every handler, so
+> there the redirect is the action's answer. A `parallel()` slot or
+> `intercept()` handler follows the same rules, returned or thrown.
 > (A loader `throw redirect()` also navigates the user, but it is ALWAYS a
 > client-side replace on document loads — 200 document, never a 302; see
 > `/loader` → "Loader Authority". Dev logs a warning if this is hit.)
