@@ -87,16 +87,19 @@ row). The intercept handler re-runs on every request that resolves the
 intercept, except a fill (flow 5) in which the client holds the slot: there
 neither the handler nor the intercept's layout runs, only the loaders the
 client lacks run. A runtime `cache()` hit or a `Prerender()` target serves the
-stored slot and resolves only its loaders. The browser folds the
-loader segments back onto the slot before it builds the tree
-(`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal
-keeps its element tree.
+stored slot and resolves only its loaders. The browser's tree walk hands the
+loader segments to the slot, never to the slot's parent, whatever the parent
+renders (`segment-system.tsx` `segmentTreeWalk`, `slotLoaderFields`), so the
+page under the modal keeps its element tree.
 
 The page under an intercept never renders on an intercept request: the
-route entry is skipped (`router/segment-resolution/revalidation.ts`), and
-`matched` lists it only from the ids the request held (`interceptMatched`,
-`browser/intercept-utils.ts`). A request that held no segments gets the
-layouts and the slot back. That is what every redirect followed as a
+route entry is skipped and not listed (`resolveAllSegments`,
+`router/segment-resolution/revalidation.ts`), and `matched` lists the page
+only from the ids the request held (`interceptMatched`,
+`browser/intercept-utils.ts`), then the slot's ids as the funnel returns them
+(`resolveInterceptEntry`'s `matchedIds`: the slot, then every loader segment,
+run or not). A request that held no segments gets the layouts and the slot
+back, listed by the same walk. That is what every redirect followed as a
 navigation sends (an action's, a navigation's, a `prefetch: false` fill's),
 and a Back/Forward revalidation of an entry whose handles were pending, a
 retry, and the dev HMR refetch. The browser keeps the page

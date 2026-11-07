@@ -115,7 +115,7 @@ export interface RouterContext<TEnv = any> {
     entry: EntryData,
     belongsToRoute: boolean,
     options?: { background?: boolean },
-  ) => Promise<ResolvedSegment[]>;
+  ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 
   evaluateRevalidation: (
     params: EvaluateRevalidationOptions<TEnv>,
@@ -151,7 +151,7 @@ export interface RouterContext<TEnv = any> {
     intercept: InterceptEntry,
     entry: EntryData,
     belongsToRoute: boolean,
-  ) => Promise<ResolvedSegment[]>;
+  ) => Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }>;
 }
 
 const routerContext = new AsyncLocalStorage<RouterContext<any>>();

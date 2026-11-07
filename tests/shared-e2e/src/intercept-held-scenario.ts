@@ -9,8 +9,8 @@ import { expect, test, type Page } from "@playwright/test";
  *    action is called from it, or when a link in it opens another intercepted
  *    route whose modal reads them: an intercept's loaders are loader segments
  *    of its slot, each revalidated on its own, and the browser keeps the ones
- *    the server skipped (segment-system.tsx foldInterceptLoaders folds them
- *    onto the slot). The handler re-ran, and its render applies. Userland
+ *    the server skipped (segment-system.tsx segmentTreeWalk hands them to
+ *    the slot). The handler re-ran, and its render applies. Userland
  *    pins (router package):
  *    src/testing/__tests__/serve-shell-request-intercept-held-loaders.rsc-test.tsx,
  *    src/testing/__tests__/prefetch-false-intercept.rsc-test.tsx.

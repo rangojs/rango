@@ -48,7 +48,7 @@ vi.mock("../root-error-boundary.js", () => ({
   RootErrorBoundary: MockRootErrorBoundary,
 }));
 
-import { foldInterceptLoaders, renderSegments } from "../segment-system";
+import { renderSegments } from "../segment-system";
 import { Defer } from "../browser/defer";
 import { LoaderRedirect } from "../loader-redirect";
 import {
@@ -947,8 +947,8 @@ describe("segment-system", () => {
       });
 
       // An intercept's loaders are loader segments of its slot
-      // (router/intercept-resolution.ts); folded back onto the slot, the
-      // page under the modal keeps its element tree (foldInterceptLoaders).
+      // (router/intercept-resolution.ts); handed to the slot and never to its
+      // parent, the page under the modal keeps its element tree.
       const modalSegments = (
         loaderData: unknown[],
         loading?: ReactNode,
@@ -993,7 +993,7 @@ describe("segment-system", () => {
         return path;
       };
 
-      it("folds intercept loader segments onto their slot, not the parent's loader group", async () => {
+      it("hands intercept loader segments to their slot, not the parent's loader group", async () => {
         const result = await renderSegments(page(), {
           interceptSegments: modalSegments([{ a: 1 }, { b: 2 }]),
         });
@@ -1051,7 +1051,7 @@ describe("segment-system", () => {
         );
       });
 
-      it("folds a slot restored unsplit from the history cache (back/forward)", async () => {
+      it("hands the loaders of a slot restored unsplit from the history cache (back/forward) to the slot", async () => {
         const result = await renderSegments(
           [...page(), ...modalSegments([{ a: 1 }])],
           { forceAwait: true },
@@ -1062,12 +1062,89 @@ describe("segment-system", () => {
         expect(layout.props.parallel[0].loaderDataPromise).toEqual([{ a: 1 }]);
       });
 
-      it("hands back a list with nothing to fold as it is, synchronously", () => {
-        const plain = [
-          ...page(),
-          seg({ id: "L0D0.x", type: "loader", loaderId: "x" }),
+      it("hands the loaders of an unsplit slot with loading() to the slot, past the parallel-loading markers", async () => {
+        // restoreParallelLoaderMarkers tags a loader whose namespace matches
+        // a slot with loading(): an intercept's loaders share its slot's.
+        const result = await renderSegments(
+          [
+            ...page(),
+            seg({
+              id: "L0D0.own",
+              type: "loader",
+              loaderId: "own",
+              loaderData: { own: true },
+            }),
+            ...modalSegments([{ a: 1 }], "loading"),
+          ],
+          { forceAwait: true },
+        );
+        const layout = layoutOf(result);
+        expect(Object.keys(layout.props.loaderStreams)).toEqual(["own"]);
+        expect(layout.props.parallel[0].loaderIds).toEqual(["loader0"]);
+        expect(layout.props.parallel[0].loaderDataPromise).toEqual([{ a: 1 }]);
+      });
+
+      it("hands intercept loaders to the slot under a parent with loaders of its own and no loading()", async () => {
+        const result = await renderSegments(
+          [
+            seg({ id: "L0", type: "layout" }),
+            seg({
+              id: "L0D0.own",
+              type: "loader",
+              loaderId: "own",
+              loaderData: { own: true },
+            }),
+            seg({ id: "L0R0", type: "route" }),
+          ],
+          { interceptSegments: modalSegments([{ a: 1 }]) },
+        );
+        const layout = layoutOf(result);
+        expect(Object.keys(layout.props.loaderStreams)).toEqual(["own"]);
+        const [slot] = layout.props.parallel;
+        expect(slot.loaderIds).toEqual(["loader0"]);
+        expect(slot.loaderDataPromise).toEqual([{ a: 1 }]);
+      });
+
+      it("hands intercept loaders to the slot under a parent with loading()", async () => {
+        const withLoading = (): ResolvedSegment[] => [
+          seg({ id: "L0", type: "layout", loading: "layout-loading" }),
+          seg({
+            id: "L0D0.own",
+            type: "loader",
+            loaderId: "own",
+            loaderData: { own: true },
+          }),
+          seg({ id: "L0R0", type: "route" }),
         ];
-        expect(foldInterceptLoaders(plain, true)).toBe(plain);
+        const closed = await renderSegments(withLoading());
+        const open = await renderSegments(withLoading(), {
+          interceptSegments: modalSegments([{ a: 1 }]),
+        });
+        const boundary = findAll(toTreeNode(open), MockLoaderBoundary).find(
+          (b) => b.props.segment.id === "L0",
+        )!;
+        expect(boundary.props.loaderIds).toEqual(["own"]);
+        const [slot] = boundary.props.parallel;
+        expect(slot.loaderIds).toEqual(["loader0"]);
+        expect(slot.loaderDataPromise).toEqual([{ a: 1 }]);
+        const closedBoundary = findAll(
+          toTreeNode(closed),
+          MockLoaderBoundary,
+        ).find((b) => b.props.segment.id === "L0")!;
+        expect(chainTo(open, "L0")).toEqual(chainTo(closed, "L0"));
+        expect(boundary.key).toBe(closedBoundary.key);
+        expect(boundary.props.loaderIds).toEqual(
+          closedBoundary.props.loaderIds,
+        );
+      });
+
+      it("settles a slot with loading() whose loaders all paid the pre-flush await", async () => {
+        const segments = modalSegments([Promise.resolve({ a: 1 })], "loading");
+        segments[1] = { ...segments[1]!, awaitBeforeFlush: true };
+        const [slot] = layoutOf(
+          await renderSegments(page(), { interceptSegments: segments }),
+        ).props.parallel;
+        expect(slot.loaderDataPromise).toEqual([{ a: 1 }]);
       });
 
       it("attaches an intercept slot loader whose slot name contains an uppercase 'D'", async () => {
@@ -1534,7 +1611,7 @@ describe("segment-system", () => {
     });
 
     describe("parallel segment loaders", () => {
-      it("folds a slot-prefixed loader onto its slot, not the parent's loader list", async () => {
+      it("hands a slot-prefixed loader to its slot, not the parent's loader list", async () => {
         const segments: ResolvedSegment[] = [
           seg({ id: "L0", type: "layout" }),
           seg({ id: "L0R0", type: "route" }),
