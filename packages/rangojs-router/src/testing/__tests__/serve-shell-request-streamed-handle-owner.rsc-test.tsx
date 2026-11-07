@@ -431,6 +431,22 @@ async function LatePush({ ctx }: { ctx: any }) {
   return <p>late</p>;
 }
 
+/** The same, destructuring `use` off the ctx as a component may. */
+async function LatePushDetached({ ctx }: { ctx: any }) {
+  await wait("a timer");
+  const { use } = ctx;
+  use(Crumbs)("late");
+  return <p>late</p>;
+}
+
+/** The same, through a spread copy of the ctx. */
+async function LatePushCopy({ ctx }: { ctx: any }) {
+  await wait("a timer");
+  const copy = { ...ctx };
+  copy.use(Crumbs)("late");
+  return <p>late</p>;
+}
+
 /**
  * The segment each handler kind runs for, on the router that reaches it: a
  * component it hands its ctx to pushes after the walker moved its shared
@@ -444,6 +460,8 @@ const LATE_PUSH_SEGMENTS: ReadonlyArray<
   ["slot", "/late-slot", "M0L0L0R0.@side"],
   ["intercept", "/late-item/1", "M0L0L0.@modal"],
   ["intercept layout", "/late-item/1", "M0L0L0.@modal"],
+  ["layout, destructured use", "/late-layout", "M0L0L0"],
+  ["layout, spread copy", "/late-layout", "M0L0L0"],
 ];
 
 /** A router whose `kind` handler hands its ctx to LatePush. */
@@ -467,12 +485,20 @@ function latePushRouter(
   };
   switch (kind) {
     case "layout":
+    case "layout, destructured use":
+    case "layout, spread copy":
       // The route's handler runs after the layout's.
       return create(({ path, layout }) => [
         layout(
           (ctx: any) => (
             <main>
-              <LatePush ctx={ctx} />
+              {kind === "layout" ? (
+                <LatePush ctx={ctx} />
+              ) : kind === "layout, destructured use" ? (
+                <LatePushDetached ctx={ctx} />
+              ) : (
+                <LatePushCopy ctx={ctx} />
+              )}
             </main>
           ),
           () => [
