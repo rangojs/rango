@@ -56,7 +56,7 @@ function inProcessRuntimeCache(): VercelRuntimeCache {
 const swrRecordStore = new VercelCacheStore({ cache: inProcessRuntimeCache() });
 
 export const RefreshOutcomeLoader = createLoader(async (ctx) => {
-  answer(ctx.params.k);
+  answer(ctx.params.k ?? "");
   return { label: `record-loaded:${ctx.params.k}` };
 });
 
