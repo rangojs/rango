@@ -6,6 +6,7 @@ import {
   getNamePrefix,
   getUrlPrefix,
   peekShortCode,
+  type EntryData,
   type InterceptSelectorContext,
 } from "../server/context.js";
 import type {
@@ -25,6 +26,7 @@ import { toShouldRevalidateFn } from "../router/revalidation.js";
 import { isHoistedRevalidateRef } from "./hoisted-revalidate.js";
 import { getClientUrlRevalidator } from "./revalidate-registry.js";
 import { setLayoutLoaderCopies } from "./layout-loader-copies.js";
+import { chromeReadsOf } from "./chrome-reads.js";
 import {
   ClientUrlsGroupLayout,
   ClientUrlsInterceptLoading,
@@ -889,19 +891,30 @@ function materializeRouteItems(
         );
         return items;
       };
-    return projection.routes.map(
-      (route, routeIndex) =>
-        path(
-          route.pattern,
-          () =>
-            React.createElement(ClientUrlsRoot, {
-              definition: reference as ClientUrlPatterns,
-              routeId: route.id,
-              namePrefix,
-              ...foreignProp(),
-            }),
-          materializedPathOptions(route, clientGroup),
-          recordingCopies(routeIndex, () => [
+    return projection.routes.map((route, routeIndex) => {
+      // The route's entry in this DSL evaluation, whose ancestors are the
+      // group's chrome (chrome-reads.ts).
+      let entry: EntryData | undefined;
+      return path(
+        route.pattern,
+        (ctx) => {
+          // No entry means no chrome is known: no frame rather than one
+          // under chrome the commit may re-render.
+          const chrome = entry
+            ? chromeReadsOf(entry, ctx.params, ctx, ctx.url, ctx.routeName)
+            : "any";
+          return React.createElement(ClientUrlsRoot, {
+            definition: reference as ClientUrlPatterns,
+            routeId: route.id,
+            namePrefix,
+            ...foreignProp(),
+            ...(chrome === undefined ? {} : { chrome }),
+          });
+        },
+        materializedPathOptions(route, clientGroup),
+        recordingCopies(routeIndex, () => {
+          entry = getContext().getParent()!;
+          return [
             ...materializeLoaders({
               projected: route,
               label: `route "${route.pattern}"`,
@@ -932,9 +945,10 @@ function materializeRouteItems(
                   }),
                 ]
               : []),
-          ]),
-        ) as AllUseItems,
-    );
+          ];
+        }),
+      ) as AllUseItems;
+    });
   };
 
   const intercepts = projection.intercepts ?? [];

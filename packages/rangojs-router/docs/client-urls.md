@@ -115,6 +115,24 @@ another instance of the include: it gets no optimistic frame, and commits as
 a plain navigation (a frame would render the destination inside the old
 instance's chrome).
 
+The same holds for chrome a server layout's `revalidate()` re-renders. A
+template above the group whose rule compares the category re-renders on
+`/c/audio` to `/p/1`, so a frame there would show product 1 under the
+category hero until the answer commits. The browser cannot run the rule (it
+is server code), so when the server renders a group page it asks the rules
+of every segment above the group (layouts, their loaders, orphan layouts and
+parallels) about a navigation from this page to one with the same params,
+records which of the destination's params they read, and ships those with
+this page's values as ClientUrlsRoot's `chrome` prop (`chromeReadsOf` in
+`chrome-reads.ts`). A cross-route click whose destination differs on any of
+them gets no frame, and the page on screen stays until the answer commits.
+A rule that re-renders on every navigation, sets a true default, reads the
+destination's URL or route name, or throws declines every cross-route frame
+from that page. A same-route click swaps nothing either way. The prop rides
+on the group's route segment, so a Back/Forward restored from the history
+cache brings that page's own values back. Product to cart, under the
+category rule, keeps the frame.
+
 The group's patterns can match URLs the server routes elsewhere: `/:slug`
 under `/:locale?` matches a root `/login`, and under `/:locale` a sibling
 `/:locale/about`. The server ships the routes that compete with the group's

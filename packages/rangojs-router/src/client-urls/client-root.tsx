@@ -18,6 +18,7 @@ import {
   type ClientUrlNavigationIntent,
 } from "./navigation.js";
 import { OptimisticLocationContext } from "./optimistic-location.js";
+import type { ChromeReads } from "./chrome-reads.js";
 import type {
   ClientUrlInterceptRecord,
   ClientUrlPatterns,
@@ -109,6 +110,7 @@ export function ClientUrlsRoot({
   routeId,
   namePrefix = "",
   foreign,
+  chrome,
 }: {
   definition: ClientUrlPatterns;
   routeId: string;
@@ -118,6 +120,9 @@ export function ClientUrlsRoot({
   /** The server's routes that compete with the group's for a URL
    *  (competingPatterns in server-projection.ts). */
   foreign?: readonly string[];
+  /** Which destinations the server segments above the group stay right for
+   *  (chromeReadsOf in chrome-reads.ts): a frame declines the others. */
+  chrome?: ChromeReads;
 }): ReactNode {
   // The include() mount pattern this group renders under ("/" at root).
   // Navigation matches an absolute pathname against the definition's
@@ -160,8 +165,9 @@ export function ClientUrlsRoot({
         setIntent,
         optimisticRoute ? undefined : routeId,
         foreign,
+        chrome,
       ),
-    [definition, mount, namePrefix, routeId, optimisticRoute, foreign],
+    [definition, mount, namePrefix, routeId, optimisticRoute, foreign, chrome],
   );
 
   // Pending entries for the destination's loaders: useLoader use()s a Promise
