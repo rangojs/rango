@@ -89,6 +89,9 @@ function createRscEnv(realms: Realm[], reloads: number) {
       const realm = realms[current % realms.length];
       if (id === "@rangojs/router/server") return realm.server;
       if (id === "@rangojs/router/build") return realm.build;
+      // A group's revalidate() registrations, which its projection installs
+      // after: the fixture's group has none.
+      if (id.endsWith("?rango-revalidate")) return {};
       if (id !== ENTRY) throw new Error(`unexpected import ${id}`);
       entryImports++;
       if (entryImports <= reloads) current++;

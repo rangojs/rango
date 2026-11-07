@@ -137,6 +137,7 @@ test.describe.serial("client-urls-hmr-revalidate", () => {
   });
 
   test("requests while an edit of a revalidate() body re-runs discovery never fail", async ({
+    page,
     request,
   }) => {
     const path = f.url("/client-urls-action");
@@ -176,9 +177,21 @@ test.describe.serial("client-urls-hmr-revalidate", () => {
       await Promise.all(loops);
     };
 
+    // After each window the edit is live, so the requests spanned a
+    // re-discovery that installed the new key.
     for (let round = 0; round < 3; round++) {
       await serveDuring(originalContent.replace(before, after));
+      await expect
+        .poll(() => decide(page, "ca-result-ok"), {
+          timeout: WATCHER_TIMEOUT,
+        })
+        .toBe("held");
       await serveDuring(originalContent);
+      await expect
+        .poll(() => decide(page, "ca-result-ok"), {
+          timeout: WATCHER_TIMEOUT,
+        })
+        .toBe("reran");
     }
     expect(failures).toEqual([]);
   });
