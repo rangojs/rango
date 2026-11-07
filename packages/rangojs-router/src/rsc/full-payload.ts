@@ -14,6 +14,7 @@ import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
+import type { ReactNode } from "react";
 import {
   pathKey,
   rendersForSharedAudience,
@@ -85,6 +86,52 @@ export function buildFullPayload(
       // (navigation) payloads omit it by design; StrictMode is decided once.
       strictMode: ctx.router.strictMode,
       initialTheme: payloadInitialTheme(reqCtx),
+    },
+  };
+}
+
+/**
+ * The same payload, ready to render a second time with `segmentId`'s content
+ * replaced by `component` (a component's render-time notFound(),
+ * rsc-rendering.ts). A render consumes the handle streams it serialized, so
+ * the copy gets fresh ones from the same store, built as the first were
+ * (buildFullPayload for a document, handleStore.stream() for a navigation).
+ * Undefined when the payload does not render that segment.
+ */
+export function payloadWithSegmentContent(
+  payload: RscPayload,
+  segmentId: string,
+  component: ReactNode,
+  handleStore: HandleStore,
+  reqCtx: RequestContext<any>,
+): RscPayload | undefined {
+  const metadata = payload.metadata;
+  const index =
+    metadata?.segments.findIndex(
+      (segment) =>
+        segment.id === segmentId &&
+        segment.component !== null &&
+        segment.component !== undefined,
+    ) ?? -1;
+  if (!metadata || index < 0) return undefined;
+  const segments = metadata.segments.slice();
+  segments[index] = { ...segments[index]!, component };
+  return {
+    ...payload,
+    metadata: {
+      ...metadata,
+      segments,
+      ...(metadata.handles !== undefined && {
+        handles: metadata.isPartial
+          ? handleStore.stream()
+          : resolvedHandleStream(
+              handleStore,
+              reqCtx._shellCaptureState?.run === true,
+            ),
+      }),
+      ...(metadata.handlesLate !== undefined && {
+        handlesLate: handleStore.streamLate(),
+      }),
     },
   };
 }

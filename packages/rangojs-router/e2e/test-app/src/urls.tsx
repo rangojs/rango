@@ -87,6 +87,7 @@ import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
 import { componentRedirectPatterns } from "./urls/component-redirect.js";
+import { componentNotFoundPatterns } from "./urls/component-not-found.js";
 import { prefetchFalsePatterns } from "./urls/prefetch-false.js";
 import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
@@ -1523,6 +1524,13 @@ export const urlpatterns = urls(
       // nearest errorBoundary()'s page.
       include("/component-redirect", componentRedirectPatterns, {
         name: "componentRedirect",
+      }),
+
+      // A component that throws notFound() while React renders it: the route
+      // renders its notFoundBoundary() with a 404 on a document request and on a
+      // client navigation, not the router's error page.
+      include("/component-not-found", componentNotFoundPatterns, {
+        name: "componentNotFound",
       }),
 
       // prefetch: false on loader() and loading(): one page per case, with

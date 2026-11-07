@@ -423,6 +423,7 @@ import {
 } from "./pages/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
 import { componentRedirectPatterns } from "./pages/component-redirect.js";
+import { componentNotFoundPatterns } from "./pages/component-not-found.js";
 import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
@@ -3346,6 +3347,13 @@ export const urlpatterns = urls(
         // as the nearest errorBoundary()'s page.
         include("/component-redirect", componentRedirectPatterns, {
           name: "componentRedirect",
+        }),
+
+        // A component that throws notFound() while React renders it: the route
+        // renders its notFoundBoundary() with a 404 on a document request and on a
+        // client navigation, not the router's error page.
+        include("/component-not-found", componentNotFoundPatterns, {
+          name: "componentNotFound",
         }),
 
         // Deferred-handle navigation contract + history-cache fixes

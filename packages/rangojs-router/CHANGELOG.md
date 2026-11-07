@@ -30,8 +30,42 @@ function Checkout() {
 path("/checkout", () => <Checkout />);
 ```
 
-A component that throws `notFound()` is unchanged (it still renders the error
-boundary); it has no Response to read back off the render.
+### Fixed: a component that throws `notFound()` renders its `notFoundBoundary()` with a 404
+
+**Before.** A server component that threw `notFound()` inside its render was
+caught by React like any render error: a document request answered the
+router's error page (a `500` recovery document in production, `200` under
+some hosts), and a client navigation rendered the client's root error
+boundary. The route's `notFoundBoundary()` never rendered; only a
+`notFound()` thrown by a handler or a loader reached it.
+
+**Now.** The render answers it the way a `notFound()` from the route's
+handler is answered: the route renders again with the nearest
+`notFoundBoundary()` (else the router's `notFound` option) in place of the
+route's content, inside its layouts, and the response answers `404`. That
+holds on a document request and on a client navigation. The same limits as a
+component's `redirect()` apply: a `notFound()` thrown after the body started
+streaming (a route with `loading()`, a streamed handler, and on a client
+navigation an **async** component) keeps the error page. A `notFound()` thrown
+by a layout's or a parallel slot's own component answers `404`, but its
+layout still renders the error page: the render cannot tell which segment's
+component threw, and answers for the route.
+
+```tsx
+async function Product({ id }: { id: string }) {
+  const product = await db.products.find(id);
+  if (!product) notFound("No such product");
+  return <ProductPage product={product} />;
+}
+
+// A page load of /product/missing now answers 404 with this boundary.
+layout(<ShopLayout />, () => [
+  notFoundBoundary(({ notFound }) => <p>{notFound.message}</p>),
+  path("/product/:id", (ctx) => <Product id={ctx.params.id} />, {
+    name: "product",
+  }),
+]);
+```
 
 ## 0.35.0 (2026-11-04)
 

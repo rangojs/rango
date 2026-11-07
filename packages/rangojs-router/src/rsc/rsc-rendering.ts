@@ -54,7 +54,12 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
-import { buildFullPayload, payloadLocation } from "./full-payload.js";
+import {
+  buildFullPayload,
+  payloadLocation,
+  payloadWithSegmentContent,
+} from "./full-payload.js";
+import type { DataNotFoundError } from "../errors.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -1186,10 +1191,12 @@ function renderPreparedRscResponse<TEnv>(
       tracking: stageTracking,
     },
     {
-      // A redirect thrown while React renders is not a handler result: the
-      // boundary renders it as an error page unless the render answers it. Only
-      // the channels a client parses as Flight (a navigation, an action) convert
-      // it; a document follows a 3xx. An explicit Accept: text/x-component
+      // A redirect or notFound() thrown while React renders is not a handler
+      // result: the boundary renders it as an error page unless the render
+      // answers it. Only the channels a client parses as Flight (a navigation,
+      // an action) convert a redirect; a document follows a 3xx. A notFound()
+      // renders the route again with the fallback its handler's notFound()
+      // would render, and the 404. An explicit Accept: text/x-component
       // document keeps the error row it had (a handler's redirect answers a raw
       // 3xx there), so nothing is held back for it.
       ...((!isFlightResponse ||
@@ -1202,6 +1209,25 @@ function renderPreparedRscResponse<TEnv>(
             basename: ctx.router.basename,
             createRedirectFlightResponse: ctx.createRedirectFlightResponse,
           }),
+        notFound: async (thrown: DataNotFoundError) => {
+          const answer = await ctx.router.resolveRenderNotFound(
+            url.pathname,
+            thrown,
+          );
+          const again =
+            answer &&
+            payloadWithSegmentContent(
+              payload,
+              answer.segmentId,
+              answer.fallback,
+              input.handleStore,
+              reqCtx,
+            );
+          // The 404 catchSegmentError writes for a handler's notFound(), only
+          // once the route renders the fallback.
+          if (again) reqCtx._setStatus(404);
+          return again || undefined;
+        },
       }),
       ...(isFlightResponse
         ? undefined

@@ -9,13 +9,17 @@ import {
   bindsLoaderCache,
   routeLoaderLanes,
 } from "./segment-resolution/loader-cache.js";
-import { RouteNotFoundError } from "../errors";
+import { RouteNotFoundError, type DataNotFoundError } from "../errors";
 import {
   createErrorInfo,
   createErrorSegment,
+  createNotFoundInfo,
   findInOrphans,
   findNearestErrorBoundary as findErrorBoundary,
+  renderNotFoundFallback,
+  resolveNotFoundFallback,
   withErrorBoundary,
+  type NotFoundComponentOption,
 } from "./error-handling.js";
 import {
   createHandlerContext,
@@ -40,7 +44,12 @@ import type {
 } from "../types";
 import type { ReactNode } from "react";
 import type { MatchContext } from "./match-context.js";
-import type { MatchApiDeps, ActionContext } from "./types.js";
+import type {
+  MatchApiDeps,
+  ActionContext,
+  SegmentResolutionDeps,
+} from "./types.js";
+import type { RenderNotFound } from "./router-interfaces.js";
 import {
   getRequestContext,
   _getRequestContext,
@@ -543,6 +552,43 @@ export async function createMatchContextForPartial<TEnv>(
     routeMiddleware: snapshot.routeMiddleware,
     isFullMatch: false,
   };
+}
+
+/**
+ * What a route renders for a `notFound()` one of its components threw while
+ * React rendered it (rsc/render-pipeline.ts answerRenderControl): the
+ * fallback a `notFound()` from the route's own handler renders
+ * (catchSegmentError) — the nearest notFoundBoundary, else the router's
+ * `notFound` option — and the id of the route segment it takes the place of.
+ * Null when nothing matches. The caller writes the 404 once it renders it.
+ */
+export async function resolveRenderNotFound(
+  pathname: string,
+  error: DataNotFoundError,
+  deps: {
+    findMatch: MatchApiDeps["findMatch"];
+    findNearestNotFoundBoundary: SegmentResolutionDeps["findNearestNotFoundBoundary"];
+    notFoundComponent: NotFoundComponentOption | undefined;
+  },
+): Promise<RenderNotFound | null> {
+  const matched = await deps.findMatch(pathname);
+  if (!matched) return null;
+  const entry = await loadManifest(
+    matched.entry,
+    matched.routeKey,
+    pathname,
+    undefined,
+    false,
+  );
+  const fallback = renderNotFoundFallback(
+    resolveNotFoundFallback(
+      deps.findNearestNotFoundBoundary(entry),
+      deps.notFoundComponent,
+      pathname,
+    ),
+    createNotFoundInfo(error, entry.shortCode, "route", pathname),
+  );
+  return { segmentId: entry.shortCode, fallback };
 }
 
 /**

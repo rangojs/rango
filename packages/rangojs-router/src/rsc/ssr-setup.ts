@@ -25,7 +25,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import { WIRE } from "../wire-params.js";
-import { renderRedirectOf } from "./render-pipeline.js";
+import { renderNotFoundOf, renderRedirectOf } from "./render-pipeline.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -144,12 +144,13 @@ export function createSsrHtmlStage<TEnv>(
             renderErrors?.push(error);
             markServerErrorPrinted(error, reqCtx);
           },
-          // A redirect a component threw is control flow the render answers
-          // once this step returns (render-pipeline.ts createRscRenderPlan):
-          // dev would otherwise rethrow the shell error to the host and answer
-          // its 500 instead.
+          // A redirect or notFound() a component threw is control flow the
+          // render answers once this step returns (render-pipeline.ts
+          // createRscRenderPlan): dev would otherwise rethrow the shell error
+          // to the host and answer its 500 instead.
           shellErrorAnsweredByRender: () =>
-            renderRedirectOf(renderErrors, 0) !== undefined,
+            renderRedirectOf(flight.reported) !== undefined ||
+            renderNotFoundOf(flight.reported) !== undefined,
           // Reported once, phase "rendering", only when the error started in
           // the SSR render: a copy (a loader's masked rebuild, a Flight error,
           // a payload failure) was reported with its original where it started,
