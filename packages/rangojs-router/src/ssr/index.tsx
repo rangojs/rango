@@ -13,6 +13,7 @@ import {
 } from "../rsc/shell-capture-constants.js";
 import { isThenable } from "../handles/is-thenable.js";
 import {
+  decodedRedirectOf,
   isAbortedRender,
   isFlightDecodedError,
   isLoaderSignalError,
@@ -525,6 +526,9 @@ function reportRenderError(
   onError: SSRDependencies["onError"],
   error: unknown,
 ): void {
+  // A component's `throw redirect()` decoded from its Flight row: control
+  // flow the browser follows (root-error-boundary.tsx), not a failure.
+  if (decodedRedirectOf(error)) return;
   if (onError) {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     try {

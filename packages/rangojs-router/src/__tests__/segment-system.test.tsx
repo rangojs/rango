@@ -55,6 +55,7 @@ import {
   decodeLoaderEntry,
   LOADER_ERROR_FALLBACK,
 } from "../decode-loader-results";
+import { renderRedirectDigest, ServerRedirect } from "../errors";
 
 // Helper to create a minimal segment
 function seg(
@@ -2432,6 +2433,169 @@ describe("segment-system", () => {
         ]) {
           expect(types, wrapper).toContain(wrapper);
         }
+      });
+    });
+
+    // A component's `throw redirect()` reaches the browser as an error row
+    // whose digest names the target (render-pipeline.ts createFlightStage).
+    // A segment component that IS such a row decodes to a lazy whose payload
+    // rejects; the tree build waits for it before the commit and throws the
+    // ServerRedirect a 204 + X-RSC-Redirect answer becomes.
+    describe("a segment component that threw redirect()", () => {
+      function rejectedLazy(reason: unknown): ReactNode {
+        const payload = Promise.reject(reason);
+        payload.catch(() => {});
+        return {
+          $$typeof: Symbol.for("react.lazy"),
+          _payload: payload,
+          _init: (p: Promise<unknown>) => {
+            throw p;
+          },
+        } as unknown as ReactNode;
+      }
+
+      function decodedRow(digest: string): Error {
+        return Object.assign(new Error("decoded"), { digest });
+      }
+
+      const target = renderRedirectDigest({
+        to: "http://localhost/target",
+        state: { k: 1 },
+      });
+
+      it("throws a ServerRedirect for the target, with its state", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          seg({
+            id: "L0R0",
+            type: "route",
+            component: rejectedLazy(decodedRow(target)),
+          }),
+        ];
+
+        const thrown = await renderSegments(segments, {}).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(thrown).toBeInstanceOf(ServerRedirect);
+        expect(thrown).toMatchObject({
+          url: "http://localhost/target",
+          state: { k: 1 },
+        });
+      });
+
+      it("builds the tree for an ordinary rejected component (the boundary renders it)", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: rejectedLazy(decodedRow("")),
+          }),
+        ];
+
+        const result = await renderSegments(segments, {});
+        expect(findFirst(toTreeNode(result), MockRootErrorBoundary)).not.toBe(
+          null,
+        );
+      });
+
+      it("leaves an { external: true } target to the boundary", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: rejectedLazy(
+              decodedRow(
+                renderRedirectDigest({
+                  to: "https://example.com/x",
+                  external: true,
+                }),
+              ),
+            ),
+          }),
+        ];
+
+        await expect(renderSegments(segments, {})).resolves.toBeTruthy();
+      });
+
+      it("does not throw on the action lane, whose caller would fail the action", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: rejectedLazy(decodedRow(target)),
+          }),
+        ];
+
+        await expect(
+          renderSegments(segments, { isAction: true }),
+        ).resolves.toBeTruthy();
+      });
+
+      // A streamed handler under loading() arrives as a Flight promise.
+      function rejectedPromise(reason: unknown): Promise<never> {
+        const promise = Promise.reject(reason);
+        promise.catch(() => {});
+        return promise;
+      }
+
+      it("throws a ServerRedirect for a streamed loading() segment on a forceAwait lane", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            loading: createElement("p", null, "loading"),
+            component: rejectedPromise(decodedRow(target)),
+          }),
+        ];
+
+        await expect(
+          renderSegments(segments, { forceAwait: true }),
+        ).rejects.toBeInstanceOf(ServerRedirect);
+      });
+
+      it("still rejects a forceAwait build for an ordinary streamed error", async () => {
+        const boom = decodedRow("");
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            loading: createElement("p", null, "loading"),
+            component: rejectedPromise(boom),
+          }),
+        ];
+
+        await expect(
+          renderSegments(segments, { forceAwait: true }),
+        ).rejects.toBe(boom);
+      });
+
+      it("hands the action lane's redirect to the boundary instead of failing the build", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: rejectedPromise(decodedRow(target)),
+          }),
+        ];
+
+        await expect(
+          renderSegments(segments, { isAction: true }),
+        ).resolves.toBeTruthy();
+      });
+
+      it("builds the tree with commitRenderRedirect (the first tree, an HMR refetch)", async () => {
+        const segments: ResolvedSegment[] = [
+          seg({
+            id: "R0",
+            type: "route",
+            component: rejectedLazy(decodedRow(target)),
+          }),
+        ];
+
+        await expect(
+          renderSegments(segments, { commitRenderRedirect: true }),
+        ).resolves.toBeTruthy();
       });
     });
   });

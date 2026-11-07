@@ -36,11 +36,7 @@ import type {
 import { createElement } from "react";
 import { isDataNotFoundError } from "../errors.js";
 import { isRedirectResponse } from "../response-utils.js";
-import {
-  resolveSoftRedirectUrl,
-  getRedirectState,
-  isExternalRedirect,
-} from "../redirect-origin.js";
+import { resolveThrownRedirect } from "../redirect-origin.js";
 import {
   createNotFoundInfo,
   renderErrorFallback,
@@ -254,30 +250,23 @@ export function wrapLoaderWithErrorHandling<T>(
 
       if (error instanceof Response && isRedirectResponse(error)) {
         const reqCtx = _getRequestContext();
-        const requestOrigin = reqCtx?.originalUrl?.origin ?? reqCtx?.url.origin;
-        const location = error.headers.get("Location")!;
         // Same-origin policy applied server-side; the wire never carries an
         // unresolved target. redirect(url, { external: true })'s WeakSet brand
         // survives (the thrown Response IS the branded object).
-        const to = requestOrigin
-          ? resolveSoftRedirectUrl(
-              location,
-              requestOrigin,
-              reqCtx?._basename,
-              isExternalRedirect(error),
-            )
-          : location;
+        // redirect(url, { state }): the resolved state rides the thrown
+        // Response (attachRedirectState), NOT payload metadata — a streaming
+        // loader settles after the metadata flush, so the marker is the only
+        // carrier that reaches the client. LoaderRedirect navigates with it.
+        const { to, state: redirectState } = resolveThrownRedirect(
+          error,
+          reqCtx?.originalUrl?.origin ?? reqCtx?.url.origin,
+          reqCtx?._basename,
+        );
 
         debugLog("loader", "loader threw redirect()", {
           segmentId,
           to,
         });
-
-        // redirect(url, { state }): the resolved state rides the thrown
-        // Response (attachRedirectState), NOT payload metadata — a streaming
-        // loader settles after the metadata flush, so the marker is the only
-        // carrier that reaches the client. LoaderRedirect navigates with it.
-        const redirectState = getRedirectState(error);
 
         return {
           __loaderResult: true,

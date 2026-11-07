@@ -1025,6 +1025,93 @@ loader, or a synchronous handler return. In development, `warnOnStreamedResponse
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
 or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
+The browser still lands on the target: the rejected `Response` reaches the Flight
+`onError` like a component's `throw redirect()`, and its error row names the target
+(next section). What it never becomes is an HTTP redirect.
+
+### A component's `throw redirect()` is followed by the browser
+
+A `redirect()` thrown while React renders a server component is not a handler
+result either: `handleHandlerResult` never sees it, and React reports it to the
+Flight `onError` (`createFlightStage`, `rsc/render-pipeline.ts`) and writes an
+error row. Why not answer it with the 204 + `X-RSC-Redirect` a handler's redirect
+gets? Because the status line has usually committed by then. An async component
+is a Flight task of its own, so its row lands in a later chunk than the one the
+response starts with, and waiting for it would mean buffering the whole render,
+which the streaming contract forbids. Before, a click to such a page committed
+the page and the router's root boundary rendered "Internal Server Error".
+
+So the row carries the redirect instead. `onError` returns a digest for a thrown
+redirect `Response` (`renderRedirectDigest`, `errors.ts`): the target resolved by
+the soft-redirect rules (`resolveThrownRedirect`, `redirect-origin.ts`, the same
+resolution the loader lane uses: same origin unless `{ external: true }`, the
+basename already in the Location), the resolved `{ state }` record, and the
+external mark. React's Flight client puts the digest on the error it decodes from
+the row in dev and production alike; production drops the message, never the
+digest. `onError` prints and reports nothing for it: it is control flow. The
+`Response` still goes to `RequestContext._renderErrors`, so the document cache
+never stores a redirected render.
+
+The browser reads it back (`decodedRedirectOf`) in two places:
+
+- **Before the commit.** `renderSegments` (`segment-system.tsx`) already waits for
+  every segment component that decodes as a pending lazy before a navigation
+  commits (`temporalLazyRefs`). A segment whose own component threw, sync or
+  async, is one of those, and `followRenderRedirect` throws the `ServerRedirect` a
+  204 answer becomes. So does a `forceAwait` lane's await of a `loading()`
+  segment's streamed component (a fully prefetched click, a cached navigation,
+  leaving an intercept): without it that await would reject the build with the
+  decoded error and the bridge would render it as a failed navigation. Every lane that follows a `ServerRedirect` follows this one
+  before anything commits: a click (`navigation-bridge.ts` `followServerRedirect`,
+  hop-counted and origin-checked), a Back/Forward that refetches, a
+  `prefetch: false` fill. The layout stays mounted, and history gets the target,
+  not the page that redirected.
+- **While React renders.** A redirect React meets only in render (an async
+  component nested inside the handler's element, one behind `loading()`, a
+  streamed handler's thrown `Response`) reaches `RootErrorBoundary`
+  (`root-error-boundary.tsx`), which renders `LoaderRedirect` instead of the error
+  page: a replace navigation to the target, or `location.replace` for an
+  `{ external: true }` target. The page that redirected was committed, so the
+  boundary's subtree unmounts for that frame; that is the cost of a redirect the
+  render reports after the commit. The public `<ErrorBoundary>`
+  (`client.tsx`) rethrows such an error from its render, without its fallback or
+  `onError`, so an app boundary between the component and the root does not
+  swallow the redirect. (An app's own error boundary class does not know the
+  digest and will catch it.) This path has no hop count, like a loader's
+  `LoaderRedirect`: two pages that redirect to each other this way keep
+  navigating.
+
+Three callers do not throw (`commitRenderRedirect`, or `isAction`) and leave it to
+the boundary: the first tree and an HMR refetch (`rsc-router.tsx`), because
+`NavigationProvider` reads their promise with `use()` above every boundary, so a
+rejection there would be an uncaught error; and the action lane, whose caller
+would fail the action with the throw (its await of a streamed component keeps
+the rejected promise for the boundary instead of rejecting the build). A
+background revalidation (Back onto a stale entry) that meets one logs it and
+keeps the page, as it does for a handler's 204 redirect. An `{ external: true }` target is left to
+the boundary too: the bridge follows a same-origin target only.
+
+A document load of such a page is a different question: the server's HTML step
+answers it, as a shell error or inside a `loading()` boundary, with no redirect
+status. The hydrated page then reaches `RootErrorBoundary` and lands on the
+target: in production for every shape, in dev only behind `loading()`, because
+dev rethrows a shell error to the host, whose 500 page never hydrates ("A
+server-render shell error answers a recovery document"). The SSR render does not
+report the decoded redirect to `onError` either (`reportRenderError`,
+`ssr/index.tsx`).
+
+Tests: `testing/__tests__/component-redirect-navigation.rsc-test.tsx` (userland,
+through `serveShellRequest`: what the navigation's Flight answer carries for each
+shape), `__tests__/segment-system.test.tsx` ("a segment component that threw
+redirect()"), `testing/__tests__/render-route-component-redirect.test.tsx`
+(userland, through `renderRoute`: the root boundary follows one, through an
+app's `<ErrorBoundary>` too), `ssr/__tests__/ssr-handler.test.tsx` (not
+reported), and the
+`component redirect on navigation` e2e describes in
+`e2e/component-redirect-nav.test.ts` and
+`tests/cloudflare-basic/e2e/component-redirect-nav.test.ts` (dev + production;
+body in `tests/shared-e2e/src/component-redirect-nav-scenario.ts`).
+
 ### Streamed handler rejections render the declared boundary
 
 The same non-awaited promise carries failures. `trackStreamedHandler`

@@ -3,6 +3,7 @@ import React, { useContext } from "react";
 import { createSSRHandler, type SSRDependencies } from "../index";
 import { NavigationStoreContext } from "../../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../../browser/react/context.js";
+import { renderRedirectDigest } from "../../errors.js";
 
 // Mock renderSegments so SsrRoot can render without the full segment system.
 // The mock is module-level so vitest hoists it before imports.
@@ -77,6 +78,26 @@ describe("createSSRHandler", () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(renderError, { phase: "rendering" });
+    });
+
+    // A component's `throw redirect()` reaches the SSR render as the error
+    // Flight decoded from its row, its digest naming the target: control
+    // flow the browser follows, not a rendering error.
+    it("does not report a component's redirect decoded from its Flight row", async () => {
+      const onError = vi.fn();
+      const redirectRow = Object.assign(new Error("decoded"), {
+        digest: renderRedirectDigest({ to: "http://localhost/target" }),
+      });
+
+      const deps = createMockDeps({
+        renderToReadableStream: vi.fn().mockRejectedValue(redirectRow),
+        onError,
+      });
+
+      const renderHTML = createSSRHandler(deps);
+
+      await expect(renderHTML(createMockRscStream())).rejects.toBe(redirectRow);
+      expect(onError).not.toHaveBeenCalled();
     });
 
     it("production: calls onError once and answers a document when rendering fails", async () => {
