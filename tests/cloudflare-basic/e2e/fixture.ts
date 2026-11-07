@@ -1,15 +1,16 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
+import {
+  runCli as harnessRunCli,
+  ServerGuard,
+} from "@rangojs/router/testing/e2e";
 import {
   assertFixtureModeMatchesProject,
   consoleGuardMode,
   installConsoleGuard,
-  ServerGuard,
 } from "@shared/e2e";
-import { x } from "tinyexec";
 
 function sanitizeNodeOptions(value?: string): string | undefined {
   if (!value) return value;
@@ -18,123 +19,23 @@ function sanitizeNodeOptions(value?: string): string | undefined {
   return filtered.length > 0 ? filtered.join(" ") : undefined;
 }
 
+/**
+ * The harness's runCli with this suite's environment: the repo-only suspense
+ * audit (src/internal-suspense-audit.ts) and NODE_OPTIONS without an
+ * inspector flag, which would make every spawned node bind the same port.
+ */
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
-  const [name, ...args] = options.command.split(" ");
-  // The repo-only suspense audit (src/internal-suspense-audit.ts).
-  const env = {
-    ...process.env,
-    INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
-    ...options.env,
-  };
-  const sanitizedNodeOptions = sanitizeNodeOptions(env.NODE_OPTIONS);
-  if (sanitizedNodeOptions) {
-    env.NODE_OPTIONS = sanitizedNodeOptions;
-  } else {
-    delete env.NODE_OPTIONS;
-  }
-  const child = x(name!, args, {
-    nodeOptions: { ...options, env, detached: true },
-  }).process!;
-  const label = `[${options.label ?? "cli"}]`;
-  let stdout = "";
-  let stderr = "";
-  child.stdout!.on("data", (data) => {
-    stdout += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("cyan", label), data.toString());
-    }
-  });
-  child.stderr!.on("data", (data) => {
-    stderr += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("magenta", label), data.toString());
-    }
-  });
-  const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
-      // null = killed by signal, 0 = success, 143 = SIGTERM on Linux
-      if (
-        code !== null &&
-        code !== 0 &&
-        code !== 143 &&
-        process.platform !== "win32"
-      ) {
-        console.log(styleText("magenta", `${label}`), `exit code ${code}`);
-      }
-      resolve();
-    });
-  });
-
-  async function findPort(): Promise<number> {
-    let stdout = "";
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(
-          new Error(
-            `Timeout waiting for server to start after 60s. Stdout: ${stdout}`,
-          ),
-        );
-      }, 60000);
-
-      child.stdout!.on("data", (data) => {
-        stdout += stripVTControlCharacters(String(data));
-        // Match URL with any host (localhost, 127.0.0.1, 0.0.0.0, etc.)
-        const match = stdout.match(/http:\/\/(?:localhost|[\d.]+):(\d+)/);
-        if (match) {
-          clearTimeout(timeout);
-          resolve(Number(match[1]));
-        }
-      });
-
-      child.on("exit", (code) => {
-        clearTimeout(timeout);
-        reject(
-          new Error(
-            `Server exited with code ${code}.\nStdout: ${stdout}\nStderr: ${stderr}`,
-          ),
-        );
-      });
-    });
-  }
-
-  function kill(signal: NodeJS.Signals = "SIGTERM") {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
-    } else {
-      // Kill entire process group on Unix (wrangler spawns child processes)
-      try {
-        process.kill(-child.pid!, signal);
-      } catch {
-        // Process group kill failed, try direct kill
-        child.kill(signal);
-      }
-      if (signal === "SIGKILL") return;
-      // Force kill after timeout if still running
-      setTimeout(() => {
-        try {
-          process.kill(-child.pid!, "SIGKILL");
-        } catch {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already dead
-          }
-        }
-      }, 2000);
-    }
-  }
-
-  return {
-    proc: child,
-    done,
-    get pid() {
-      return child.pid;
+  return harnessRunCli({
+    ...options,
+    env: {
+      INTERNAL_RANGO_SUSPENSE_AUDIT: "1",
+      ...options.env,
+      // undefined leaves NODE_OPTIONS out of the child's environment.
+      NODE_OPTIONS: sanitizeNodeOptions(
+        { ...process.env, ...options.env }.NODE_OPTIONS,
+      ),
     },
-    findPort,
-    kill,
-    stdout: () => stdout,
-    stderr: () => stderr,
-  };
+  });
 }
 
 async function waitForReady(url: string, timeoutMs = 30000) {
@@ -189,7 +90,9 @@ export function useFixture(options: {
     // A guard per run of the hook: Playwright does not cancel a timed-out
     // hook, so its body can outlive afterAll and must not start anything
     // under the next run's guard.
-    const guard = (servers = new ServerGuard());
+    // A group still up 2 s after SIGTERM is sent SIGKILL, which keeps the
+    // teardown between suites short.
+    const guard = (servers = new ServerGuard({ exitWaitMs: 2_000 }));
     // Tracked as soon as it is spawned, before any await.
     const start = (cli: Parameters<typeof runCli>[0]) => {
       guard.assertLive();

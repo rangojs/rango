@@ -1,85 +1,8 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import path from "node:path";
-import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
-import { assertFixtureModeMatchesProject, ServerGuard } from "@shared/e2e";
-import { x } from "tinyexec";
-
-function runCli(options: { command: string; label?: string } & SpawnOptions) {
-  const [name, ...args] = options.command.split(" ");
-  // detached makes the child a process-group leader (pgid === pid), so kill()
-  // can signal the whole tree. pnpm spawns vite as a grandchild; a plain
-  // child.kill() stops only pnpm and leaves vite running.
-  const child = x(name!, args, {
-    nodeOptions: { ...options, detached: true },
-  }).process!;
-  const label = `[${options.label ?? "cli"}]`;
-  let stdout = "";
-  let stderr = "";
-  child.stdout!.on("data", (data) => {
-    stdout += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("cyan", label), data.toString());
-    }
-  });
-  child.stderr!.on("data", (data) => {
-    stderr += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("magenta", label), data.toString());
-    }
-  });
-  const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
-      if (
-        code !== null &&
-        code !== 0 &&
-        code !== 143 &&
-        process.platform !== "win32"
-      ) {
-        console.log(styleText("magenta", `${label}`), `exit code ${code}`);
-      }
-      resolve();
-    });
-  });
-
-  async function findPort(): Promise<number> {
-    let stdout = "";
-    return new Promise((resolve) => {
-      child.stdout!.on("data", (data) => {
-        stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/localhost:(\d+)/);
-        if (match) {
-          resolve(Number(match[1]));
-        }
-      });
-    });
-  }
-
-  function kill(signal: NodeJS.Signals = "SIGTERM") {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
-    } else {
-      // The whole process group; ServerGuard escalates to SIGKILL.
-      try {
-        process.kill(-child.pid!, signal);
-      } catch {
-        child.kill(signal);
-      }
-    }
-  }
-
-  return {
-    proc: child,
-    done,
-    get pid() {
-      return child.pid;
-    },
-    findPort,
-    kill,
-    stdout: () => stdout,
-    stderr: () => stderr,
-  };
-}
+import { runCli, ServerGuard } from "@rangojs/router/testing/e2e";
+import { assertFixtureModeMatchesProject } from "@shared/e2e";
 
 export type Fixture = ReturnType<typeof useFixture>;
 

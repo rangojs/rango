@@ -1629,6 +1629,37 @@ the dep optimizer, and tears the server down with a cross-platform process-group
 kill. Options include `command`, `buildCommand`, `isolatedServer`, `readyPath`,
 `skipBuild`. Use `f.url(path)` to resolve against the running server.
 
+When a fixture of your own needs a server `useFixture` does not start (a
+worker-scoped dev server shared by a file's tests, say), build it from the same
+pieces: `runCli` spawns the command as the leader of its process group, so
+stopping it reaches the vite that `pnpm dev` spawns, and `ServerGuard` stops
+everything it tracks, escalating to SIGKILL for a group that outlives
+`exitWaitMs`. Track the server the moment it is spawned, before anything is
+awaited, so a `beforeAll` or fixture that fails while the server starts still
+stops it.
+
+```ts
+import { test as base } from "@playwright/test";
+import { runCli, ServerGuard } from "@rangojs/router/testing/e2e";
+
+export const test = base.extend<{}, { devServerURL: string }>({
+  devServerURL: [
+    async ({}, use) => {
+      const servers = new ServerGuard();
+      const server = servers.track(
+        runCli({ command: "pnpm dev", label: "dev", cwd: process.cwd() }),
+      );
+      try {
+        await use(await server.findURL());
+      } finally {
+        await servers.dispose();
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+```
+
 ### expectParity — JS vs no-JS
 
 ```ts
@@ -1922,6 +1953,10 @@ useFixture({ root, mode: "dev"|"build", command?, buildCommand?, isolatedServer?
 parityDescribe(name, (f) => { /* tests */ }, options?); // dev + (production) from one body
 expectParity(page, { navigate } | { submit: { testId, data? } }, { observe: string[], baseURL? });
 rangoMatchers; // expect.extend -> toHaveRangoPathname(page, expected)
+// Server lifecycle for a fixture of your own (the pieces useFixture is built from)
+runCli({ command, label?, cwd?, env?, ...spawnOptions }) // process-group leader; env laid over process.env
+  -> { findURL(timeoutMs?), findPort(timeoutMs?), exitCode, done, kill(signal?), pid, stdout(), stderr(), proc };
+new ServerGuard({ exitWaitMs? }) // track(server) at spawn, assertLive(), dispose(): SIGTERM, then SIGKILL after exitWaitMs (10 s)
 ```
 
 ## Migration: from an ad-hoc fixture to the official harness

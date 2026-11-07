@@ -9,8 +9,8 @@ import {
   createIsolatedViteCacheDir,
   runCli,
   type RunCliHandle,
+  ServerGuard,
   type SpawnOptions,
-  stopServer,
   waitForReady,
   warmupDevServer,
 } from "./server.js";
@@ -60,7 +60,9 @@ export function createUseFixture(
         `useFixture: mode is required: 'dev' | 'build' (got ${JSON.stringify(options.mode)}).`,
       );
     }
-    let cleanup: (() => Promise<void>) | undefined;
+    // Owns every process this fixture spawns; afterAll disposes it, whether
+    // or not beforeAll got as far as a ready server (ServerGuard says why).
+    let servers: ServerGuard | undefined;
     let baseURL!: string;
 
     const cwd = path.resolve(options.root);
@@ -68,6 +70,15 @@ export function createUseFixture(
     let isolatedViteCacheDir: string | undefined;
 
     test.beforeAll(async ({}, testInfo) => {
+      // A guard per run of the hook: Playwright does not cancel a timed-out
+      // hook, so its body can outlive afterAll and must not start anything
+      // under the next run's guard.
+      const guard = (servers = new ServerGuard());
+      // Tracked as soon as it is spawned, before any await.
+      const start = (cli: Parameters<typeof runCli>[0]): RunCliHandle => {
+        guard.assertLive();
+        return guard.track(runCli(cli));
+      };
       if (options.isolatedServer) {
         isolatedViteCacheDir = createIsolatedViteCacheDir(
           cwd,
@@ -75,7 +86,14 @@ export function createUseFixture(
           options.mode,
         );
       }
+      // Vite registers `process.stdin.on("end", ...)` as parent-death
+      // detection and calls process.exit() when stdin reaches EOF, unless
+      // process.env.CI === "true" (see vite's setupSIGTERMListener). Real CI
+      // runners set CI=true; mirror that for locally spawned servers so they
+      // stay alive for the duration of the tests. `cliOptions.env` can
+      // override it.
       const cliEnv = {
+        CI: "true",
         ...options.cliOptions?.env,
         ...(isolatedViteCacheDir
           ? { RANGO_E2E_VITE_CACHE_DIR: isolatedViteCacheDir }
@@ -83,18 +101,13 @@ export function createUseFixture(
       };
 
       if (options.mode === "dev") {
-        proc = runCli({
+        proc = start({
           command: options.command ?? `pnpm dev`,
           label: `${options.root}:dev`,
           cwd,
           ...options.cliOptions,
           env: cliEnv,
         });
-        // Assign cleanup immediately after spawn, before any await that can
-        // throw (findPort/waitForReady). Otherwise a beforeAll failure leaves
-        // afterAll's cleanup a no-op and orphans the dev server (plus workerd
-        // children) for the rest of the run.
-        cleanup = () => stopServer(proc!);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const readyUrl = options.readyPath
@@ -117,16 +130,13 @@ export function createUseFixture(
       if (options.mode === "build") {
         const skipBuild = options.skipBuild || !!process.env.TEST_SKIP_BUILD;
         if (!skipBuild) {
-          const buildProc = runCli({
+          const buildProc = start({
             command: options.buildCommand ?? `pnpm build`,
             label: `${options.root}:build`,
             cwd,
             ...options.cliOptions,
             env: cliEnv,
           });
-          // The build is a finite process, but assign cleanup before the await
-          // so a hung build is still killed if beforeAll is torn down.
-          cleanup = () => stopServer(buildProc);
           // Fail loudly on a nonzero build exit. Without this a failed build is
           // swallowed and preview serves the previous stale dist/ (green
           // production tests against old code), or times out with "Server not
@@ -141,16 +151,13 @@ export function createUseFixture(
             );
           }
         }
-        proc = runCli({
+        proc = start({
           command: options.command ?? `pnpm preview`,
           label: `${options.root}:preview`,
           cwd,
           ...options.cliOptions,
           env: cliEnv,
         });
-        // Switch cleanup to the preview process immediately after spawn, before
-        // findPort/waitForReady can throw and orphan it.
-        cleanup = () => stopServer(proc!);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const buildReadyUrl = options.readyPath
@@ -164,7 +171,7 @@ export function createUseFixture(
     });
 
     test.afterAll(async () => {
-      await cleanup?.();
+      await servers?.dispose();
       if (isolatedViteCacheDir) {
         await rm(isolatedViteCacheDir, { recursive: true, force: true });
       }
