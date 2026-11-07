@@ -57,7 +57,8 @@ export function isInterceptOnlyCache(segments: ResolvedSegment[]): boolean {
 /**
  * An intercept's `matched`: the client's ids without any of the slot's (its
  * id and every loader segment on it, another intercept's into the same slot
- * included), then the slot's (interceptSegmentIds). One order for the
+ * included), then the slot's (router/intercept-resolution.ts
+ * resolveInterceptEntry returns them, slot id first). One order for the
  * prefetch, its fill, an action and a revisit: a fill whose `matched` differs
  * from its tree's is rendered as a new tree (browser/partial-update.ts
  * fillHoles). Shared by router/match-result.ts and wholeInterceptMatched.
