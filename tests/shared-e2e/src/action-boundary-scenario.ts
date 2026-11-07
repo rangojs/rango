@@ -11,6 +11,8 @@ import { waitForShellHydration } from "./shell-request.js";
  * re-run (the layout's loader); at it, the boundary. So the page shows the
  * boundary and the write together, and a link under the same layout keeps
  * the fresh count. Other tabs refresh and a fresh load read the write too.
+ * The same action posted from a form without JavaScript gets the page's
+ * document with the boundary inside the layout, whose count shows the write.
  * An earlier action's follow-up, owed to the page while it shows the
  * boundary, holds the boundary and re-renders what is above it.
  * Fixture: action-boundary.tsx in each app, mounted at /action-boundary; both
@@ -84,6 +86,39 @@ export function runActionBoundaryTests(
 
     // The boundary's response re-ran the layout's loader.
     await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+  });
+
+  test("a no-JS form action that throws under its route's errorBoundary() renders the boundary inside the layout, whose count shows the write", async ({
+    browser,
+  }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false });
+    try {
+      await context.addCookies([
+        { name: "ab-key", value: randomUUID(), url: options.url("/") },
+      ]);
+      const page = await context.newPage();
+      await page.goto(options.url(PAGE));
+      await expect(page.getByTestId("ab-page")).toBeVisible();
+      await expect(page.getByTestId("ab-cart")).toHaveText("cart:0");
+
+      const posted = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          new URL(response.url()).pathname.endsWith(PAGE),
+      );
+      await page.getByTestId("ab-fail-form").click();
+      expect((await posted).status()).toBe(500);
+
+      await expect(page.getByTestId("ab-boundary")).toBeVisible();
+      await expect(page.getByTestId("ab-page")).toHaveCount(0);
+      // The layout above the boundary, as the JS path keeps it on screen,
+      // with its loader re-run after the write.
+      await expect(page.getByTestId("ab-layout")).toBeVisible();
+      await expect(page.getByTestId("ab-to-other")).toBeVisible();
+      await expect(page.getByTestId("ab-cart")).toHaveText("cart:1");
+    } finally {
+      await context.close();
+    }
   });
 
   test("a link to another page under the same layout after a thrown action shows the write", async ({

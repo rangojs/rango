@@ -60,6 +60,17 @@ response carries its headers. JS keeps the match in the continuation's
 (`rsc/progressive-enhancement.ts`). A no-JS form body that does not parse
 takes the same path. Pinned by `[A3]`.
 
+The PE error document is the page matched whole and cut at the boundary
+(`ActionContext.boundary` on a full match, `peErrorBoundaryPlan` in
+`rsc/progressive-enhancement.ts`): every layout, slot and loader above the
+boundary renders around it, live and with the write, and nothing at or below
+its outlet runs. That is the JS boundary response's cut, as a document; both
+go through `matchCutAtBoundary` (`rsc/server-action.ts`). Before, the document
+held `matchError`'s error segment alone, so the boundary rendered without the
+layouts above it. Pinned by `action-boundary-revalidation.rsc-test.tsx`,
+`rewrite-action.rsc-test.tsx` (on a rewrite target) and the `action-boundary`
+scenario (both apps).
+
 ### 4) Intercept request
 
 ```text
@@ -2379,7 +2390,7 @@ stayed on, and on the next page under that layout.
 | A loader above the boundary throws on its rerun                                   | that loader's error at its `useLoader` read, reported with phase `loader`; the action's error reported once with phase `action`                                                                                                                                                                        | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
 | Sent from an intercept (`X-RSC-Router-Intercept-Source`)                          | the error segment alone, as before                                                                                                                                                                                                                                                                     | `action-boundary-revalidation.rsc-test.tsx`                                                                           |
 | `matchPartial` returns null, throws anything but a redirect, or misses the outlet | the error segment alone, as before, and no handle values: the abandoned walk's pushes are dropped. A throw or a miss warns in development                                                                                                                                                              | null and a thrown non-redirect `Response`: `action-boundary-revalidation.rsc-test.tsx`; the miss (a guard) has no pin |
-| A form post without JavaScript                                                    | unchanged (`rsc/progressive-enhancement.ts`)                                                                                                                                                                                                                                                           | `[A3]`                                                                                                                |
+| A form post without JavaScript                                                    | the page as a document, cut at the boundary the same way: the layouts, slots and loaders above it, live; the error at the outlet; nothing below. A layout above that throws `redirect()` redirects; the fallbacks are the same. Before, the document held the error segment alone, without the layouts | `action-boundary-revalidation.rsc-test.tsx`, the `action-boundary` scenario (both apps), `[A3]`                       |
 | An earlier action's follow-up runs while the boundary shows (R4)                  | the follow-up holds the boundary: every segment above it renders, as in a request that holds nothing (no `revalidate()` runs, so a loader whose rule skipped the throwing action re-runs); nothing at or below it. The boundary stays mounted, the same node, and its stream continues                 | `action-boundary-revalidation.rsc-test.tsx`, `server-action-bridge.test.ts`, the `action-boundary` e2e (both apps)    |
 | The same, the boundary is the router's default one at the root                    | no follow-up: nothing is above the boundary, so the debt is dropped; the page holds nothing, so the next link re-renders all of it                                                                                                                                                                     | `server-action-bridge.test.ts`                                                                                        |
 | Back or Forward onto the entry that shows the boundary                            | the restore holds the ids above the boundary; a stale entry's revalidation holds those ids and names the boundary, so above it renders with the stale seed and nothing at or below it. The boundary stays, the same node. With nothing above it, no revalidation; on an intercept entry, none is named | `navigation-bridge.test.ts`, the `action-boundary` e2e (both apps)                                                    |

@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: without JavaScript, an action's error boundary renders inside the app's layouts
+
+**Before.** A form posted without JavaScript (before hydration, or with
+JavaScript off) whose action threw into an `errorBoundary()` answered with a
+document that held the boundary alone: the layouts above it, their slots and
+their navigation were missing, and a layout loader that read the action's
+write was not shown at all.
+
+**Now.** The document is the page with the boundary in place of what it
+covers, as the JavaScript path shows it. Every layout, slot and loader above
+the boundary renders, live, so a layout's count shows the action's write;
+nothing at or below the boundary runs. A layout above it that throws
+`redirect()` redirects. A route with no declared boundary still gets the
+router's default error page alone.
+
+```tsx
+layout(ShopLayout, () => [
+  loader(CartLoader), // ShopLayout renders the cart count and the nav
+  path("/product/:id", ProductPage, { name: "product" }, () => [
+    errorBoundary(<p>Could not add the item</p>),
+  ]),
+]);
+
+// <form action={addToCartThenFail}> posted without JavaScript:
+// Before: <p>Could not add the item</p>, no ShopLayout
+// Now:    ShopLayout (cart count with the write) around the boundary
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
