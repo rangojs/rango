@@ -162,6 +162,8 @@ import clientUrlsActionPatterns from "./urls/client-urls-action.js";
 import { staleDefaultsPatterns } from "./urls/stale-defaults.js";
 import { actionBoundaryPatterns } from "./urls/action-boundary.js";
 import { interceptBoundaryPatterns } from "./urls/intercept-boundary.js";
+import { interceptRedirectPatterns } from "./urls/intercept-redirect.js";
+import { slotRedirectPatterns } from "./urls/slot-redirect.js";
 import actionFailureClientPatterns from "./urls/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -1182,6 +1184,16 @@ export const urlpatterns = urls(
       // errorBoundary() (intercept-boundary.test.ts).
       include("/intercept-boundary", interceptBoundaryPatterns, {
         name: "interceptBoundary",
+      }),
+      // An intercept under loading() whose handler redirects on an action
+      // (intercept-redirect.test.ts).
+      include("/intercept-redirect", interceptRedirectPatterns, {
+        name: "interceptRedirect",
+      }),
+      // A parallel() slot under loading() whose handler redirects on an
+      // action (slot-redirect.test.ts).
+      include("/slot-redirect", slotRedirectPatterns, {
+        name: "slotRedirect",
       }),
       // A no-script document whose inline <Suspense> draws a client component
       // from a loader's answer (client-urls-loader-element.test.ts).

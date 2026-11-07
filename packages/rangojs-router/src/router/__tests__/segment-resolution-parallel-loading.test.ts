@@ -331,6 +331,131 @@ describe("segment-resolution parallel loading", () => {
     expect(result.segments[0]?.type).toBe("parallel");
   });
 
+  // An action awaits the handlers its revalidation re-renders
+  // (resolveRouteComponent), so a Response a slot handler produces
+  // short-circuits the answer instead of being serialised as the component.
+  function actionPass(context: any, deps: any) {
+    return {
+      context,
+      client: new Set(),
+      params: {},
+      prevParams: {},
+      request: context.request,
+      prevUrl: context.url,
+      nextUrl: context.url,
+      routeKey: "/blog",
+      actionContext: { actionId: "test#action" },
+      deps,
+    } as any;
+  }
+
+  it("awaits the parallel handler on an action when loading is set, so a returned Response short-circuits", async () => {
+    const response = new Response(null, { status: 204 });
+    const slotHandler = vi.fn(() => response);
+    const context = createContext();
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [createParallelEntry(slotHandler)],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    await expect(
+      resolveParallelSegments(actionPass(context, deps), entry, false),
+    ).rejects.toBe(response);
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("awaits the orphan parallel handler on an action when loading is set", async () => {
+    const response = new Response(null, { status: 204 });
+    const slotHandler = vi.fn(() => response);
+    const context = createContext();
+    const orphan = {
+      id: "blog.orphan",
+      type: "layout",
+      shortCode: "L1",
+      handler: "layout",
+      loading: "layout-loading",
+      loader: [],
+      layout: [],
+      parallel: [createParallelEntry(slotHandler)],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    await expect(
+      resolveOrphanLayout(actionPass(context, deps), orphan, false),
+    ).rejects.toBe(response);
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a synchronous Response a streamed slot handler returns, instead of rendering it", async () => {
+    // A synchronous Response is not a promise, so it never streams: it
+    // short-circuits the answer as a route handler's does.
+    const response = new Response(null, { status: 204 });
+    const slotHandler = vi.fn(() => response);
+    const context = createContext();
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [createParallelEntry(slotHandler)],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+    const deps = {
+      trackHandler: (p: any) => p,
+      findNearestErrorBoundary: () => null,
+      findNearestNotFoundBoundary: () => null,
+    } as any;
+
+    await expect(
+      resolveParallelSegments(
+        {
+          context,
+          client: new Set(),
+          params: {},
+          prevParams: {},
+          request: context.request,
+          prevUrl: context.url,
+          nextUrl: context.url,
+          routeKey: "/blog",
+          deps,
+        },
+        entry,
+        false,
+      ),
+    ).rejects.toBe(response);
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+  });
+
   describe("static slot value with loading false", () => {
     // A non-function slot value is the slot's content as declared: a
     // Promise (a React 19 ReactNode) goes to render as is, never awaited by
