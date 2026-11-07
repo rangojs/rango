@@ -4,16 +4,20 @@
 
 ### Docs: a client link into another module comes from the server
 
-`useReverse` joins every name with the nearest `include()` mount, whichever
-map it is given. So a module's `routes` map is right only under that module's
-own mount, and `router.named-routes.gen.ts` only at the root mount: in a
-project module at `/:accountId/:projectId`, `useReverse(accountRoutes)(".settings")`
-returns `/acme/web/settings` and `useReverse(NamedRoutes)("account.settings")`
-returns `/acme/web/acme/settings`, with no error. The `/links` skill now
-states this in its own "Links into another module" section, with these
-outputs and the server-built `CrossNav` example (`ctx.reverse("account.settings")`
-passed as a prop or loader data), and `/hooks` and `/typesafety` point to it.
-Behaviour is unchanged.
+**Before.** The `/links` skill said to use `useReverse(routes)` "to generate
+URLs into a known module", and kept the mount rule at the end of an unrelated
+section. `useReverse` joins every name with the nearest `include()` mount,
+whichever map it is given, so in a project module at `/:accountId/:projectId`
+`useReverse(accountRoutes)(".settings")` returns `/acme/web/settings` and
+`useReverse(NamedRoutes)("account.settings")` returns
+`/acme/web/acme/settings`, with no error.
+
+**Now.** `/links` has a "Links into another module" section: a module's
+`routes` map is right only under that module's own mount and
+`router.named-routes.gen.ts` only at the root mount, with the outputs above,
+and a link into another module is built on the server
+(`ctx.reverse("account.settings")`, `/acme/settings`) and passed as a prop or
+loader data. `/hooks` and `/typesafety` point to it. Behaviour is unchanged.
 
 ## 0.35.0 (2026-11-04)
 
