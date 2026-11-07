@@ -1,19 +1,7 @@
 import type { SpawnOptions } from "node:child_process";
 import path from "node:path";
 import test from "@playwright/test";
-import { runCli, ServerGuard } from "@rangojs/router/testing/e2e";
-
-async function waitForReady(url: string, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
-}
+import { runCli, ServerGuard, waitForReady } from "@rangojs/router/testing/e2e";
 
 export function useFixture(options: {
   root: string;
@@ -49,7 +37,10 @@ export function useFixture(options: {
       );
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
-      await waitForReady(baseURL);
+      await waitForReady(baseURL, () => ({
+        stdout: proc.stdout(),
+        stderr: proc.stderr(),
+      }));
     }
   });
 

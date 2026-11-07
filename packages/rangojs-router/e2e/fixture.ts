@@ -3,8 +3,11 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import test from "@playwright/test";
 import {
+  createIsolatedViteCacheDir,
   runCli as harnessRunCli,
   ServerGuard,
+  waitForReady,
+  warmupDevServer,
 } from "@rangojs/router/testing/e2e";
 import {
   assertFixtureModeMatchesProject,
@@ -26,75 +29,6 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       ...options.env,
     },
   });
-}
-
-function tailOutput(text: string, maxChars = 4000): string {
-  if (!text) return "(empty)";
-  if (text.length <= maxChars) return text;
-  return `...${text.slice(-maxChars)}`;
-}
-
-function createIsolatedViteCacheDir(
-  cwd: string,
-  projectName: string,
-  mode: "dev" | "build" | undefined,
-) {
-  const safeProjectName = projectName.replace(/[^a-zA-Z0-9_-]/g, "-");
-  return path.join(
-    cwd,
-    ".vite-isolated",
-    `${safeProjectName}-${mode ?? "server"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  );
-}
-
-async function waitForReady(
-  url: string,
-  getOutput?: () => { stdout: string; stderr: string },
-  timeoutMs = process.env.CI ? 60000 : 30000,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  const output = getOutput?.();
-  const details = output
-    ? `\nRecent stdout:\n${tailOutput(output.stdout)}\n\nRecent stderr:\n${tailOutput(output.stderr)}`
-    : "";
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}${details}`);
-}
-
-/**
- * Warm up an isolated dev server by making real SSR requests.
- * The first SSR request triggers Vite's dep optimizer to discover SSR deps.
- * After optimization, modules are re-evaluated and in-memory caches reset.
- * We retry until the server returns a stable 200, absorbing the dep
- * optimization cycle so subsequent test requests hit a settled server.
- */
-async function warmupDevServer(url: string) {
-  const deadline = Date.now() + 30_000;
-  let lastOk = 0;
-  // Need two consecutive OK responses to confirm the server is settled
-  // (first OK may precede dep optimization, second confirms stability).
-  while (Date.now() < deadline && lastOk < 2) {
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "text/html" },
-      });
-      if (res.ok) {
-        await res.text(); // consume body to complete SSR pipeline
-        lastOk++;
-      } else {
-        lastOk = 0;
-      }
-    } catch {
-      lastOk = 0;
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
 }
 
 export type Fixture = ReturnType<typeof useFixture>;

@@ -51,6 +51,36 @@ now the hook throws instead of starting it. A server killed at teardown no
 longer logs `exit code null`, and a server that exits with code 0 before
 printing a URL now fails `beforeAll` at once instead of at the 60 s timeout.
 
+### Added: `waitForReady`, `warmupDevServer` and `createIsolatedViteCacheDir` in `@rangojs/router/testing/e2e`
+
+**Before.** A fixture of your own built on `runCli` and `ServerGuard` still
+had to copy the steps `useFixture` runs between spawning a server and handing
+out its URL: polling it until it answers, warming the dev server's dep
+optimizer, and giving a server its own Vite cache directory.
+
+**Now.** The entry exports those steps too. `waitForReady(url, getOutput?,
+timeoutMs?)` polls `url` until it answers 2xx and, after `timeoutMs` (60 s
+when `CI` is set, 30 s otherwise), throws with the tail of `getOutput()`'s
+stdout and stderr. `warmupDevServer(url)` requests the page as a document
+until two answers in a row are OK, so the dep optimizer's reload happens
+before your tests run. `createIsolatedViteCacheDir(cwd, name, mode)` returns
+a fresh path under `<cwd>/.vite-isolated/` to pass to the server as its Vite
+`cacheDir`.
+
+```ts
+import { runCli, ServerGuard, waitForReady } from "@rangojs/router/testing/e2e";
+
+const servers = new ServerGuard();
+const server = servers.track(
+  runCli({ command: "pnpm preview", label: "preview", cwd: process.cwd() }),
+);
+const url = await server.findURL();
+await waitForReady(`${url}/health`, () => ({
+  stdout: server.stdout(),
+  stderr: server.stderr(),
+}));
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

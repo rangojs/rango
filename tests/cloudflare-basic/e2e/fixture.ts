@@ -5,6 +5,7 @@ import test from "@playwright/test";
 import {
   runCli as harnessRunCli,
   ServerGuard,
+  waitForReady,
 } from "@rangojs/router/testing/e2e";
 import {
   assertFixtureModeMatchesProject,
@@ -38,18 +39,6 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   });
 }
 
-async function waitForReady(url: string, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
-}
-
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -76,7 +65,14 @@ export function useFixture(options: {
 
   const awaitReady = async (): Promise<void> => {
     if (options.readyPath === false) return;
-    await waitForReady(new URL(options.readyPath ?? "/", baseURL).href);
+    // 30 s, under the 60 s CI hook timeout (playwright.config.ts), so a
+    // server that never answers fails here, with its output, rather than as a
+    // bare beforeAll timeout. waitForReady's own CI default is 60 s.
+    await waitForReady(
+      new URL(options.readyPath ?? "/", baseURL).href,
+      () => ({ stdout: proc.stdout(), stderr: proc.stderr() }),
+      30_000,
+    );
   };
 
   // Every dev test runs under the console guard (@shared/e2e console-guard.ts).

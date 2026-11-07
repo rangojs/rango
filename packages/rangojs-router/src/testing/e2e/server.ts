@@ -350,12 +350,19 @@ export class ServerGuard {
   };
 }
 
-export function tailOutput(text: string, maxChars = 4000): string {
+function tailOutput(text: string, maxChars = 4000): string {
   if (!text) return "(empty)";
   if (text.length <= maxChars) return text;
   return `...${text.slice(-maxChars)}`;
 }
 
+/**
+ * A fresh path under `<cwd>/.vite-isolated/` for one server's Vite cache, so
+ * servers of the same app do not share (and re-optimize) one deps cache.
+ * Nothing is created here: `useFixture` hands the path to the server as
+ * `RANGO_E2E_VITE_CACHE_DIR`, which the app's vite.config reads as `cacheDir`,
+ * and removes the directory in `afterAll`.
+ */
 export function createIsolatedViteCacheDir(
   cwd: string,
   projectName: string,
@@ -369,6 +376,11 @@ export function createIsolatedViteCacheDir(
   );
 }
 
+/**
+ * Poll `url` every 100 ms until it answers 2xx. Throws after `timeoutMs`
+ * (60 s when `CI` is set, 30 s otherwise), with the tail of `getOutput()`'s
+ * stdout and stderr when given, such as a `RunCliHandle`'s.
+ */
 export async function waitForReady(
   url: string,
   getOutput?: () => { stdout: string; stderr: string },

@@ -1636,7 +1636,12 @@ stopping it reaches the vite that `pnpm dev` spawns, and `ServerGuard` stops
 everything it tracks, escalating to SIGKILL for a group that outlives
 `exitWaitMs`. Track the server the moment it is spawned, before anything is
 awaited, so a `beforeAll` or fixture that fails while the server starts still
-stops it.
+stops it. The steps `useFixture` runs in between are exported too:
+`waitForReady(url, getOutput?, timeoutMs?)` polls until the URL answers 2xx
+and throws with the tail of the server's output when it never does,
+`warmupDevServer(url)` lets a fresh dev server's dep optimizer settle before
+your tests run, and `createIsolatedViteCacheDir(cwd, name, mode)` gives a
+server a Vite `cacheDir` of its own.
 
 ```ts
 import { test as base } from "@playwright/test";
@@ -1957,6 +1962,9 @@ rangoMatchers; // expect.extend -> toHaveRangoPathname(page, expected)
 runCli({ command, label?, cwd?, env?, ...spawnOptions }) // process-group leader; env laid over process.env
   -> { findURL(timeoutMs?), findPort(timeoutMs?), exitCode, done, kill(signal?), pid, stdout(), stderr(), proc };
 new ServerGuard({ exitWaitMs? }) // track(server) at spawn, assertLive(), dispose(): SIGTERM, then SIGKILL after exitWaitMs (10 s)
+waitForReady(url, getOutput?, timeoutMs?) // polls until 2xx; throws after timeoutMs (60 s with CI, else 30 s) with the output's tail
+warmupDevServer(url) // document requests until two OK in a row (dep optimizer settled), 30 s at most
+createIsolatedViteCacheDir(cwd, name, mode) // fresh <cwd>/.vite-isolated/... path for a server's Vite cacheDir
 ```
 
 ## Migration: from an ad-hoc fixture to the official harness
