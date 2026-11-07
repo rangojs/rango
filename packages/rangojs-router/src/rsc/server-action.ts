@@ -525,7 +525,7 @@ async function matchPartialAndRecord<TEnv>(
  * redirect.
  */
 async function matchBoundaryRevalidation<TEnv>(
-  { ctx, request, env, continuation, reqCtx }: ActionRevalidationInput<TEnv>,
+  { ctx, request, env, continuation }: ActionRevalidationInput<TEnv>,
   errorBoundary: MatchResult,
 ): Promise<MatchResult> {
   if (getInterceptSourceHeader(request)) {
@@ -535,7 +535,6 @@ async function matchBoundaryRevalidation<TEnv>(
   return matchCutAtBoundary(
     errorBoundary,
     continuation.actionContext.actionId,
-    reqCtx,
     (boundary) =>
       matchPartialAndRecord(ctx, request, env, {
         ...continuation.actionContext,
@@ -553,8 +552,7 @@ async function matchBoundaryRevalidation<TEnv>(
  */
 export async function matchCutAtBoundary(
   errorBoundary: MatchResult,
-  actionId: string | null | undefined,
-  reqCtx: ReturnType<typeof getRequestContext>,
+  actionId: string | undefined,
   match: (boundary: ResolvedSegment) => Promise<MatchResult | null>,
 ): Promise<MatchResult> {
   // matchError returns the error segment alone.
@@ -574,7 +572,7 @@ export async function matchCutAtBoundary(
     // Redirects as from a success's render (handler.ts
     // executeRenderWithMiddleware). matchError's 500 was the boundary's.
     if (error instanceof Response && isRedirectResponse(error)) {
-      reqCtx._setStatus(200);
+      getRequestContext()._setStatus(200);
       throw error;
     }
     failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
@@ -582,8 +580,9 @@ export async function matchCutAtBoundary(
   if (failure && process.env.NODE_ENV !== "production") {
     console.warn(
       `[@rangojs/router] Server action "${actionId}" threw into an error ` +
-        `boundary whose revalidation ${failure}. The response carries the ` +
-        `error segment alone, without the segments above it.`,
+        `boundary, and the render of the page above it ${failure}. The ` +
+        `response carries the error segment alone, without the segments ` +
+        `above it.`,
     );
   }
   setRequestContextParams(errorBoundary.params, errorBoundary.routeName);

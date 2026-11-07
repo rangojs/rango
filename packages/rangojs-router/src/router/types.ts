@@ -34,7 +34,9 @@ export type ActionContext = {
   formData?: FormData;
   /**
    * A thrown action's error segment (matchError), set on the action's
-   * revalidation (rsc/server-action.ts matchBoundaryRevalidation). The walk
+   * revalidation (rsc/server-action.ts matchBoundaryRevalidation) and on the
+   * full match of a no-JS form post's error document
+   * (rsc/progressive-enhancement.ts peErrorBoundaryPlan). The walk
    * (resolveAllSegments) resolves every entry above the segment's outlet as on
    * a success, emits the segment in the outlet's place and stops, so nothing
    * at or below the outlet runs. The pass skips the prerender store

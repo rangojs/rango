@@ -343,7 +343,11 @@ async function rerenderAfterFormAction<TEnv>(
 
   const boundary = failure?.boundary;
   const render = boundary
-    ? () => renderPeErrorBoundary(input, failure, boundary)
+    ? () =>
+        runRoutine(
+          peErrorBoundaryPlan(input, failure?.actionId ?? undefined, boundary),
+          { trace, owner: getRequestContext() },
+        )
     : renderPage;
 
   // Execute route middleware wrapping the render, if any.
@@ -569,20 +573,8 @@ async function matchPeFailure<TEnv>(
   return { error, actionId, boundary };
 }
 
-/** Render a failed PE post's boundary, inside route middleware. */
-function renderPeErrorBoundary<TEnv>(
-  input: PeRequestInput<TEnv>,
-  failure: PeFailure,
-  boundary: MatchResult,
-): Promise<Response> {
-  return runRoutine(peErrorBoundaryPlan(input, failure, boundary), {
-    trace: input.trace,
-    owner: getRequestContext(),
-  });
-}
-
 /**
- * A failed PE post's document: the page matched whole, as a document request,
+ * A failed PE post's document, rendered inside route middleware: the page matched whole, as a document request,
  * and cut at the boundary (ActionContext.boundary), so the layouts above the
  * boundary render around it with fresh loaders, as the JS path's boundary
  * response re-runs them above the boundary. Nothing at or below the
@@ -590,24 +582,22 @@ function renderPeErrorBoundary<TEnv>(
  */
 function* peErrorBoundaryPlan<TEnv>(
   input: PeRequestInput<TEnv>,
-  failure: PeFailure,
+  actionId: string | undefined,
   boundary: MatchResult,
 ): RoutinePlan<Response> {
-  const { ctx, env, url, handleStore } = input;
-  const actionId = failure.actionId ?? undefined;
+  const { ctx, env, handleStore } = input;
+  // A full match runs no revalidate(): the action context carries the cut,
+  // and the id onError reports. A route that redirects resolves no page: the
+  // boundary alone, as matchPartial's null gives the JS path.
   const errorResult = yield* step("match", () =>
-    matchCutAtBoundary(boundary, actionId, getRequestContext(), (segment) =>
-      ctx.router.match(
+    matchCutAtBoundary(boundary, actionId, async (segment) => {
+      const match = await ctx.router.match(
         peRenderRequest(input),
         { env },
-        {
-          actionId,
-          actionUrl: new URL(url),
-          actionResult: failure.error,
-          boundary: segment,
-        },
-      ),
-    ),
+        { actionId, boundary: segment },
+      );
+      return match.redirect ? null : match;
+    }),
   );
   // matchError's result alone: the abandoned walk's pushes are not the page's.
   const handles =

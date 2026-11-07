@@ -570,7 +570,9 @@ describe("a thrown action that keeps the error segment alone", () => {
       resolvedIds,
     });
     expect(shape(answer)).toEqual(shape(before.answer));
-    expect(warn.mock.calls.flat().join("\n")).not.toContain("revalidation");
+    expect(warn.mock.calls.flat().join("\n")).not.toContain(
+      "the render of the page above it",
+    );
   });
 
   it("an action whose revalidation throws a Response that is not a redirect, after a loader above the boundary ran: no push of that loader, and a warning", async () => {
@@ -593,7 +595,9 @@ describe("a thrown action that keeps the error segment alone", () => {
     expect(handles).toEqual({});
     expect(errors).toEqual([["action", "out of stock"]]);
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("whose revalidation threw a 403 Response"),
+      expect.stringContaining(
+        "the render of the page above it threw a 403 Response",
+      ),
     );
   });
 });
@@ -719,7 +723,9 @@ describe("a no-JS form post that throws into an errorBoundary()", () => {
     expect(answer.segments.map((s) => s.type)).toEqual(["error"]);
     expect(handles).toEqual({});
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("whose revalidation threw a 403 Response"),
+      expect.stringContaining(
+        "the render of the page above it threw a 403 Response",
+      ),
     );
   });
 });
