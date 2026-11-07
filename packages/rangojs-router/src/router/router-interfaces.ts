@@ -4,7 +4,12 @@ import type { ReverseFunction } from "../reverse.js";
 import type { UrlPatterns } from "../urls.js";
 import type { ClientUrlPatterns } from "../client-urls/types.js";
 import type { UrlBuilder, EnvCompatible } from "../urls/pattern-types.js";
-import type { ErrorInfo, MatchResult } from "../types";
+import type {
+  ErrorInfo,
+  MatchResult,
+  NotFoundInfo,
+  ResolvedSegment,
+} from "../types";
 import type { NonceProvider } from "../rsc/types.js";
 import type { ShellCaptureDebug } from "../rsc/shell-capture.js";
 import type { ExecutionContext } from "../server/request-context.js";
@@ -23,15 +28,37 @@ import type { ActionContext } from "./types.js";
 import type { DataNotFoundError } from "../errors.js";
 
 /**
- * A route's answer to a `notFound()` thrown while React rendered one of its
- * components (RSCRouter.resolveRenderNotFound).
+ * A payload segment whose component threw `notFound()` while React rendered
+ * it (RSCRouter.resolveRenderNotFound).
  */
-export interface RenderNotFound {
-  /** The route segment whose content the fallback replaces. */
+export interface RenderNotFoundThrower {
   segmentId: string;
-  /** The rendered not-found fallback. */
-  fallback: ReactNode;
+  segmentType: NotFoundInfo["segmentType"];
+  /** An intercept's slot: its fallback renders in the slot. */
+  intercept: boolean;
+  error: DataNotFoundError;
 }
+
+/**
+ * What the payload renders in place of a component's `notFound()`
+ * (RSCRouter.resolveRenderNotFound), shaped as a `notFound()` from the same
+ * segment's handler would have resolved (catchSegmentError).
+ */
+export type RenderNotFound =
+  | {
+      /**
+       * The matched-chain entry that catches it and the orphan layouts it
+       * renders: every segment they own (their own, their slots', their
+       * loaders') gives way to `segment`, the entry's `.notFound` segment.
+       */
+      entries: readonly string[];
+      segment: ResolvedSegment;
+    }
+  | {
+      /** An intercept's slot, whose component the fallback replaces. */
+      slotId: string;
+      component: ReactNode;
+    };
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -620,16 +647,15 @@ export interface RangoInternal<
   ): Promise<MatchResult | null>;
 
   /**
-   * What the route at `pathname` renders for a `notFound()` one of its
-   * components threw while React rendered it: the fallback a `notFound()`
-   * from the route's handler renders, and the route segment it replaces.
-   * Null when nothing matches.
+   * What the route at `pathname` renders for the `notFound()` each thrower's
+   * component threw while React rendered it: what a `notFound()` from that
+   * segment's handler renders. Empty when nothing matches.
    * @internal
    */
   resolveRenderNotFound(
     pathname: string,
-    error: DataNotFoundError,
-  ): Promise<RenderNotFound | null>;
+    throwers: readonly RenderNotFoundThrower[],
+  ): Promise<RenderNotFound[]>;
 
   /**
    * Low-level route matching function.

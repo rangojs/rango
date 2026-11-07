@@ -11,7 +11,10 @@ import {
   driveRscRenderPlan,
   renderRscFlightStage,
   renderRscResponse,
+  segmentsThrowingNotFound,
 } from "../render-pipeline.js";
+import { DataNotFoundError } from "../../errors.js";
+import type { ResolvedSegment } from "../../types.js";
 import {
   createRoutineTrace,
   runRoutine,
@@ -748,6 +751,43 @@ describe("a redirect React caught while rendering", () => {
     expect(await response.text()).toBe("0:shell\n1:E{}\n");
   });
 
+  it("the cancel of a render it answered is not reported as a rendering error", async () => {
+    const aborted = new DOMException(
+      "This operation was aborted",
+      "AbortError",
+    );
+    let cancelled = false;
+    const render = vi.fn(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            options?.onError?.(thrown());
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+          },
+          cancel() {
+            cancelled = true;
+            options?.onError?.(aborted);
+          },
+        }),
+    );
+    const { input, requestContext } = makeInput(render);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        { redirect: () => new Response(null, { status: 302 }) },
+      ),
+    );
+
+    expect(response.status).toBe(302);
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    expect(input.ctx.callOnError).not.toHaveBeenCalled();
+    expect(requestContext._renderErrors ?? []).not.toContain(aborted);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("leaves a Flight response unread when the caller answers no redirect", async () => {
     const stream = new ReadableStream<Uint8Array>();
     const { input, requestContext } = makeInput(() => stream);
@@ -757,5 +797,144 @@ describe("a redirect React caught while rendering", () => {
     );
 
     expect(response.body).toBe(stream);
+  });
+});
+
+describe("which segments' components throw notFound()", () => {
+  const segment = (id: string, component: unknown = id): ResolvedSegment => ({
+    id,
+    namespace: id,
+    type: "layout",
+    index: 0,
+    component: component as ResolvedSegment["component"],
+  });
+  const chunk = new TextEncoder().encode("0:row\n");
+  /** The not-founds the response's render reported, by message. */
+  const reported = (...messages: string[]) =>
+    messages.map((message) => new DataNotFoundError(message));
+
+  /**
+   * A probe render: each node is a segment's id, `script[id]` what its render
+   * does — report a not-found before its opening chunk ("sync"), after it
+   * ("late"), or nothing — and `open` keeps the stream from ever closing.
+   */
+  function probeRender(
+    script: Record<string, "sync" | "late" | undefined>,
+    open: ReadonlySet<string> = new Set(),
+  ) {
+    const cancelled: string[] = [];
+    const rendered: string[] = [];
+    const render = (node: unknown, onError: (error: unknown) => void) => {
+      const id = node as string;
+      rendered.push(id);
+      let live = true;
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (script[id] === "sync") onError(new DataNotFoundError(id));
+          onError(new Error("not a not-found"));
+          controller.enqueue(chunk);
+          setTimeout(() => {
+            if (script[id] === "late") onError(new DataNotFoundError(id));
+            if (live && !open.has(id)) controller.close();
+          }, 0);
+        },
+        cancel() {
+          live = false;
+          cancelled.push(id);
+        },
+      });
+    };
+    return { render, cancelled, rendered };
+  }
+
+  it("names each segment whose own render throws, in payload order, with its error", async () => {
+    const { render, rendered } = probeRender({ route: "sync", layout: "sync" });
+    const throwers = await segmentsThrowingNotFound(
+      [
+        segment("root"),
+        segment("layout"),
+        segment("empty", null),
+        segment("route"),
+      ],
+      render,
+      reported("layout", "route"),
+      "opened",
+    );
+    expect(throwers.map((t) => t.segment.id)).toEqual(["layout", "route"]);
+    expect(throwers.map((t) => t.error.message)).toEqual(["layout", "route"]);
+    expect(rendered).toEqual(["root", "layout", "route"]);
+  });
+
+  it("stops once it has as many as the response's render, whatever still streams", async () => {
+    const { render, cancelled } = probeRender(
+      { route: "sync" },
+      new Set(["root", "route"]),
+    );
+    const throwers = await segmentsThrowingNotFound(
+      [segment("root"), segment("route")],
+      render,
+      reported("route"),
+      "ended",
+    );
+    expect(throwers.map((t) => t.segment.id)).toEqual(["route"]);
+    expect(cancelled.sort()).toEqual(["root", "route"]);
+  });
+
+  it("a Flight response's probes stop at their opening chunk: a later throw is not its render's", async () => {
+    const { render } = probeRender({ route: "late" }, new Set(["route"]));
+    const throwers = await segmentsThrowingNotFound(
+      [segment("route")],
+      render,
+      reported("route"),
+      "opened",
+    );
+    expect(throwers).toEqual([]);
+  });
+
+  it("a document's probes run on to their end, as its html step did", async () => {
+    const { render } = probeRender({ layout: "late" });
+    const throwers = await segmentsThrowingNotFound(
+      [segment("layout"), segment("route")],
+      render,
+      reported("layout"),
+      "ended",
+    );
+    expect(throwers.map((t) => t.segment.id)).toEqual(["layout"]);
+  });
+
+  it("a probe that cannot render is skipped, the others still answer", async () => {
+    const { render } = probeRender({ route: "sync" });
+    const throwers = await segmentsThrowingNotFound(
+      [segment("broken"), segment("route")],
+      (node, onError) => {
+        if (node === "broken") throw new Error("cannot render");
+        return render(node, onError);
+      },
+      reported("route"),
+      "ended",
+    );
+    expect(throwers.map((t) => t.segment.id)).toEqual(["route"]);
+  });
+
+  it("a not-found the response's render did not report is not taken for one it did", async () => {
+    const { render } = probeRender({ route: "sync", layout: "late" });
+    const throwers = await segmentsThrowingNotFound(
+      [segment("layout"), segment("route")],
+      render,
+      reported("layout"),
+      "ended",
+    );
+    expect(throwers.map((t) => t.segment.id)).toEqual(["layout"]);
+  });
+
+  it("a component that does not throw again is not named", async () => {
+    const { render } = probeRender({});
+    const throwers = await segmentsThrowingNotFound(
+      [segment("layout"), segment("route")],
+      render,
+      reported("layout"),
+      "ended",
+    );
+    expect(throwers).toEqual([]);
   });
 });

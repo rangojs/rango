@@ -1215,7 +1215,7 @@ plan's reading and replaying), and the `component redirect` e2e describes in
 `e2e/component-redirect.test.ts` and
 `tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev + production).
 
-### A component that throws `notFound()` renders its route's `notFoundBoundary()`
+### A component that throws `notFound()` renders its segment's `notFoundBoundary()`
 
 `notFound()` thrown while React renders a component takes the same road as the
 redirect above: `catchSegmentError` never sees it, React reports it to the
@@ -1229,8 +1229,8 @@ Both answers go through one funnel, `answerRenderControl` in
 `render-pipeline.ts`. It runs at the two points described above (after the html
 step for a document, after the held opening chunk for a Flight response) and
 reads what that Flight render's `onError` received (`RscFlightStage.reported`):
-a redirect first (`renderRedirectOf`, it leaves the page), then a not-found
-(`renderNotFoundOf`). The classification only works there: the list holds the
+a redirect first (`renderRedirectOf`, it leaves the page), then the
+not-founds (`isDataNotFoundError`). The classification only works there: the list holds the
 original `DataNotFoundError`, not the masked copy the client decodes.
 
 Why not `_renderErrors`, which `onError` also pushes to: that list is the
@@ -1244,25 +1244,65 @@ well. The html stage's dev gate (`shellErrorAnsweredByRender`) reads the same
 
 A not-found has no response of its own to answer, so the plan renders again,
 once (`RscRenderOptions.notFound` returns the payload; the second render keeps
-`redirect` and drops `notFound`). The payload is the same one with the route
-segment's content replaced (`full-payload.ts` `payloadWithSegmentContent`) by
-what `router.resolveRenderNotFound` (`router/match-api.ts`) returns: the
-fallback a `notFound()` from the route's handler renders in `catchSegmentError`
-— the nearest `notFoundBoundary()` from the route entry, else the router's
-`notFound` option — and the 404 written to the request stub. Layouts, loaders
-and parallel slots keep their ids, so a navigation reconciles as it would for
-the healthy page. The handle streams are taken again from the handle store:
-the first render consumed the ones it serialized. The first render's body is
-cancelled before the second starts.
+`redirect` and drops `notFound`). Before it can, it has to know which
+segment's component threw, and that is the hard part: React reports no
+position with the error (Flight's `onError` gets the error alone), and the
+component ran long after its handler's segment scope ended, so nothing on the
+server ties the error to a segment.
 
-Why the route and not the segment that threw: React reports no position with
-the error, and the server sees only the original object. A component a route
-renders is the common case and lands exactly where a handler's `notFound()`
-would. A `notFound()` from a layout's or a parallel slot's own component still
-throws on the second render, so that response answers `404` with the layout's
-error row. An async component on a client navigation, a `loading()` route, a
-streamed handler and a PPR tail keep the error row, for the reason given for
-the redirect: the status line has committed.
+What does tie it: every segment's `component` is serialized on its own, and the
+client composes the tree. So `segmentsThrowingNotFound` (`render-pipeline.ts`)
+renders each segment's component alone, all at once, in a Flight render of its
+own whose output it throws away, and keeps the segments whose render reports a
+`DataNotFoundError`. Nothing those probes report is printed, recorded or
+handed to `onError`. A probe's not-found counts only against one the
+response's render reported with the same message: a probe is free to run past
+the point where that render decided, and a Suspense-wrapped component that is
+faster this time must not be taken for the one that threw. They stop as soon
+as every reported not-found is matched, or once each has got as far as that
+render had when it decided: its opening chunk for a Flight response, its end
+for a document (whose html step waited for async components outside a
+Suspense boundary). A component that does not throw again is not answered and
+the render keeps its error row; on a document that waits for the slowest
+segment's stream first. The cost is one more render of the page's components,
+split across the probes, and only on a render that reported a `notFound()`.
+Only `component` is probed: a `notFound()` from an intercept's `layout`
+element or a `loading()` fallback is not answered.
+
+`router.resolveRenderNotFound` (`router/match-api.ts`) turns the throwers into
+exactly what the same `notFound()` from that segment's handler resolves to, so
+the two cannot drift apart:
+
+| Thrower                                         | Handler path it mirrors                               | Answer                                                                                                                      |
+| ----------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| a route's or a layout's component               | `resolveAllSegments` -> `catchSegmentError(entry)`    | the entry's segments give way to its `.notFound` segment, fallback from the entry's nearest `notFoundBoundary()`            |
+| a parallel slot's or a routeless layout's       | `noteThrower`, then the owning chain entry's boundary | the same, for the matched-chain entry that resolves it (the orphans it renders included), `notFoundInfo` naming the thrower |
+| an intercept slot's (namespace `intercept:...`) | `renderInterceptHandlerError`                         | the fallback from the declaring entry's boundary replaces the slot's component, in `segments` and in `slots`                |
+
+Several throwers under one entry answer once, the entry's own first (its
+handler runs before its slots). `payloadWithNotFound` (`full-payload.ts`)
+applies the answers: an entry's `.notFound` segment takes the place of every
+segment it owns (`segmentEntryShortCode`: its own, its slots', its loaders')
+in `segments`, `matched`, `diff` and `resolvedIds`, but an intercept's slot:
+that one is resolved apart from its declaring entry's walk and stays, as it
+does when the entry's handler throws. The
+`.notFound` id matters on a navigation. Keeping the layout's own id (as the
+first version of this did for the route) stores the fallback under it, and a
+navigation to a sibling route holds a layout the client already has: the
+fallback would stay on screen where the layout belongs. With the handler's
+shape the client lacks the layout's id, and the next navigation renders it.
+The 404 is written once a payload renders an answer. The handle streams are
+taken again from the handle store: the first render consumed the ones it
+serialized.
+
+The first render's body is cancelled before the second starts, and its Flight
+stage stops reporting first (`RscFlightStage.stopReporting`): the
+`AbortError` that cancel hands to `onError` printed a "Rendering error" and
+reached the router's `onError` on every answered redirect and not-found.
+
+An async component on a client navigation, a `loading()` route, a streamed
+handler and a PPR tail keep the error row, for the reason given for the
+redirect: the status line has committed.
 
 A not-found is never stored: the response is a `404` (the document cache and the
 PPR capture refuse it by status), and the first render's error stays in

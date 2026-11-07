@@ -4,9 +4,12 @@
  * It is not a handler's throw, so catchSegmentError never sees it: React
  * reports it to the Flight onError and renders the nearest client boundary,
  * and the request used to answer a 200 error page (a document) or an error
- * row (a client navigation). The render answers it instead: the route renders
- * again with the fallback a notFound() from its handler renders (the nearest
- * notFoundBoundary, else the router's notFound option), and the 404.
+ * row (a client navigation). The render answers it instead: the page renders
+ * again with what a notFound() from the throwing segment's handler renders
+ * (the nearest notFoundBoundary, else the router's notFound option), and the
+ * 404. That holds for a route's component, a layout's, a parallel slot's, an
+ * orphan layout's and an intercept slot's: the payload is the one the same
+ * notFound() thrown by that segment's handler gives.
  *
  * A notFound() that arrives AFTER the body started streaming (a route with
  * loading(), a streamed handler) keeps the error row it always had: the status
@@ -27,6 +30,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { createRouter, notFound, redirect, urls } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
+import { deserializeResult } from "../../cache/segment-codec.js";
 
 function ThrowSync(): React.ReactNode {
   throw notFound("no such product");
@@ -241,5 +245,306 @@ describe("a component that throws notFound()", () => {
     const res = await serve(makeRouter(), "/ok");
     expect(res.response.status).toBe(200);
     expect(res.flight).toContain("fine");
+  });
+});
+
+// Each `/x` (a component throws) has a `/x-handler` twin built the same way
+// whose segment's handler throws the same notFound().
+const segmentPatterns = urls(
+  ({ path, layout, parallel, intercept, notFoundBoundary }) => [
+    layout(
+      ({ children }: { children?: React.ReactNode }) => (
+        <main>
+          <nav>site-nav</nav>
+          {children}
+        </main>
+      ),
+      () => [
+        notFoundBoundary(({ notFound }) => (
+          <p>
+            declared-not-found:{notFound.message}:{notFound.segmentType}
+          </p>
+        )),
+        layout(
+          () => (
+            <section>
+              <ThrowSync />
+            </section>
+          ),
+          () => [path("/layout", () => <p>page</p>, { name: "layout" })],
+        ),
+        layout(
+          () => notFound("no such product"),
+          () => [
+            path("/layout-handler", () => <p>page</p>, {
+              name: "layoutHandler",
+            }),
+          ],
+        ),
+        layout(
+          () => (
+            <section>
+              <ThrowAsync />
+            </section>
+          ),
+          () => [
+            path("/layout-async", () => <p>page</p>, { name: "layoutAsync" }),
+          ],
+        ),
+        layout(
+          () => <section>slot-owner</section>,
+          () => [
+            parallel({ "@side": () => <ThrowSync /> }),
+            path("/slot", () => <p>page</p>, { name: "slot" }),
+          ],
+        ),
+        layout(
+          () => <section>slot-owner</section>,
+          () => [
+            parallel({ "@side": () => notFound("no such product") }),
+            path("/slot-handler", () => <p>page</p>, { name: "slotHandler" }),
+          ],
+        ),
+        layout(
+          () => <section>orphan-owner</section>,
+          () => [
+            layout(() => (
+              <aside>
+                <ThrowSync />
+              </aside>
+            )),
+            path("/orphan", () => <p>page</p>, { name: "orphan" }),
+          ],
+        ),
+        layout(
+          () => <section>orphan-owner</section>,
+          () => [
+            layout(() => notFound("no such product")),
+            path("/orphan-handler", () => <p>page</p>, {
+              name: "orphanHandler",
+            }),
+          ],
+        ),
+        layout(
+          () => (
+            <section>
+              <ThrowSync />
+            </section>
+          ),
+          () => [
+            path("/layout-and-route", () => <ThrowSync />, { name: "lr" }),
+          ],
+        ),
+        path("/list", () => <ul>list</ul>, { name: "list" }),
+        path("/photo/:id", () => <figure>photo</figure>, { name: "photo" }),
+        path("/photo-handler/:id", () => <figure>photo</figure>, {
+          name: "photoHandler",
+        }),
+        intercept("@modal", ".photo", () => <ThrowSync />),
+        intercept("@modal", ".photoHandler", () => notFound("no such product")),
+        // The layout that declares an intercept throws on the intercepted
+        // page only.
+        layout(
+          (ctx) => (
+            <section>
+              {ctx.url.pathname.includes("/gallery/") ? <ThrowSync /> : null}
+            </section>
+          ),
+          () => [
+            path("/gallery", () => <ul>gallery</ul>, { name: "gallery" }),
+            path("/gallery/:id", () => <figure>photo</figure>, {
+              name: "galleryPhoto",
+            }),
+            intercept("@modal", ".galleryPhoto", () => (
+              <figure>gallery-modal</figure>
+            )),
+          ],
+        ),
+      ],
+    ),
+  ],
+);
+
+interface Metadata {
+  segments: Array<{
+    id: string;
+    type: string;
+    notFoundInfo?: { segmentType: string };
+  }>;
+  matched: string[];
+  diff: string[];
+  slots?: Record<string, { segments?: Array<{ id: string }> }>;
+}
+
+async function metadataOf(res: { flight?: string }): Promise<Metadata> {
+  return (await deserializeResult<{ metadata: Metadata }>(res.flight!))
+    .metadata;
+}
+
+/**
+ * A payload with its ids replaced by what they are, so a page and its
+ * handler twin (other shortCodes, the same structure) compare equal.
+ */
+function shapeOf(metadata: Metadata) {
+  const typeOf = new Map(
+    metadata.segments.map((s) => [
+      s.id,
+      s.notFoundInfo ? `notFound(${s.notFoundInfo.segmentType})` : s.type,
+    ]),
+  );
+  const name = (id: string) => typeOf.get(id) ?? "held";
+  return {
+    segments: metadata.segments.map((s) => name(s.id)),
+    matched: metadata.matched.map(name),
+    diff: metadata.diff.map(name),
+  };
+}
+
+describe("a layout's, a slot's and an intercept's component that throws notFound()", () => {
+  const router = () =>
+    createRouter({ onError: vi.fn() }).routes(
+      segmentPatterns as unknown as typeof patterns,
+    );
+
+  /** `path` and its handler twin, served the same way. */
+  async function twins(
+    path: string,
+    twin: string,
+    options: Parameters<typeof serve>[2] = {},
+  ) {
+    const fromComponent = await serve(router(), path, options);
+    resetShellTestState();
+    const fromHandler = await serve(router(), twin, options);
+    return { fromComponent, fromHandler };
+  }
+
+  for (const [label, partial] of [
+    ["document", undefined],
+    ["navigation", { from: "/list" }],
+  ] as const) {
+    it(`${label}: a layout's component renders what its handler's notFound() renders, with the 404`, async () => {
+      const { fromComponent, fromHandler } = await twins(
+        "/layout",
+        "/layout-handler",
+        { partial },
+      );
+      expect(fromComponent.response.status).toBe(404);
+      expect(fromComponent.flight).not.toMatch(ERROR_ROW);
+      expect(fromComponent.flight).toContain("declared-not-found:");
+      expect(fromComponent.flight).toContain("no such product");
+      expect(fromComponent.flight).toContain("site-nav");
+      const shape = shapeOf(await metadataOf(fromComponent));
+      expect(shape).toEqual(shapeOf(await metadataOf(fromHandler)));
+      // The layout's own id is gone: a navigation holds a layout it has, so
+      // the fallback must not be kept under it.
+      expect(shape.matched).toEqual([
+        "layout",
+        "layout",
+        "notFound(layout)",
+        "route",
+      ]);
+    });
+
+    it(`${label}: a parallel slot's component renders what its handler's notFound() renders, with the 404`, async () => {
+      const { fromComponent, fromHandler } = await twins(
+        "/slot",
+        "/slot-handler",
+        { partial },
+      );
+      expect(fromComponent.response.status).toBe(404);
+      expect(fromComponent.flight).not.toMatch(ERROR_ROW);
+      expect(fromComponent.flight).toContain("declared-not-found:");
+      const shape = shapeOf(await metadataOf(fromComponent));
+      expect(shape).toEqual(shapeOf(await metadataOf(fromHandler)));
+      expect(shape.segments).toContain("notFound(parallel)");
+      expect(shape.segments).not.toContain("parallel");
+    });
+
+    it(`${label}: an orphan layout's component renders what its handler's notFound() renders, with the 404`, async () => {
+      const { fromComponent, fromHandler } = await twins(
+        "/orphan",
+        "/orphan-handler",
+        { partial },
+      );
+      expect(fromComponent.response.status).toBe(404);
+      expect(fromComponent.flight).not.toMatch(ERROR_ROW);
+      expect(shapeOf(await metadataOf(fromComponent))).toEqual(
+        shapeOf(await metadataOf(fromHandler)),
+      );
+    });
+
+    it(`${label}: a layout's and its route's components that both throw leave no error row`, async () => {
+      const res = await serve(router(), "/layout-and-route", { partial });
+      expect(res.response.status).toBe(404);
+      expect(res.flight).not.toMatch(ERROR_ROW);
+      expect(shapeOf(await metadataOf(res)).segments).toEqual([
+        "layout",
+        "layout",
+        "notFound(layout)",
+        "notFound(route)",
+      ]);
+    });
+  }
+
+  it("document: a layout's async component answers the same 404", async () => {
+    const res = await serve(router(), "/layout-async");
+    expect(res.response.status).toBe(404);
+    expect(res.flight).not.toMatch(ERROR_ROW);
+    expect(shapeOf(await metadataOf(res)).segments).toContain(
+      "notFound(layout)",
+    );
+  });
+
+  it("navigation that holds the outer layouts: a layout's component answers the 404", async () => {
+    const list = await serve(router(), "/list", { partial: true });
+    const segments = (await metadataOf(list)).matched;
+    resetShellTestState();
+    const res = await serve(router(), "/layout", {
+      partial: { from: "/list", segments },
+    });
+    expect(res.response.status).toBe(404);
+    expect(res.flight).not.toMatch(ERROR_ROW);
+    const shape = shapeOf(await metadataOf(res));
+    expect(shape.matched).toEqual([
+      "held",
+      "held",
+      "notFound(layout)",
+      "route",
+    ]);
+    expect(shape.segments).toEqual(["notFound(layout)", "route"]);
+  });
+
+  it("intercept navigation: the slot's component renders the fallback in the slot, as its handler's notFound() does", async () => {
+    const list = await serve(router(), "/list", { partial: true });
+    const segments = (await metadataOf(list)).matched;
+    resetShellTestState();
+    const { fromComponent, fromHandler } = await twins(
+      "/photo/1",
+      "/photo-handler/1",
+      { partial: { from: "/list", segments } },
+    );
+    expect(fromComponent.response.status).toBe(404);
+    expect(fromComponent.flight).not.toMatch(ERROR_ROW);
+    expect(fromComponent.flight).toContain("declared-not-found:");
+    expect(fromComponent.flight).toContain('"parallel"');
+    const component = await metadataOf(fromComponent);
+    expect(shapeOf(component)).toEqual(shapeOf(await metadataOf(fromHandler)));
+    expect(component.slots?.["@modal"]?.segments?.length).toBe(1);
+  });
+
+  it("intercept navigation: the declaring layout's component answers its .notFound and keeps the intercept's slot", async () => {
+    const res = await serve(router(), "/gallery/1", {
+      partial: { from: "/gallery" },
+    });
+    expect(res.response.status).toBe(404);
+    expect(res.flight).not.toMatch(ERROR_ROW);
+    const metadata = await metadataOf(res);
+    expect(shapeOf(metadata).segments).toEqual([
+      "layout",
+      "layout",
+      "notFound(layout)",
+      "parallel",
+    ]);
+    expect(metadata.slots?.["@modal"]?.segments?.length).toBe(1);
   });
 });

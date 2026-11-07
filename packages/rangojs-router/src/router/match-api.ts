@@ -9,15 +9,17 @@ import {
   bindsLoaderCache,
   routeLoaderLanes,
 } from "./segment-resolution/loader-cache.js";
-import { RouteNotFoundError, type DataNotFoundError } from "../errors";
+import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
   createErrorSegment,
   createNotFoundInfo,
+  createNotFoundSegment,
   findInOrphans,
   findNearestErrorBoundary as findErrorBoundary,
   renderNotFoundFallback,
   resolveNotFoundFallback,
+  segmentEntryShortCode,
   withErrorBoundary,
   type NotFoundComponentOption,
 } from "./error-handling.js";
@@ -49,7 +51,10 @@ import type {
   ActionContext,
   SegmentResolutionDeps,
 } from "./types.js";
-import type { RenderNotFound } from "./router-interfaces.js";
+import type {
+  RenderNotFound,
+  RenderNotFoundThrower,
+} from "./router-interfaces.js";
 import {
   getRequestContext,
   _getRequestContext,
@@ -555,40 +560,131 @@ export async function createMatchContextForPartial<TEnv>(
 }
 
 /**
- * What a route renders for a `notFound()` one of its components threw while
- * React rendered it (rsc/render-pipeline.ts answerRenderControl): the
- * fallback a `notFound()` from the route's own handler renders
- * (catchSegmentError) — the nearest notFoundBoundary, else the router's
- * `notFound` option — and the id of the route segment it takes the place of.
- * Null when nothing matches. The caller writes the 404 once it renders it.
+ * What the route at `pathname` renders for the `notFound()` each thrower's
+ * component threw while React rendered it (rsc/render-pipeline.ts
+ * answerRenderControl): what a `notFound()` from the same segment's handler
+ * resolves to, so the two cannot drift apart.
+ *
+ * - A layout's, the route's, a parallel slot's or an orphan layout's: the
+ *   matched-chain entry that resolves it catches it (resolveAllSegments ->
+ *   catchSegmentError, after noteThrower for a slot or an orphan) and its
+ *   whole result becomes its `.notFound` segment, the fallback from that
+ *   entry's nearest notFoundBoundary naming the thrower. Several throwers
+ *   under one entry answer once, its own first, as its handler runs first.
+ * - An intercept's slot: the fallback from its declaring entry renders in the
+ *   slot (intercept-resolution.ts renderInterceptHandlerError).
+ *
+ * A thrower outside the matched chain gets no answer. The caller writes the
+ * 404 once it renders one.
  */
 export async function resolveRenderNotFound(
   pathname: string,
-  error: DataNotFoundError,
+  throwers: readonly RenderNotFoundThrower[],
   deps: {
     findMatch: MatchApiDeps["findMatch"];
     findNearestNotFoundBoundary: SegmentResolutionDeps["findNearestNotFoundBoundary"];
     notFoundComponent: NotFoundComponentOption | undefined;
   },
-): Promise<RenderNotFound | null> {
+): Promise<RenderNotFound[]> {
+  if (throwers.length === 0) return [];
   const matched = await deps.findMatch(pathname);
-  if (!matched) return null;
-  const entry = await loadManifest(
+  if (!matched) return [];
+  const route = await loadManifest(
     matched.entry,
     matched.routeKey,
     pathname,
     undefined,
     false,
   );
-  const fallback = renderNotFoundFallback(
+  const chain: EntryData[] = [];
+  for (let entry: EntryData | null = route; entry; entry = entry.parent) {
+    chain.unshift(entry);
+  }
+  const params: Record<string, string> = matched.params;
+  const fallbackFor = (entry: EntryData) =>
     resolveNotFoundFallback(
       deps.findNearestNotFoundBoundary(entry),
       deps.notFoundComponent,
       pathname,
-    ),
-    createNotFoundInfo(error, entry.shortCode, "route", pathname),
-  );
-  return { segmentId: entry.shortCode, fallback };
+    );
+  const infoFor = (thrower: RenderNotFoundThrower) =>
+    createNotFoundInfo(
+      thrower.error,
+      thrower.segmentId,
+      thrower.segmentType,
+      pathname,
+    );
+
+  const answers: RenderNotFound[] = [];
+  for (const entry of chain) {
+    const entries = renderedBy(entry, chain);
+    const caught = throwers.filter(
+      (thrower) =>
+        !thrower.intercept &&
+        entries.includes(segmentEntryShortCode(thrower.segmentId)),
+    );
+    const thrower =
+      caught.find((t) => t.segmentId === entry.shortCode) ?? caught[0];
+    if (!thrower) continue;
+    answers.push({
+      entries,
+      segment: createNotFoundSegment(
+        infoFor(thrower),
+        fallbackFor(entry),
+        entry,
+        params,
+      ),
+    });
+  }
+  for (const thrower of throwers) {
+    if (!thrower.intercept) continue;
+    const declaring = findRenderedEntry(
+      chain,
+      segmentEntryShortCode(thrower.segmentId),
+    );
+    if (!declaring) continue;
+    answers.push({
+      slotId: thrower.segmentId,
+      component: renderNotFoundFallback(
+        fallbackFor(declaring),
+        infoFor(thrower),
+      ),
+    });
+  }
+  return answers;
+}
+
+/**
+ * The shortCodes of `entry` and the orphan layouts its segment resolution
+ * renders with it (resolveSegment -> resolveOrphanLayout, recursively),
+ * skipping one that is itself on the chain (a bare cache() marker).
+ */
+function renderedBy(entry: EntryData, chain: readonly EntryData[]): string[] {
+  const codes = [entry.shortCode];
+  const visit = (owner: EntryData) => {
+    for (const orphan of owner.layout ?? []) {
+      if (chain.includes(orphan)) continue;
+      codes.push(orphan.shortCode);
+      visit(orphan);
+    }
+  };
+  visit(entry);
+  return codes;
+}
+
+/** The chain entry or orphan layout `shortCode` names (renderedBy). */
+function findRenderedEntry(
+  chain: readonly EntryData[],
+  shortCode: string,
+): EntryData | undefined {
+  for (const entry of chain) {
+    if (entry.shortCode === shortCode) return entry;
+    const orphan = findInOrphans(entry, (candidate) =>
+      candidate.shortCode === shortCode ? candidate : undefined,
+    );
+    if (orphan) return orphan;
+  }
+  return undefined;
 }
 
 /**

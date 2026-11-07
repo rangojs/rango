@@ -10,6 +10,7 @@ import { createResponseWithMergedHeaders } from "./helpers.js";
 import { isRedirectResponse } from "../response-utils.js";
 import { isDataNotFoundError, type DataNotFoundError } from "../errors.js";
 import type { RscPayload } from "./types.js";
+import type { ResolvedSegment } from "../types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
 // Canonical unions live in router/timeout.ts (the dependency-free leaf); these
@@ -98,6 +99,12 @@ export interface RscFlightStage {
    * not answer as its own (answerRenderControl).
    */
   reported: readonly unknown[];
+  /**
+   * The plan answers this render another way and is about to cancel its body
+   * (createRscRenderPlan): the AbortError that cancel reports to onError is
+   * not a rendering error, so from now on onError prints and records nothing.
+   */
+  stopReporting: () => void;
 }
 
 export interface RscPreparedHtmlRender {
@@ -119,16 +126,23 @@ export interface RscRenderOptions {
    */
   redirect?: (thrown: Response) => Response;
   /**
-   * The payload to render instead when a component threw `notFound()` while
-   * React rendered it. Like a redirect, it never reaches catchSegmentError:
-   * React renders the nearest client boundary and the response answered a 200
-   * error page. The render runs again once, on what this returns, before the
-   * status commits; undefined keeps the response as rendered. See
-   * answerRenderControl.
+   * The payload to render instead when components threw `notFound()` while
+   * React rendered them, given the payload segments whose component threw
+   * (segmentsThrowingNotFound). Like a redirect, it never reaches
+   * catchSegmentError: React renders the nearest client boundary and the
+   * response answered a 200 error page. The render runs again once, on what
+   * this returns, before the status commits; undefined keeps the response as
+   * rendered. See answerRenderControl.
    */
   notFound?: (
-    thrown: DataNotFoundError,
+    throwers: readonly NotFoundThrower[],
   ) => RscPayload | undefined | Promise<RscPayload | undefined>;
+}
+
+/** A payload segment whose own component threw `notFound()`. */
+export interface NotFoundThrower {
+  segment: ResolvedSegment;
+  error: DataNotFoundError;
 }
 
 interface RscFlightCommand<TEnv> {
@@ -190,9 +204,11 @@ function createFlightStage<TEnv>(
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
   const reported: unknown[] = [];
+  let superseded = false;
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      if (superseded) return;
       reported.push(error);
       renderErrors?.push(error);
       // A redirect a component threw is control flow, answered before the
@@ -211,7 +227,16 @@ function createFlightStage<TEnv>(
       });
     },
   });
-  return { type: "flight", payload: input.payload, stream, init, reported };
+  return {
+    type: "flight",
+    payload: input.payload,
+    stream,
+    init,
+    reported,
+    stopReporting: () => {
+      superseded = true;
+    },
+  };
 }
 
 function expectCommandResult(
@@ -305,8 +330,14 @@ export function* createRscRenderPlan<TEnv>(
       });
     response = answersControl
       ? yield* responseStep<TEnv>(async () => {
-          const control = await answerRenderControl(flight, options);
+          const control = await answerRenderControl(
+            input,
+            flight,
+            options,
+            "ended",
+          );
           if (!control) return respond();
+          flight.stopReporting();
           cancelBody(page.body);
           return "response" in control
             ? control.response
@@ -324,10 +355,16 @@ export function* createRscRenderPlan<TEnv>(
     response = yield* responseStep<TEnv>(async () => {
       const held = holdOpeningChunk(flight);
       await held.opened;
-      const control = await answerRenderControl(flight, options);
+      const control = await answerRenderControl(
+        input,
+        flight,
+        options,
+        "opened",
+      );
       if (!control) {
         return createResponseWithMergedHeaders(held.stage.stream, input.init);
       }
+      flight.stopReporting();
       await held.discard();
       return "response" in control
         ? control.response
@@ -349,30 +386,97 @@ export function* createRscRenderPlan<TEnv>(
  * status committed: a redirect's answer (options.redirect), or the payload to
  * render instead of a not-found (options.notFound). A redirect wins over a
  * not-found: it leaves the page. Undefined: answer the render as it is.
+ *
+ * `decided` is how far the response's own render had got when this runs: a
+ * document after its html step ("ended": an async component outside a
+ * Suspense boundary has thrown too), a Flight response after its opening
+ * chunk ("opened": only what the shell's components threw synchronously).
  */
-async function answerRenderControl(
+async function answerRenderControl<TEnv>(
+  input: RscRenderInput<TEnv>,
   flight: RscFlightStage,
   options: RscRenderOptions,
+  decided: "opened" | "ended",
 ): Promise<{ response: Response } | { payload: RscPayload } | undefined> {
   const { redirect: answerRedirect, notFound: renderInstead } = options;
   const redirect = answerRedirect && renderRedirectOf(flight.reported);
   if (redirect) return { response: answerRedirect(redirect) };
-  const notFound = renderInstead && renderNotFoundOf(flight.reported);
-  if (!notFound) return undefined;
-  const payload = await renderInstead(notFound);
+  if (!renderInstead) return undefined;
+  const thrown = flight.reported.filter(isDataNotFoundError);
+  if (thrown.length === 0) return undefined;
+  const throwers = await segmentsThrowingNotFound(
+    flight.payload.metadata?.segments ?? [],
+    (node, onError) =>
+      input.ctx.renderToReadableStream(node, {
+        temporaryReferences: input.temporaryReferences,
+        onError,
+      }),
+    thrown,
+    decided,
+  );
+  if (throwers.length === 0) return undefined;
+  const payload = await renderInstead(throwers);
   return payload ? { payload } : undefined;
 }
 
 /**
- * The `notFound()` a render threw, if it threw one (`errors` is a Flight
- * stage's `reported`): React reports it to the Flight onError like the
- * redirect (renderRedirectOf), and the copy the client decodes is masked in
- * production, so only the original here can be classified.
+ * The payload segments whose own component throws `notFound()`, in payload
+ * order, each with the first one it threw.
+ *
+ * React reports no position with an error (Flight's onError gets the error
+ * alone), and a component's `notFound()` runs during the Flight render, long
+ * after its handler's segment scope ended. But each segment's component is
+ * serialized on its own (the client composes the tree), so rendering each one
+ * alone tells which threw: every segment renders concurrently in a Flight
+ * render of its own whose output is discarded, and nothing is printed or
+ * recorded for the request.
+ *
+ * A probe's not-found counts only against one the response's render reported
+ * (`thrown`) with the same message, so a later one that render had not
+ * reached by its decision (a Suspense-wrapped component that is faster this
+ * time) is less likely to be taken for it. They stop once every reported one
+ * is matched, or once each has got as far as that render had (`decided`: its
+ * opening chunk, or its end, which waits for a slow stream). A component that
+ * does not throw again is not answered; the render keeps its error row as
+ * before.
  */
-export function renderNotFoundOf(
-  errors: readonly unknown[],
-): DataNotFoundError | undefined {
-  return errors.find(isDataNotFoundError);
+export async function segmentsThrowingNotFound(
+  segments: readonly ResolvedSegment[],
+  render: (
+    node: unknown,
+    onError: (error: unknown) => void,
+  ) => ReadableStream<Uint8Array>,
+  thrown: readonly DataNotFoundError[],
+  decided: "opened" | "ended",
+): Promise<NotFoundThrower[]> {
+  const first = new Map<ResolvedSegment, DataNotFoundError>();
+  const unmatched = thrown.map((error) => error.message);
+  let enough!: () => void;
+  const allMatched = new Promise<void>((resolve) => (enough = resolve));
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  const probes = segments.map(async (segment) => {
+    if (segment.component === null || segment.component === undefined) return;
+    try {
+      const reader = render(segment.component, (error) => {
+        if (!isDataNotFoundError(error)) return;
+        const match = unmatched.indexOf(error.message);
+        if (match < 0) return;
+        unmatched.splice(match, 1);
+        if (!first.has(segment)) first.set(segment, error);
+        if (unmatched.length === 0) enough();
+      }).getReader();
+      readers.push(reader);
+      while (!(await reader.read()).done && decided === "ended");
+    } catch {
+      // A probe that fails tells nothing about notFound().
+    }
+  });
+  await Promise.race([allMatched, Promise.all(probes)]);
+  for (const reader of readers) reader.cancel().catch(() => {});
+  return segments.flatMap((segment) => {
+    const error = first.get(segment);
+    return error ? [{ segment, error }] : [];
+  });
 }
 
 /**
@@ -383,7 +487,7 @@ export function renderNotFoundOf(
  * `errors` is a Flight stage's `reported`, so only what THIS render threw is
  * read, and only a real 3xx with a Location counts: an ordinary boundary error
  * and a streamed redirect that arrives after the body started leave the
- * response as it was (a notFound() is renderNotFoundOf's).
+ * response as it was (a notFound() is segmentsThrowingNotFound's).
  */
 export function renderRedirectOf(
   errors: readonly unknown[],

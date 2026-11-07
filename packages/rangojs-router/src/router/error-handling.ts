@@ -396,6 +396,19 @@ export function renderNotFoundFallback(
 }
 
 /**
+ * The shortCode of the entry a segment id belongs to: `M0L1` for `M0L1`, its
+ * slot `M0L1.@side`, its loader `M0L1D0.cart`, its slot's loader
+ * `M0L1.@sideD0.cart` and its `M0L1.notFound`/`M0L1` boundary segment. "D"
+ * followed by digits only ever names a loader (server/context.ts
+ * SHORT_CODE_PREFIX).
+ */
+export function segmentEntryShortCode(segmentId: string): string {
+  const dot = segmentId.indexOf(".");
+  const head = dot < 0 ? segmentId : segmentId.slice(0, dot);
+  return head.replace(/D\d+$/, "");
+}
+
+/**
  * Create a notFound segment with the fallback component
  * Renders the fallback with not found info
  */

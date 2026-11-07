@@ -1234,8 +1234,8 @@ export function createRouter<TEnv = any>(
       const env = input?.env ?? ({} as TEnv);
       return matchError(request, env, error, segmentType);
     },
-    resolveRenderNotFound: (pathname, error) =>
-      resolveRenderNotFound(pathname, error, {
+    resolveRenderNotFound: (pathname, throwers) =>
+      resolveRenderNotFound(pathname, throwers, {
         findMatch,
         findNearestNotFoundBoundary,
         notFoundComponent: notFound,

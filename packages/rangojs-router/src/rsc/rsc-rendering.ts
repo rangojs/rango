@@ -41,6 +41,7 @@ import {
   createRenderStageTraceBridge,
   renderRscFlightStage,
   renderRscResponse,
+  type NotFoundThrower,
 } from "./render-pipeline.js";
 import { markPrefetchOnRenderError } from "./prefetch-render-error.js";
 import {
@@ -56,10 +57,10 @@ import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
 import {
   buildFullPayload,
+  isInterceptSegment,
   payloadLocation,
-  payloadWithSegmentContent,
+  payloadWithNotFound,
 } from "./full-payload.js";
-import type { DataNotFoundError } from "../errors.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -1195,8 +1196,8 @@ function renderPreparedRscResponse<TEnv>(
       // result: the boundary renders it as an error page unless the render
       // answers it. Only the channels a client parses as Flight (a navigation,
       // an action) convert a redirect; a document follows a 3xx. A notFound()
-      // renders the route again with the fallback its handler's notFound()
-      // would render, and the 404. An explicit Accept: text/x-component
+      // renders the page again with what a notFound() from the throwing
+      // segment's handler would render, and the 404. An explicit Accept: text/x-component
       // document keeps the error row it had (a handler's redirect answers a raw
       // 3xx there), so nothing is held back for it.
       ...((!isFlightResponse ||
@@ -1209,24 +1210,35 @@ function renderPreparedRscResponse<TEnv>(
             basename: ctx.router.basename,
             createRedirectFlightResponse: ctx.createRedirectFlightResponse,
           }),
-        notFound: async (thrown: DataNotFoundError) => {
-          const answer = await ctx.router.resolveRenderNotFound(
+        notFound: async (throwers: readonly NotFoundThrower[]) => {
+          // A boundary's own fallback that throws is left as rendered.
+          const answers = await ctx.router.resolveRenderNotFound(
             url.pathname,
-            thrown,
+            throwers.flatMap(({ segment, error }) =>
+              segment.type === "layout" ||
+              segment.type === "route" ||
+              segment.type === "parallel"
+                ? [
+                    {
+                      segmentId: segment.id,
+                      segmentType: segment.type,
+                      intercept: isInterceptSegment(segment),
+                      error,
+                    },
+                  ]
+                : [],
+            ),
           );
-          const again =
-            answer &&
-            payloadWithSegmentContent(
-              payload,
-              answer.segmentId,
-              answer.fallback,
-              input.handleStore,
-              reqCtx,
-            );
+          const again = payloadWithNotFound(
+            payload,
+            answers,
+            input.handleStore,
+            reqCtx,
+          );
           // The 404 catchSegmentError writes for a handler's notFound(), only
-          // once the route renders the fallback.
+          // once the payload renders a fallback.
           if (again) reqCtx._setStatus(404);
-          return again || undefined;
+          return again;
         },
       }),
       ...(isFlightResponse

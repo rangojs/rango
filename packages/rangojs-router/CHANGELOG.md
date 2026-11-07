@@ -46,10 +46,7 @@ route's content, inside its layouts, and the response answers `404`. That
 holds on a document request and on a client navigation. The same limits as a
 component's `redirect()` apply: a `notFound()` thrown after the body started
 streaming (a route with `loading()`, a streamed handler, and on a client
-navigation an **async** component) keeps the error page. A `notFound()` thrown
-by a layout's or a parallel slot's own component answers `404`, but its
-layout still renders the error page: the render cannot tell which segment's
-component threw, and answers for the route.
+navigation an **async** component) keeps the error page.
 
 ```tsx
 async function Product({ id }: { id: string }) {
@@ -66,6 +63,50 @@ layout(<ShopLayout />, () => [
   }),
 ]);
 ```
+
+### Fixed: a layout's, a parallel slot's or an intercept's component that throws `notFound()` renders that segment's `notFoundBoundary()`
+
+**Before.** Only a route's own component was answered. A `notFound()` thrown
+by a component that a layout, a parallel slot, a routeless layout or an
+intercept renders still threw when the page rendered again for the route: the
+response answered `404` with the error page in the layout's place (a document
+and a client navigation alike), and an intercept's answered `200` with the
+error page in its slot.
+
+**Now.** Each is answered the way a `notFound()` from that segment's own
+handler is: a layout's, a parallel slot's or a routeless layout's renders the
+nearest `notFoundBoundary()` of the layout (or route) that declares it in that
+layout's place, and an intercept's renders it inside the intercept's slot,
+with a `404`. `notFound.segmentType` and `notFound.segmentId` name the segment
+that threw, and a navigation from there to a sibling route renders the layout
+again. The same limits apply: after the body started streaming, the error
+page stays.
+
+```tsx
+async function AccountGate({ id }: { id: string }) {
+  if (!(await db.accounts.exists(id))) notFound("No such account");
+  return null;
+}
+
+layout(<Shell />, () => [
+  notFoundBoundary(({ notFound }) => <p>{notFound.message}</p>),
+  // A page load or a client navigation to /accounts/missing/settings now
+  // answers 404 with the boundary above in this layout's place.
+  layout(
+    (ctx) => (
+      <AccountLayout>
+        <AccountGate id={ctx.params.id} />
+        <Outlet />
+      </AccountLayout>
+    ),
+    () => [path("/accounts/:id/settings", SettingsPage, { name: "settings" })],
+  ),
+]);
+```
+
+To find which segment threw, the router renders each segment's component on
+its own once more (the error React reports carries no position), only when a
+render reported a `notFound()`.
 
 ## 0.35.0 (2026-11-04)
 

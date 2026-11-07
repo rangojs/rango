@@ -605,8 +605,11 @@ path("/product/:slug", (ctx) => <Product slug={ctx.params.slug} />, {
   error above: under `loading()`, from a streamed handler, or from an async
   component on a client navigation, the error page renders instead. Throw it
   from the handler or a loader when the route must always answer 404.
-- It is answered for the route: from a layout's or a parallel slot's own
-  component it answers 404 but the layout still renders its error page.
+- A layout's, a parallel slot's, a routeless layout's or an intercept's
+  component is answered the same way, as that segment's handler throwing it:
+  the boundary renders in place of the layout (or route) that declares it,
+  and in an intercept's slot for an intercept. `notFound.segmentType` and
+  `notFound.segmentId` name the segment that threw.
 
 ## Redirects
 
