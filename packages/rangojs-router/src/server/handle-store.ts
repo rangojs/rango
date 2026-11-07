@@ -224,6 +224,13 @@ export interface HandleStore {
   ): void;
 
   /**
+   * Throw what push() throws for a push after the store completed, without
+   * pushing: a capture that diverts a push (cache/handle-capture.ts) still
+   * fails it where it was made. Optional for test doubles.
+   */
+  assertOpen?(handleName: string, segmentId: string): void;
+
+  /**
    * push() a cached unit's copy of a value `loaderId`'s body pushed
    * (handle-snapshot.ts appendHandles: a loader-cache or "use cache" HIT). If
    * that loader then runs live in this request, its first push removes every
@@ -914,11 +921,7 @@ export function createHandleStore(): HandleStore {
       loaderPush?: boolean,
       owner?: string,
     ): void {
-      if (completed) {
-        const error = createLateHandlePushError(handleName, segmentId);
-        if (this.onError) this.onError(error);
-        throw error;
-      }
+      if (completed) store.assertOpen!(handleName, segmentId);
 
       const { replayOf, placeholderOf, restoredOf } = replaying ?? {};
       // A record's copy is no loader's push. Any other push, while a loader
@@ -1033,6 +1036,13 @@ export function createHandleStore(): HandleStore {
       // Bump the version; each consumer's cursor decides when to clone+yield.
       version++;
       signalEmission();
+    },
+
+    assertOpen(handleName: string, segmentId: string): void {
+      if (!completed) return;
+      const error = createLateHandlePushError(handleName, segmentId);
+      if (store.onError) store.onError(error);
+      throw error;
     },
 
     // All three go through this.push: active captures see a copy like a live

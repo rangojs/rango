@@ -1484,11 +1484,15 @@ scope, and the entry stored what that render read. Now the capture diverts
 (`divert: true`, as the refresh's always did), `teeHandles`
 (`src/cache/handle-snapshot.ts`) encodes the record inside the scope as soon
 as the body returns, the write stores that encode, and the call delivers the
-decoded copy to the store before it returns (`deliverRecordedPushes`). A
-refusal in a handle value is an error row in the copy and refuses the entry;
-a copy whose root row fails falls back as the value does, on the handle
-encode's own errors (`pushErrors`), and a body that throws delivers its pushes
-as made, since nothing is stored.
+decoded copy to the store before it returns and before the write is scheduled
+(`deliverRecordedPushes`). A refusal in a handle value is an error row in the
+copy and refuses the entry. Without a copy (the tee could not start, or its
+root row failed, as a class instance fails it) the page gets the pushes
+themselves and the entry keeps none of them; a body that throws delivers its
+pushes as made, since nothing is stored. A push the store refuses because it
+completed still throws where it was made (`HandleStore.assertOpen`), so the
+body fails as it did, and a delivery the store refuses fails the call before
+anything is written.
 
 When the values arrive: before the call returns, in the order they were
 pushed, so they still land between the caller's own pushes before and after
@@ -1500,23 +1504,30 @@ does not hold back (each is its own later row). The client's commit of
 awaited the call has not returned either way.
 
 Delivery is "as made", not a hit's replay, because the miss's own pushes were
-never on the page: the function's own pushes are plain pushes, an inner hit's
-replay of a loader's pushes is that replay again (`replayLoaderPush`; the
-record key marks those groups, `useCacheRecordKey(replayed)`), and a loader
-that ran in the body has its pushes re-made inside its own body scope
-(`runInsideLoaderBodyScope`), so the store credits them to that run as it did
-the live ones. Delivering them as replays instead lost data: a loader the
+never on the page. The capture keeps each push's async context
+(`keepContexts`, `AsyncLocalStorage.snapshot()`), and each copy is pushed
+again inside it, so the store credits it to the loader bodies around it
+exactly as it did the live push (the outermost for the browser's `pushedBy`,
+the innermost with copies for a replacement). An inner hit's replay of a
+loader's pushes is made as that replay again (`replayLoaderPush`; the record
+key marks those groups, `useCacheRecordKey(replayed)`). Where the runtime has
+no snapshot, a loader's push is re-made inside that loader's body scope
+alone. Delivering them as a hit's replays instead lost data: a loader the
 body started and returned unawaited pushed again after the call returned,
 and that live push replaced the "replayed" copies of its own earlier pushes
 (`use-cache-handle-capture.test.ts`, "a loader the body started pushes after
-the call returned").
+the call returned"); re-making only the innermost loader body credited a push
+inside nested loaders to the inner one (`use-cache-handle-lazy.rsc-test.tsx`,
+"nested loader bodies").
 
 Nested captures needed one rule (`ensureInterceptorInstalled` in
 `src/cache/handle-capture.ts`): the captures that accept a push are nested
-and start in that order, so the interceptor walks them innermost first and
-stops after the first diverting one. An outer miss, or a loader's `cache()`
-capture around a miss, then records the inner miss's delivered copy once
-instead of the original and the copy. Two positions differ from the live
+and start in that order (`seq`), so the interceptor walks them innermost
+first and stops after the first diverting one, and while a miss redelivers
+(`redeliverPushes`) the captures that started after it, which recorded the
+original, skip the copy. An outer miss, or a loader's `cache()` capture
+around a miss, then records the inner miss's delivered copy once instead of
+the original and the copy. Two positions differ from the live
 pushes: a loader's placeholders (`pushPlaceholder`) that its run inside the
 body would have replaced in place are dropped when its run settles and its
 copies are appended, and an inner hit's replay inside the body loses the

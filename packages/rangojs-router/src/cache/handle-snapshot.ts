@@ -6,7 +6,11 @@
  * during segment resolution and stored alongside cached segments.
  */
 
-import { replayLoaderPush } from "./handle-capture.js";
+import {
+  redeliverPushes,
+  replayLoaderPush,
+  type HandleCapture,
+} from "./handle-capture.js";
 import { runInsideLoaderBodyScope } from "../server/context.js";
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore, RecordAuthority } from "../server/handle-store.js";
@@ -287,13 +291,25 @@ export async function restoreRecordHandles(
 }
 
 /**
- * Deliver a "use cache" MISS's recorded pushes (useCacheRecordKey groups),
- * which its capture diverted, to the store as they were made: the function's
- * own as plain pushes, an inner HIT's replay of a loader's pushes as that
- * replay (keys in `replayed`), and a loader's run as pushes inside that
- * loader's body, so the store credits them to its run as it did the live
- * ones (HandleStore.push): they replace that loader's copies, and a later
- * push of the same run follows them instead of replacing them. Nothing is
+ * The loader a record key's group belongs to: `${seq}:${loaderId}`, empty
+ * for `${seq}:` and for a key without ":" (a segment id, from a record
+ * written before owner keys or a caller without a segment).
+ */
+function recordKeyOwner(key: string): string {
+  const colon = key.indexOf(":");
+  return colon < 0 ? "" : key.slice(colon + 1);
+}
+
+/**
+ * Deliver a "use cache" MISS's recorded pushes, which its capture diverted
+ * (`handles`: the decoded copy of `capture.data`, or that data itself), to
+ * the store as they were made: each in the async context it was made in
+ * (`capture.contexts`), so the store credits it to the loader runs around
+ * it as it did the live push (HandleStore.push), and an inner HIT's replay
+ * of a loader's pushes as that replay (keys in `replayed`). So a loader's
+ * run replaces its copies with these pushes, and a later push of the same
+ * run follows them instead of replacing them. Where the runtime keeps no
+ * context, a loader's push is made inside that loader's body. Nothing is
  * claimed: each push was made for this request. `segmentId` redirects every
  * value to one segment (the caller's), as appendHandles does.
  */
@@ -301,27 +317,33 @@ export function deliverRecordedPushes(
   handles: Record<string, SegmentHandleData>,
   handleStore: HandleStore,
   segmentId: string | undefined,
+  capture: HandleCapture,
   replayed: ReadonlySet<string>,
 ): void {
-  for (const [key, segHandles] of Object.entries(handles)) {
-    const colon = key.indexOf(":");
-    const owner = colon < 0 ? "" : key.slice(colon + 1);
-    const target = segmentId ?? key;
-    for (const [handleName, values] of Object.entries(segHandles)) {
-      for (const value of values) {
-        if (!owner) {
-          handleStore.push(handleName, target, value);
-        } else if (replayed.has(key)) {
-          replayLoaderPush(handleStore, handleName, target, value, owner);
-        } else {
-          runInsideLoaderBodyScope(
-            () => handleStore.push(handleName, target, value),
-            owner,
-          );
-        }
+  redeliverPushes(capture, () => {
+    for (const [key, segHandles] of Object.entries(handles)) {
+      const owner = recordKeyOwner(key);
+      // A loader's run (not an inner HIT's replay of its pushes).
+      const runOwner = owner && !replayed.has(key) ? owner : undefined;
+      const target = segmentId ?? key;
+      for (const [handleName, values] of Object.entries(segHandles)) {
+        const contexts = capture.contexts?.[key]?.[handleName];
+        values.forEach((value, i) => {
+          const push = (): void => {
+            if (owner && !runOwner) {
+              replayLoaderPush(handleStore, handleName, target, value, owner);
+            } else {
+              handleStore.push(handleName, target, value);
+            }
+          };
+          const context = contexts?.[i];
+          if (context) context(push);
+          else if (runOwner) runInsideLoaderBodyScope(push, runOwner);
+          else push();
+        });
       }
     }
-  }
+  });
 }
 
 /**
@@ -360,10 +382,8 @@ export function appendHandles(
   claim: ((loaderId: string) => boolean) | undefined,
   unitLoader?: string,
 ): void {
-  const ownerOf = (key: string): string | undefined => {
-    const colon = key.indexOf(":");
-    return (colon < 0 ? "" : key.slice(colon + 1)) || unitLoader;
-  };
+  const ownerOf = (key: string): string | undefined =>
+    recordKeyOwner(key) || unitLoader;
   const claims = new Map<string, boolean>();
   const ask = (owner: string | undefined): void => {
     if (owner !== undefined && !claims.has(owner)) {

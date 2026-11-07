@@ -30,6 +30,8 @@ import {
   LazyLabels,
   LoaderThenableBlock,
   MiddleBlock,
+  NestedLoaderBlock,
+  NestingLoader,
   NestedThenableBlock,
   PlainLazyBlock,
   ThenableBlock,
@@ -63,6 +65,11 @@ function setup() {
       path("/plain", async (ctx) => <div>{await PlainLazyBlock(ctx)}</div>, {
         name: "plain",
       }),
+      path(
+        "/nested-loader",
+        async (ctx) => <div>{await NestedLoaderBlock(ctx)}</div>,
+        { name: "nestedLoader" },
+      ),
       path(
         "/order",
         async (ctx) => {
@@ -133,6 +140,22 @@ describe('lazy state a "use cache" function pushes into a handle', () => {
       );
     }
     expect(state.starts).toBe(2);
+    expect(messages()).toEqual([]);
+  });
+});
+
+describe('a "use cache" miss delivers its pushes as they were made', () => {
+  it("a push inside nested loader bodies stays credited to the outermost loader, as a live push is", async () => {
+    const { serve, messages } = setup();
+
+    const miss = await serve("/nested-loader", "alice");
+
+    expect(miss.body).toContain("nested-loader-push");
+    expect(miss.body).toMatch(
+      new RegExp(
+        `LazyLabels\\\\+u0000pushedBy[^}]*${NestingLoader.$$id.replace(/[$]/g, "\\$&")}`,
+      ),
+    );
     expect(messages()).toEqual([]);
   });
 });

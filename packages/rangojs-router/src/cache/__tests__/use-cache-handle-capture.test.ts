@@ -682,8 +682,12 @@ describe('"use cache" MISS delivering its diverted pushes', () => {
 
     // The entry recorded what the run pushed while the body ran.
     awaitOutliving = false;
-    const hit = await serve("/outliving");
-    expect(hit).toEqual(["home", "own", "dep-early"]);
+    try {
+      const hit = await serve("/outliving");
+      expect(hit).toEqual(["home", "own", "dep-early"]);
+    } finally {
+      awaitOutliving = true;
+    }
   });
 });
 

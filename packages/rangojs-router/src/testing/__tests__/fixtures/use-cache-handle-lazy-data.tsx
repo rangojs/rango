@@ -15,6 +15,9 @@ import {
 
 export const state: { starts: number } = { starts: 0 };
 
+/** Each block takes its route's ctx, whatever its params. */
+type BlockCtx = HandlerContext<any>;
+
 export const LazyNotes: Handle<ReactNode> = createHandle<ReactNode>(
   undefined,
   "test#LazyNotes",
@@ -61,9 +64,7 @@ function slowValue(name: string): ReactElement {
 }
 
 /** A React.lazy component, pushed as an element. */
-export async function LazyComponentBlock(
-  ctx: HandlerContext,
-): Promise<ReactElement> {
+export async function LazyComponentBlock(ctx: BlockCtx): Promise<ReactElement> {
   "use cache";
   const Lazy = lazy(async () => {
     state.starts += 1;
@@ -75,9 +76,7 @@ export async function LazyComponentBlock(
 }
 
 /** A memoizing thenable, pushed as the handle value. */
-export async function ThenableBlock(
-  ctx: HandlerContext,
-): Promise<ReactElement> {
+export async function ThenableBlock(ctx: BlockCtx): Promise<ReactElement> {
   "use cache";
   ctx.use(LazyLabels)(
     memoThenable(async () => {
@@ -90,7 +89,7 @@ export async function ThenableBlock(
 
 /** A memoizing thenable, nested in the pushed object. */
 export async function NestedThenableBlock(
-  ctx: HandlerContext,
+  ctx: BlockCtx,
 ): Promise<ReactElement> {
   "use cache";
   ctx.use(LazyLabels)({
@@ -117,7 +116,7 @@ export const ThenableLoader: LoaderDefinition<string> = createLoader(
 
 /** Reads ThenableLoader, so its run and its pushes are the execution's. */
 export async function LoaderThenableBlock(
-  ctx: HandlerContext,
+  ctx: BlockCtx,
 ): Promise<ReactElement> {
   "use cache";
   return slowValue(await ctx.use(ThenableLoader));
@@ -132,9 +131,7 @@ export const PlainPushLoader: LoaderDefinition<string> = createLoader(
 );
 
 /** The same shapes reading nothing request-scoped: stored and replayed. */
-export async function PlainLazyBlock(
-  ctx: HandlerContext,
-): Promise<ReactElement> {
+export async function PlainLazyBlock(ctx: BlockCtx): Promise<ReactElement> {
   "use cache";
   await ctx.use(PlainPushLoader);
   const Lazy = lazy(async () => {
@@ -151,8 +148,27 @@ export async function PlainLazyBlock(
   return slowValue("plain-lazy-block");
 }
 
+/** Pushes from its body; read only through NestingLoader. */
+export const NestedPushLoader: LoaderDefinition<string> = createLoader(
+  async (ctx) => {
+    ctx.use(LazyLabels)("nested-loader-push");
+    return "nested";
+  },
+);
+
+/** Reads NestedPushLoader, so its push is made inside both bodies. */
+export const NestingLoader: LoaderDefinition<string> = createLoader(
+  async (ctx) => `nesting-${await ctx.use(NestedPushLoader)}`,
+);
+
+/** Reads NestingLoader. */
+export async function NestedLoaderBlock(ctx: BlockCtx): Promise<string> {
+  "use cache";
+  return ctx.use(NestingLoader);
+}
+
 /** Pushes between the handler's own pushes. */
-export async function MiddleBlock(ctx: HandlerContext): Promise<string> {
+export async function MiddleBlock(ctx: BlockCtx): Promise<string> {
   "use cache";
   ctx.use(LazyLabels)("label-middle");
   return "middle-block";

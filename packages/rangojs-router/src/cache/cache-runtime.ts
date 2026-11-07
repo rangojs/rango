@@ -934,6 +934,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       ? startHandleCapture(handleStore, {
           accept: () => isInCacheExecChain(execScope),
           divert: true,
+          keepContexts: true,
           key: ownerKeyed ? useCacheRecordKey(replayedGroups) : undefined,
         })
       : undefined;
@@ -944,6 +945,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
         handles,
         handleStore!,
         callerSegmentId,
+        capture!.capture,
         replayedGroups,
       );
     };
@@ -974,23 +976,15 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     }
 
     let result: any;
-    let scoped: ReturnType<typeof inExecution>;
+    let scoped: ReturnType<typeof inExecution> | undefined;
+    let execFailed = false;
+    let execError: unknown;
     try {
       scoped = inExecution(execScope, () => fn.apply(this, args));
       result = await scoped.result;
-    } catch (execError) {
-      // The function threw: drop the in-flight entry and reject any waiters so
-      // they retry fresh, then propagate to this caller. Nothing is stored,
-      // so its pushes reach the page as they were made.
-      clearSelf();
-      rejectEnvelope(execError);
-      capture?.stop();
-      try {
-        if (capture) deliverPushes(capture.capture.data);
-      } catch {
-        // A late push: the body's own error is what the call reports.
-      }
-      throw execError;
+    } catch (error) {
+      execFailed = true;
+      execError = error;
     } finally {
       // Decrement ref count; symbol is deleted when it reaches zero
       for (const arg of taintedArgs) {
@@ -998,6 +992,19 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
       // Remove this capture token (order-independent, safe for concurrent use)
       capture?.stop();
+    }
+    if (execFailed) {
+      // The function threw: drop the in-flight entry and reject any waiters so
+      // they retry fresh, then propagate to this caller. Nothing is stored,
+      // so its pushes reach the page as they were made.
+      clearSelf();
+      rejectEnvelope(execError);
+      try {
+        if (capture) deliverPushes(capture.capture.data);
+      } catch {
+        // A late push: the body's own error is what the call reports.
+      }
+      throw execError;
     }
 
     // Read scoped.tags after awaiting result so post-await cacheTag() calls
@@ -1015,27 +1022,27 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // When waitUntil is available the leader waits for the copy's root row
     // only, not for the rest of the encode or the store write.
     // The recorded pushes are encoded the same way and their copy delivered
-    // below. Any encode error refuses the entry; a copy whose root row fails
-    // falls back on its own errors only.
+    // below. Any encode error refuses the entry; the value's root row falls
+    // back on the value's own errors only.
     const flightErrors: unknown[] = [];
     const valueErrors: unknown[] = [];
-    const pushErrors: unknown[] = [];
-    const collectInto =
-      (errors: unknown[]) =>
-      (error: unknown): void => {
-        errors.push(error);
-        flightErrors.push(error);
-      };
+    const onFlightError = (error: unknown): void => {
+      flightErrors.push(error);
+    };
     const encodedPushes = capture
       ? inExecution(
           execScope,
-          () => teeHandles(capture.capture.data, collectInto(pushErrors)),
+          () => teeHandles(capture.capture.data, onFlightError),
           recorded,
         ).result
       : undefined;
     const encoded = inExecution(
       execScope,
-      () => teeResult(result, collectInto(valueErrors)),
+      () =>
+        teeResult(result, (error) => {
+          valueErrors.push(error);
+          onFlightError(error);
+        }),
       recorded,
     ).result;
     const finalizeAndWrite = async (): Promise<void> => {
@@ -1115,43 +1122,54 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       }
     };
 
-    await runBackground(requestCtx, finalizeAndWrite, true);
-
-    // A root row that failed: a value Flight cannot encode (a function, a
-    // class instance) is not cached and reaches the page live, as it always
-    // has; anything else, a refused read above all, fails the call as the
-    // same read in the body does, with the encode's own error (production
-    // Flight redacts the decoded one).
-    const rootFailed = (errors: unknown[], decodeError: unknown): void => {
-      if (errors.length > 0 && errors.every(isUnsupportedValueError)) return;
-      throw errors[0] ?? decodeError;
-    };
-
     // The pushes reach the page before the call returns, as the live pushes
-    // the body made did.
+    // the body made did, and before the write is scheduled: a push the store
+    // refuses (one after it completed) fails the call and stores nothing, as
+    // it did in the body. Without a copy (the encode could not start, or its
+    // root row failed) the page gets the pushes themselves, and the entry
+    // keeps none of them: no stored handle value was rendered outside the
+    // guard.
     if (capture) {
-      const teedPushes = await encodedPushes;
-      if (teedPushes === null) {
-        // The encode could not start: none is stored.
-        deliverPushes(capture.capture.data);
-      } else if (teedPushes) {
-        let copy: Record<string, SegmentHandleData> | undefined;
-        try {
-          copy = await teedPushes.decoded;
-        } catch (decodeError) {
-          rootFailed(pushErrors, decodeError);
-        }
-        deliverPushes(copy ?? capture.capture.data);
+      // Undefined when nothing was pushed.
+      let delivered: Record<string, SegmentHandleData> | undefined;
+      try {
+        const teedPushes = await encodedPushes;
+        delivered =
+          teedPushes === null
+            ? capture.capture.data
+            : await teedPushes?.decoded;
+      } catch (decodeError) {
+        flightErrors.push(decodeError);
+        delivered = capture.capture.data;
+      }
+      try {
+        if (delivered) deliverPushes(delivered);
+      } catch (deliveryError) {
+        clearSelf();
+        rejectEnvelope(deliveryError);
+        throw deliveryError;
       }
     }
+
+    await runBackground(requestCtx, finalizeAndWrite, true);
 
     // The encode could not start: nothing is stored, the value renders live.
     if (!encoded) return result;
     try {
       return await encoded.decoded;
     } catch (decodeError) {
-      rootFailed(valueErrors, decodeError);
-      return result;
+      // The root row failed. A value Flight cannot encode (a function, a
+      // class instance) is not cached and renders live, as it always has;
+      // anything else, a refused read above all, fails the call as the same
+      // read in the body does, with the encode's own error (production
+      // Flight redacts the decoded one).
+      if (
+        valueErrors.length > 0 &&
+        valueErrors.every(isUnsupportedValueError)
+      ) {
+        return result;
+      }
+      throw valueErrors[0] ?? decodeError;
     }
   };
 
