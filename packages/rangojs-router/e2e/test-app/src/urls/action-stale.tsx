@@ -227,7 +227,9 @@ const ActionStaleBasket: Handler = async (ctx) => {
 // the basket's entry has left it, prefetches the basket (#1329: Back onto the
 // evicted entry after an action must not be answered by that prefetch, which
 // the action made stale). Prefetching last keeps the prefetch inside the
-// test-app's 60 s prefetchCacheTTL however slow the hops are.
+// test-app's 60 s prefetchCacheTTL however slow the hops are. It also links,
+// prefetched on hover, to the basket answering after 1500 ms: a prefetch of it
+// is still in flight when an action lands and Back reaches that entry.
 const BARE_HOP_PREFETCHING = 22;
 
 function ActionStaleBareLayout() {
@@ -242,10 +244,13 @@ function ActionStaleBareLayout() {
 // Links to the basket under the layout above, unprefetched: a forward
 // navigation back to it after another tab's write must not hold that layout's
 // loaders from its history entry. With ?prefetch=max-age it links to the
-// max-age page, prefetched on hover.
+// max-age page, prefetched on hover. Reads the cart after 300 ms; with ?delay
+// it reads the cart as the request arrives and answers `delay` ms later.
 const ActionStaleBareBasket: Handler = async (ctx) => {
-  await wait(300);
-  const { cart } = actionStaleState();
+  const delay = ctx.searchParams.get("delay");
+  const early = delay === null ? undefined : actionStaleState().cart;
+  await wait(delay === null ? 300 : Number(delay));
+  const cart = early ?? actionStaleState().cart;
   return (
     <div data-testid="as-bare-basket-page">
       <p data-testid="as-bare-basket">{`basket:${cart}`}</p>
@@ -318,6 +323,15 @@ const ActionStaleBareHop: Handler = (ctx) => {
           data-testid="as-hop-to-basket-prefetched"
         >
           Basket, prefetched
+        </Link>
+      )}
+      {n === BARE_HOP_PREFETCHING && (
+        <Link
+          to="/action-stale/bare/basket?delay=1500"
+          prefetch="hover"
+          data-testid="as-hop-to-slow-basket-prefetched"
+        >
+          Basket, answering after 1500 ms, prefetched on hover
         </Link>
       )}
     </div>

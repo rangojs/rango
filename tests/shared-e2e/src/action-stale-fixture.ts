@@ -26,6 +26,8 @@ export interface PartialRequest {
   /** A `prefetch: false` fill (`_rsc_fill`). */
   fill: boolean;
   at: number;
+  /** When its response headers arrived. */
+  respondedAt?: number;
   finished: boolean;
   finishedAt?: number;
   /** Cancelled or failed before its response ended. */
@@ -62,6 +64,7 @@ export function recordPartials(page: Page): PartialRequest[] {
   page.on("response", (response) => {
     const entry = entries.get(response.request());
     if (entry) {
+      entry.respondedAt = Date.now();
       entry.status = response.headers()["x-document-cache-status"] ?? null;
     }
   });

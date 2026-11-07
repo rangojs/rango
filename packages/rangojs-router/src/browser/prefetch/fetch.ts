@@ -504,7 +504,7 @@ function executePrefetchFetch(
       if (publishedKey === undefined) clearTimeout(timeoutId);
     });
 
-  setInflightPromiseWithAliases(inflightKeys, promise);
+  setInflightPromiseWithAliases(inflightKeys, promise, epoch);
   return promise;
 }
 

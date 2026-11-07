@@ -766,9 +766,12 @@ export interface FetchPartialOptions {
    * isPrefetchStale) may answer this navigation. Only a click sets it: it
    * revalidates its page once it settled (navigation-bridge.ts navigate,
    * partial-update.ts onStalePrefetch). For any other caller (Back/Forward on
-   * a history-cache miss, leaving an intercept) a stale stored entry is a
-   * miss, and a stale in-flight one is dropped and fetched again, so no path
-   * that never revalidates commits pre-write data.
+   * a history-cache miss, leaving an intercept) a stale stored entry and an
+   * in-flight one that started before the action are misses, the in-flight
+   * one without waiting for its headers (prefetch/cache.ts
+   * consumeInflightPrefetch); one an action made stale while it was awaited
+   * is dropped and fetched again. So no path that never revalidates commits
+   * pre-write data.
    */
   acceptStalePrefetch?: boolean;
 }

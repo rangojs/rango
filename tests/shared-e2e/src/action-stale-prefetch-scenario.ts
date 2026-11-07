@@ -31,7 +31,8 @@ import { waitForShellHydration } from "./shell-request.js";
  * invalidateClientCache() in the action still flushes and rotates. Other
  * tabs that share a segment mark theirs stale (or adopt the rotated state)
  * and refresh. Only a click takes a stale prefetch, once: Back
- * onto an entry the history cache evicted fetches the page.
+ * onto an entry the history cache evicted fetches the page, at once even
+ * while that page's stale prefetch is still in flight.
  *
  * Every case where a stale value shows asserts (a) the stale value at once,
  * (b) exactly one stale revalidation, (c) the fresh value in place.
@@ -240,6 +241,68 @@ export function runActionStalePrefetchTests(
       navigations(sent, "/action-stale/bare/basket").length,
       "Back fetched the page",
     ).toBeGreaterThan(before);
+  });
+
+  // The same Back while the stale prefetch of that page is still in flight:
+  // Back does not wait for its response to drop it, it fetches at once.
+  test("Back after an action onto an evicted entry fetches at once, without waiting on a stale prefetch still in flight", async ({
+    page,
+  }) => {
+    test.setTimeout(90000);
+    const path = "/action-stale/bare/basket";
+    await useKey(page, options, randomUUID());
+    const sent = recordPartials(page);
+    await page.goto(options.url(`${path}?delay=1500`));
+    await waitForShellHydration(page);
+    await expect(page.getByTestId("as-bare-basket")).toHaveText("basket:0");
+
+    // 22 entries evict the basket's from the history cache.
+    await page.getByTestId("as-to-hop").click();
+    await expect(page.getByTestId("as-hop-n")).toHaveText("hop:1");
+    for (let n = 2; n <= 22; n++) {
+      await page.getByTestId("as-to-next-hop").click();
+      await expect(page.getByTestId("as-hop-n")).toHaveText(`hop:${n}`);
+    }
+
+    // The last hop's render prefetch is of the basket without ?delay: let it
+    // finish, so the next prefetch of the path is the slow one.
+    await prefetched(sent, path);
+    const earlier = sent.filter(
+      (entry) => entry.prefetch && entry.path === path,
+    ).length;
+    await page.getByTestId("as-hop-to-slow-basket-prefetched").hover();
+    await expect
+      .poll(() => sent.filter((entry) => entry.prefetch && entry.path === path))
+      .toHaveLength(earlier + 1);
+    const inflight = sent.filter(
+      (entry) => entry.prefetch && entry.path === path,
+    )[earlier]!;
+    // Let the server read the cart (basket:0) before the write.
+    await page.waitForTimeout(400);
+    await page.getByTestId("as-bare-add").click();
+    await waitForSettledNow(page);
+    await expect(page.locator("html")).toHaveAttribute("data-as-result", "1");
+    expect(
+      inflight.finished,
+      "the prefetch is in flight after the action",
+    ).toBe(false);
+
+    const before = navigations(sent, path).length;
+    await recordTexts(page, "as-bare-basket");
+    await page.evaluate(() => history.go(-22));
+    await expect
+      .poll(() => navigations(sent, path).length, "Back fetches the page")
+      .toBeGreaterThan(before);
+    const back = navigations(sent, path)[before]!;
+    expect(
+      back.at < (inflight.respondedAt ?? Infinity),
+      `Back's request leaves before the stale prefetch's response arrives (Back at ${back.at}, prefetch answered at ${inflight.respondedAt})`,
+    ).toBe(true);
+    await expect(page.getByTestId("as-bare-basket")).toHaveText("basket:1");
+    expect(
+      await readTexts(page),
+      "the page is fetched: the stale prefetch never shows",
+    ).toEqual(["basket:1"]);
   });
 
   // A prefetch still in flight when the action lands finishes and is stored

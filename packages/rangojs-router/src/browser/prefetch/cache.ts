@@ -192,7 +192,18 @@ const inflight = new Set<string>();
 // skipped sweep never serves a stale entry. Infinity when the cache is empty.
 let earliestTimestamp = Infinity;
 
-const inflightPromises = new Map<string, Promise<DecodedPrefetch | null>>();
+/**
+ * An in-flight prefetch: the promise of its decoded entry, and the stale
+ * epoch its fetch started under (`DecodedPrefetch.epoch`). The epoch is known
+ * before the headers arrive, so a lookup can tell a stale fetch from a fresh
+ * one without awaiting it (consumeInflightPrefetch).
+ */
+interface InflightPrefetch {
+  promise: Promise<DecodedPrefetch | null>;
+  epoch: number;
+}
+
+const inflightPromises = new Map<string, InflightPrefetch>();
 
 const inflightAliases = new Map<string, string[]>();
 
@@ -437,12 +448,20 @@ export function consumePrefetch(
  * `prefetchDirect()` or other callers from starting a duplicate request
  * during the handoff window. The inflight flag is cleaned up naturally
  * by `clearPrefetchInflight()` in the fetch's `.finally()`.
+ *
+ * A fetch that started before the latest `markPrefetchesStale()` is adopted
+ * only by a caller that passes `acceptStale` (a click), as `consumePrefetch`
+ * serves a stale stored entry. For any other caller it is a miss at once, so
+ * the caller fetches without first waiting for headers it would drop. It is
+ * left in flight, unadopted: it lands stored stale and a click may take it.
  */
 export function consumeInflightPrefetch(
   key: string,
+  options?: { acceptStale?: boolean },
 ): Promise<DecodedPrefetch | null> | null {
-  const promise = inflightPromises.get(key);
-  if (!promise) return null;
+  const inflightPrefetch = inflightPromises.get(key);
+  if (!inflightPrefetch) return null;
+  if (isPrefetchStale(inflightPrefetch) && !options?.acceptStale) return null;
   // Remove the promise under every alias so a second consumer cannot
   // adopt the same stream and race on the body, and mark every alias as
   // adopted so the pending `storePrefetch` (which resolves later, after this
@@ -454,7 +473,7 @@ export function consumeInflightPrefetch(
     inflightPromises.delete(k);
     adoptedKeys.add(k);
   });
-  return promise;
+  return inflightPrefetch.promise;
 }
 
 /**
@@ -578,25 +597,33 @@ export function markPrefetchInflight(key: string): void {
   inflight.add(key);
 }
 
+/**
+ * Register an in-flight prefetch under one key. `epoch` is the stale epoch
+ * its fetch started under (`currentPrefetchEpoch()`).
+ */
 export function setInflightPromise(
   key: string,
   promise: Promise<DecodedPrefetch | null>,
+  epoch: number,
 ): void {
-  inflightPromises.set(key, promise);
+  inflightPromises.set(key, { promise, epoch });
 }
 
 /**
  * Store the same in-flight Promise under multiple keys, recording them
  * as sibling aliases. Consuming or clearing any one alias atomically
  * removes every entry, guaranteeing the shared Response stream has a
- * single consumer even when navigation looks up either key.
+ * single consumer even when navigation looks up either key. `epoch` is the
+ * stale epoch the fetch started under, the one its entry will carry.
  */
 export function setInflightPromiseWithAliases(
   keys: string[],
   promise: Promise<DecodedPrefetch | null>,
+  epoch: number,
 ): void {
+  const inflightPrefetch: InflightPrefetch = { promise, epoch };
   for (const k of keys) {
-    inflightPromises.set(k, promise);
+    inflightPromises.set(k, inflightPrefetch);
     inflightAliases.set(k, keys);
   }
 }
