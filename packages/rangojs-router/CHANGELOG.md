@@ -22,7 +22,8 @@ and script preloads, `preinit` (the route's CSS), `preloadModule` (its
 chunks), `preconnect` and `prefetchDNS` still start during the prefetch, so
 a prefetched click paints without a flash of unstyled content or fallback
 fonts; a hover prefetch and `useRouter().prefetch()` (intent) start every
-hint as before.
+hint as before, and a hover over a link a viewport prefetch already answered
+starts the hints that prefetch held, without a new request.
 
 ```tsx
 // A product page that preloads its hero image.

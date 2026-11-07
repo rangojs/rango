@@ -335,7 +335,7 @@ The rule: **prefetch broadly, and flag what is expensive.**
 - A viewport or render prefetch does not download the page's images: the
   `preload()` hints it carries for anything but styles, fonts and scripts
   start at the click that uses it. A hover or `useRouter().prefetch()` starts
-  them at once. Styles, fonts, scripts and the route's chunks load with every
+  them at once, the hover also when a viewport prefetch already answered it. Styles, fonts, scripts and the route's chunks load with every
   prefetch, so a prefetched click paints without a flash.
 - On a server route, `loading(fallback, { prefetch: false })` keeps the whole
   entry behind that fallback out of the prefetch (`/route`, "`loading()`

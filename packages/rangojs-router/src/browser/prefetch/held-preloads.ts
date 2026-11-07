@@ -72,7 +72,7 @@ const COLON = 0x3a;
 const COMMA = 0x2c;
 const NEWLINE = 0x0a;
 const TAG_HINT = 0x48; // "H"
-const CODE_PRELOAD = "L";
+const CODE_PRELOAD = 0x4c; // "L"
 
 /** The filter's place in the current row. */
 const Row = {
@@ -86,8 +86,10 @@ const Row = {
   Binary: 3,
   /** A row that runs to `\n`, passed through. */
   Text: 4,
-  /** A hint row, buffered to its `\n` to decide whether it is held. */
-  Hint: 5,
+  /** A hint row's code, the byte after `H`. */
+  HintCode: 5,
+  /** A preload hint row, buffered to its `\n` to decide whether it is held. */
+  Hint: 6,
 } as const;
 type RowState = (typeof Row)[keyof typeof Row];
 
@@ -96,14 +98,13 @@ function hexDigit(byte: number): number {
 }
 
 /**
- * The `preload` a hint row asks for when the hold keeps it: an `L` row whose
- * destination is not one PRELOAD_EAGERLY names. Null for any other row,
- * including one that does not parse (the decoder sees it as it came).
+ * The `preload` an `L` hint row asks for when the hold keeps it: one whose
+ * destination is not one PRELOAD_EAGERLY names. Null for any other, including
+ * a row that does not parse (the decoder sees it as it came).
  */
 function heldPreload(row: string): PreloadHint | null {
-  // `<id>:HL[...]\n`: the code follows the tag; the id is empty in practice.
+  // `<id>:HL[...]\n`: the model follows the code; the id is empty in practice.
   const tagAt = row.indexOf(":");
-  if (row[tagAt + 2] !== CODE_PRELOAD) return null;
   let model: unknown;
   try {
     model = JSON.parse(row.slice(tagAt + 3));
@@ -175,7 +176,7 @@ function holdRows(
             if (tag === TAG_HINT) {
               rowBytes.push(chunk.subarray(i, i + 1));
               from = i = i + 1;
-              state = Row.Hint;
+              state = Row.HintCode;
               break;
             }
             // Not a hint row: its id and `:` pass on, then the row itself.
@@ -211,6 +212,17 @@ function holdRows(
               i = newline + 1;
               state = Row.Id;
             }
+            break;
+          }
+          case Row.HintCode: {
+            if (chunk[i] === CODE_PRELOAD) {
+              state = Row.Hint;
+              break;
+            }
+            // Any other hint passes on as it is, its id and tag first.
+            for (const part of rowBytes) controller.enqueue(part);
+            rowBytes = [];
+            state = Row.Text;
             break;
           }
           case Row.Hint: {

@@ -423,6 +423,51 @@ describe("a prefetch's preloads", () => {
     expect(preloaded()).toEqual(["/site.css", "/site.css", "/hero.webp"]);
   });
 
+  it("a hover over a link a speculative prefetch answered starts its held preloads, with no new request", async () => {
+    prefetchQueued("/blog", ["A0"], "v1");
+    await settle();
+    expect(preloaded()).toEqual(["/site.css"]);
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    expect(preloaded()).toEqual(["/site.css", "/hero.webp"]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hover while a speculative prefetch is in flight starts its held preloads once they arrive", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let respond!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            respond = resolve;
+          }),
+      ),
+    );
+    prefetchQueued("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    prefetchDirect("/blog", ["A0"], "v1");
+    respond(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+          },
+        }),
+      ),
+    );
+    controller.enqueue(encoder.encode(PAGE));
+    controller.close();
+    // Released when the headers arrived, so the hero starts as its row comes.
+    await vi.waitFor(() =>
+      expect(preloaded()).toEqual(["/hero.webp", "/site.css"]),
+    );
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("an intent prefetch (hover) starts them as it decodes", async () => {
     prefetchDirect("/blog", ["A0"], "v1");
     await vi.waitFor(() => expect(preloaded()).toContain("/site.css"));

@@ -14,6 +14,8 @@ const BASE = "/prefetch-preloads";
 // handler call itself.
 function Target(): ReactNode {
   preload(`${BASE}/hero.svg`, { as: "image", fetchPriority: "high" });
+  // Kept, so it starts during the prefetch, after the hero's row.
+  preload(`${BASE}/kept.css`, { as: "style" });
   return <p data-testid="pp-target">target</p>;
 }
 

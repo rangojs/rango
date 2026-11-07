@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import { expect, test, type Response } from "@playwright/test";
 import { waitForShellHydration } from "./shell-request.js";
 
 /**
@@ -9,9 +9,11 @@ import { waitForShellHydration } from "./shell-request.js";
  * Fixture: prefetch-preloads* in each app, mounted at "/prefetch-preloads": a
  * layout with a `prefetch="viewport"` link to `/target` above `/home`, and
  * `/target`, which calls `preload("/prefetch-preloads/hero.svg", { as:
- * "image" })` and renders no image. The test serves the image itself and
- * counts its requests. Both apps call this from a dev and a (production)
- * describe.
+ * "image" })`, then `preload("/prefetch-preloads/kept.css", { as: "style" })`,
+ * and renders no image. A style preload is not held, so once its request
+ * leaves, the prefetch's decode has passed the hero's row. The test serves
+ * both and counts their requests. Both apps call this from a dev and a
+ * (production) describe.
  */
 export interface PrefetchPreloadsScenarioOptions {
   url: (pathname: string) => string;
@@ -19,22 +21,13 @@ export interface PrefetchPreloadsScenarioOptions {
 
 const BASE = "/prefetch-preloads";
 const HERO = `${BASE}/hero.svg`;
+const KEPT = `${BASE}/kept.css`;
 const SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>`;
 
 function isTargetPartial(response: Response): boolean {
   const url = new URL(response.url());
   return (
     url.pathname === `${BASE}/target` && url.searchParams.has("_rsc_partial")
-  );
-}
-
-/** Lets the browser act on what it decoded: a frame and a macrotask. */
-async function settle(page: Page): Promise<void> {
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => setTimeout(resolve, 200)),
-      ),
   );
 }
 
@@ -48,6 +41,11 @@ export function runPrefetchPreloadsTests(
     await page.route(`**${HERO}`, (route) => {
       heroRequests.push(route.request().url());
       return route.fulfill({ contentType: "image/svg+xml", body: SVG });
+    });
+    const keptRequests: string[] = [];
+    await page.route(`**${KEPT}`, (route) => {
+      keptRequests.push(route.request().url());
+      return route.fulfill({ contentType: "text/css", body: "" });
     });
     const partials: Response[] = [];
     page.on("response", (response) => {
@@ -64,7 +62,7 @@ export function runPrefetchPreloadsTests(
     const prefetch = await prefetched;
     // The hint is in the payload: the server sent it, the client held it.
     expect((await prefetch.body()).toString()).toContain(`"${HERO}"`);
-    await settle(page);
+    await expect.poll(() => keptRequests.length).toBe(1);
     expect(heroRequests).toEqual([]);
     await expect(
       page.locator(`link[rel="preload"][href="${HERO}"]`),

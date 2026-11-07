@@ -384,6 +384,19 @@ export function hasPrefetch(key: string): boolean {
 }
 
 /**
+ * Start the preloads a speculative prefetch under `key` held
+ * (DecodedPrefetch.heldPreloads), stored or still in flight, without
+ * consuming it: an intent prefetch (a hover) that this one answers.
+ */
+export function releaseHeldPreloads(key: string): void {
+  cache.get(key)?.entry.heldPreloads?.release();
+  // The in-flight promise never rejects (fetch.ts catches into null).
+  void inflightPromises
+    .get(key)
+    ?.then((entry) => entry?.heldPreloads?.release());
+}
+
+/**
  * Consume a cached, eagerly-decoded prefetch. Returns null if not found or
  * expired. Returns null when caching is disabled (TTL <= 0).
  *

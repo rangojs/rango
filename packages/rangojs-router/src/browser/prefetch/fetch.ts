@@ -26,6 +26,7 @@ import {
   setInflightPromiseWithAliases,
   storePrefetch,
   removePrefetch,
+  releaseHeldPreloads,
   clearPrefetchInflight,
   currentGeneration,
   currentPrefetchEpoch,
@@ -557,21 +558,21 @@ function executePrefetchFetch(
  * otherwise the source slot would stay unpopulated and navigation from
  * this source would fall through to the (potentially wrong) wildcard
  * response, defeating the opt-out.
+ *
+ * Returns the key that hit, or undefined on a miss.
  */
-function hasPrefetchHit(
+function prefetchHitKey(
   forceSourceScope: boolean,
   wildcardKey: string,
   sourceKey: string,
   stateKey: string,
   targetUrl: URL,
-): boolean {
-  if (forceSourceScope) return hasPrefetch(sourceKey);
-  return (
-    hasPrefetch(wildcardKey) ||
-    hasPrefetch(sourceKey) ||
-    paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).some(
-      hasPrefetch,
-    )
+): string | undefined {
+  if (forceSourceScope) return hasPrefetch(sourceKey) ? sourceKey : undefined;
+  if (hasPrefetch(wildcardKey)) return wildcardKey;
+  if (hasPrefetch(sourceKey)) return sourceKey;
+  return paramsCandidateKeys(stateKey, targetUrl, getCommittedPage()).find(
+    hasPrefetch,
   );
 }
 
@@ -585,6 +586,7 @@ function hasPrefetchHit(
  * `loading()` work included. It runs only on a miss: a cached prefetch or one
  * in flight, even a speculative one that deferred work, is used as it is,
  * and its click sends the fill as before (docs/design/prefetch-false.md, R16).
+ * The preloads such a speculative one held start now (held-preloads.ts).
  *
  * By default the wildcard key (Rango-state-keyed) is used for inflight
  * dedup and for responses that are not source-sensitive; source-scoped
@@ -618,15 +620,17 @@ export function prefetchDirect(
   const stateKey = stateEpoch(rangoState);
   const wildcardKey = buildPrefetchKey(stateKey, targetUrl);
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
-  if (
-    hasPrefetchHit(
-      forceSourceScope,
-      wildcardKey,
-      sourceKey,
-      stateKey,
-      targetUrl,
-    )
-  ) {
+  const hitKey = prefetchHitKey(
+    forceSourceScope,
+    wildcardKey,
+    sourceKey,
+    stateKey,
+    targetUrl,
+  );
+  if (hitKey !== undefined) {
+    // An intent prefetch starts every hint, and a speculative prefetch of the
+    // page answers this one: start the preloads it held.
+    releaseHeldPreloads(hitKey);
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] direct dedup (key already exists)", {
         url,
@@ -686,13 +690,13 @@ export function prefetchQueued(
   const sourceKey = buildSourceKey(stateKey, sourceHref, targetUrl);
   const queueKey = forceSourceScope ? sourceKey : wildcardKey;
   if (
-    hasPrefetchHit(
+    prefetchHitKey(
       forceSourceScope,
       wildcardKey,
       sourceKey,
       stateKey,
       targetUrl,
-    )
+    ) !== undefined
   ) {
     if (IS_BROWSER_DEBUG) {
       debugLog("[prefetch] queued dedup (key already exists)", {
@@ -716,13 +720,13 @@ export function prefetchQueued(
     // Re-check at execution time: a hover-triggered prefetchDirect may
     // have started or completed this key while the item sat in the queue.
     if (
-      hasPrefetchHit(
+      prefetchHitKey(
         forceSourceScope,
         wildcardKey,
         sourceKey,
         stateKey,
         targetUrl,
-      )
+      ) !== undefined
     ) {
       return Promise.resolve();
     }
