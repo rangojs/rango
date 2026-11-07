@@ -1,14 +1,14 @@
 /**
  * A held intercept slot whose loaders skip revalidate(), through
  * serveShellRequest's JS `action` call and the browser's own reconcile and
- * fold steps.
+ * tree-build steps.
  *
  * An intercept's loaders are loader segments of its slot
  * (`${parent}.@modalD${i}.${$$id}`, router/intercept-resolution.ts), each
  * revalidated on its own. A loader whose revalidate() answers false is left
  * out of the response; the browser keeps its cached segment (it is in
- * `matched`) and folds every loader segment back onto the slot as one
- * aggregate (segment-system.tsx foldInterceptLoaders), so renderSlotContent
+ * `matched`) and its tree build hands every loader segment to the slot as one
+ * aggregate (segment-system.tsx slotLoaderFields), so renderSlotContent
  * (client.tsx) mounts the slot's LoaderBoundary with all of them. Before the
  * loaders were segments, a slot sent with none of them replaced the cached
  * aggregate and the modal's `useLoader()` threw "data not found in context".
@@ -44,7 +44,7 @@ import {
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
-import { foldInterceptLoaders } from "../../segment-system.js";
+import { renderedSlot } from "./helpers/rendered-slot.js";
 import type { ResolvedSegment } from "../../types.js";
 
 const runs = { a: 0, b: 0 };
@@ -118,8 +118,8 @@ async function metadataOf(flight: string | undefined): Promise<Metadata> {
 /**
  * Open the modal from /list, then call a server action from it (the
  * intercept source still names /list). Returns the modal slot as the browser
- * renders it after reconciling the action's response (folded, on the action
- * lane).
+ * renders it after reconciling the action's response (its loaders on it, on a
+ * lane that settles them, as the action lane does).
  */
 async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
   const router = makeRouter(a, b, target);
@@ -132,7 +132,7 @@ async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
       })
     ).flight,
   );
-  const openedSlot = await foldedSlot(opened.segments);
+  const openedSlot = await renderedSlot(opened.segments, "@modal");
 
   const answered = await metadataOf(
     (
@@ -156,22 +156,11 @@ async function slotAfterAction(a: Mode, b: Mode, target: Target = "live") {
     serverSegments: answered.segments,
     cachedSegments: opened.segments,
   });
-  const slot = await foldedSlot(reconciled.interceptSegments);
+  const slot = await renderedSlot(reconciled.interceptSegments, "@modal");
   const sentLoaders = answered.segments
     .filter((s) => s.type === "loader" && s.id.includes(".@modalD"))
     .map((s) => s.loaderId);
   return { openedSlot, sentSlot, sentLoaders, slot };
-}
-
-/** The modal slot `segments` render, its loader segments folded onto it. */
-async function foldedSlot(
-  segments: ResolvedSegment[],
-): Promise<ResolvedSegment> {
-  const intercept = segments.filter((s) =>
-    s.namespace?.startsWith("intercept:"),
-  );
-  const folded = await foldInterceptLoaders(intercept, true);
-  return folded.find((s) => s.slot === "@modal")!;
 }
 
 beforeEach(async () => {

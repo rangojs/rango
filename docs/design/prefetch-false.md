@@ -2198,14 +2198,17 @@ the slot's own in declaration order (`match-result.ts`): one order for the
 prefetch, its fill, an action and a revisit, so a fill's identity check
 passes.
 
-The browser folds the loader segments back onto the slot before it builds the
-tree (`foldInterceptLoaders` in `segment-system.tsx`): one aggregate,
-memoized on the loaders' data, read by the slot's `LoaderBoundary` as before.
-Walked as loaders they would attach to the slot's parent, whose subtree (the
-page under the modal) would change shape and remount. The aggregate is
-settled before the commit when nothing in it is deferred and the slot has no
-`loading()`, or the lane settles loaders, so a modal with no `loading()`
-commits whole, as when the server awaited its loaders (it still does).
+The browser's tree walk hands the loader segments to the slot
+(`segmentTreeWalk` and `slotLoaderFields` in `segment-system.tsx`): one
+aggregate, memoized on the loaders' data, read by the slot's `LoaderBoundary`
+as before, on a new slot object. They are grouped under the slot's id and never
+handed to the slot's parent, whatever the parent renders: as the parent's
+loaders they would change its wrappers, and the page under the modal would
+remount. The aggregate follows a parallel slot's one settle rule: settled
+before the commit when nothing in it is deferred and the lane settles loaders,
+every loader paid the pre-flush await, or the slot has no `loading()`, so a
+modal with no `loading()` commits whole, as when the server awaited its
+loaders (it still does).
 
 A modal with no `loading()` and a deferred loader shows an empty slot from
 the click until the fill: `LoaderBoundary`'s own `<Suspense fallback={null}>`

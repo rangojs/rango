@@ -560,8 +560,8 @@ server projection.
   (`resolveOwnerLoaders` with a `LoaderOwner`); a prefetch that resolves an
   intercept defers its flagged loaders only
   (`resolveInterceptDeferralScope`), its fill carries the intercept source,
-  and the browser folds the loader segments onto the slot
-  (`foldInterceptLoaders`, `segment-system.tsx`). Browser: `browser/partial-update.ts`
+  and the browser's tree walk hands the loader segments to the slot
+  (`segmentTreeWalk`, `slotLoaderFields`, `segment-system.tsx`). Browser: `browser/partial-update.ts`
   (`armHoles`, `fillHoles`), `browser/defer.ts` (`Defer`, `readDefer`,
   `asStream`), read in `route-content-wrapper.tsx` (`Suspender`),
   `use-loader.tsx`, `segment-system.tsx` and `client.tsx`

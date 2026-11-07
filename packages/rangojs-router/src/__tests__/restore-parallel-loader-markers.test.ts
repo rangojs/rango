@@ -86,4 +86,22 @@ describe("restoreParallelLoaderMarkers (D6)", () => {
       "PANEL_SKELETON",
     );
   });
+
+  it("leaves an intercept slot's loaders unmarked: they are the slot's own segments", () => {
+    const segments = [
+      seg({
+        id: "L0.@modal",
+        type: "parallel",
+        namespace: "intercept:item",
+        loading: "MODAL_SKELETON" as unknown as ResolvedSegment["loading"],
+      }),
+      seg({
+        id: "L0.@modalD0.x",
+        type: "loader",
+        namespace: "intercept:item",
+      }),
+    ];
+
+    expect(restoreParallelLoaderMarkers(segments)).toBe(segments);
+  });
 });

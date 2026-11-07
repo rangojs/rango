@@ -28,6 +28,7 @@ import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
 import { getMemoizedLoaderPromise } from "./segment-loader-promise.js";
 import { loaderParentId } from "./browser/react/filter-segment-order.js";
+import { isInterceptSegment } from "./browser/intercept-utils.js";
 import {
   auditSegmentElement,
   finishTreeAudit,
@@ -78,7 +79,13 @@ export function restoreParallelLoaderMarkers(
     const segment = segments[i];
 
     if (segment.type === "parallel") {
-      if (segment.namespace && isRenderableLoading(segment.loading)) {
+      // An intercept slot's loaders share its namespace but are its own
+      // segments, handed to it by id (segmentTreeWalk): no marker.
+      if (
+        segment.namespace &&
+        !isInterceptSegment(segment) &&
+        isRenderableLoading(segment.loading)
+      ) {
         parallelLoadingByNamespace.set(segment.namespace, segment.loading);
       }
       continue;
@@ -102,60 +109,6 @@ export function restoreParallelLoaderMarkers(
   }
 
   return nextSegments ?? segments;
-}
-
-/**
- * An intercept's loaders arrive as loader segments of its slot
- * (`${slot.id}D${i}.${$$id}`, router/intercept-resolution.ts). Folded back
- * onto the slot before the tree walk, as one aggregate the slot's
- * LoaderBoundary reads (client.tsx renderSlotContent): walked as loaders they
- * would attach to the slot's parent, whose subtree (the page under the modal)
- * would change shape and remount. Any other loader segment passes through; a
- * list with nothing to fold is returned as it is, synchronously.
- * The slot is a new object (rule 6, suspense-contract.md); its aggregate is
- * memoized on the loaders' data (rule 1). Settled before the commit when
- * nothing in it is deferred and the slot has no loading() or the lane settles
- * loaders (forceAwait, action): a modal with no loading() commits whole, as
- * when the server awaited its loaders.
- */
-export function foldInterceptLoaders(
-  segments: ResolvedSegment[],
-  settleLoaders: boolean,
-): ResolvedSegment[] | Promise<ResolvedSegment[]> {
-  const loadersBySlot = new Map<string, ResolvedSegment[]>();
-  const rest: ResolvedSegment[] = [];
-  for (const segment of segments) {
-    // Only a slot's loader has a slot id, `${shortCode}.@${name}`, as parent.
-    const parentId =
-      segment.type === "loader" && segment.id.includes(".@")
-        ? loaderParentId(segment.id)
-        : "";
-    if (parentId.includes(".@")) pushToGroup(loadersBySlot, parentId, segment);
-    else rest.push(segment);
-  }
-  if (loadersBySlot.size === 0) return segments;
-  const fold = async (
-    slot: ResolvedSegment,
-    loaders: ResolvedSegment[],
-  ): Promise<ResolvedSegment> => {
-    const aggregate = getMemoizedLoaderPromise(loaders);
-    return {
-      ...slot,
-      loaderIds: loaders.map((l) => l.loaderId!),
-      loaderDataPromise: settlesLoaders(
-        loaders,
-        settleLoaders || !isRenderableLoading(slot.loading),
-      )
-        ? await aggregate
-        : aggregate,
-    };
-  };
-  return Promise.all(
-    rest.map((slot) => {
-      const loaders = loadersBySlot.get(slot.id);
-      return loaders ? fold(slot, loaders) : slot;
-    }),
-  );
 }
 
 /**
@@ -364,6 +317,65 @@ function settlesLoaders(loaders: ResolvedSegment[], lane: boolean): boolean {
   return lane && !loaders.some(isPlaceholder);
 }
 
+type SlotLoaderFields = Pick<
+  ResolvedSegment,
+  "loaderIds" | "loaderDataPromise" | "loaderStreams" | "awaitedLoaderIds"
+>;
+
+/**
+ * What a parallel slot's LoaderBoundary reads (client.tsx renderSlotContent)
+ * for the loaders it owns: their ids and one aggregate, memoized on their data
+ * (rule 1, suspense-contract.md).
+ *
+ * A slot takes no per-loader streams. LoaderResolver skips use(aggregate) when
+ * streams are set, so the already-rendered slot handler commits immediately.
+ * That bakes a live-lane hole into the shell (semantic-matrix PPR3 /
+ * shell-cache slot-use: masked loaderData is what pins "srv badge
+ * pending...") and, on reuse, leaves a stale stream map that ignores the
+ * post-action aggregate (mini @cart).
+ *
+ * The aggregate is settled before the commit when nothing in it is deferred
+ * and the lane settles loaders (forceAwait, action), every loader paid the
+ * pre-flush await (`{ ssr: "await" }`: LoaderResolver then decodes the array
+ * without a Flight-chunk use()), or the slot has no loading(): a slot with no
+ * loading() commits whole, as the server awaited those loaders for it
+ * (router/intercept-resolution.ts settleLoaderSegments).
+ */
+async function slotLoaderFields(
+  parentId: string,
+  slot: ResolvedSegment,
+  loaders: ResolvedSegment[],
+  settleLoaders: boolean,
+): Promise<SlotLoaderFields> {
+  const loaderIds = loaders.map((l) => l.loaderId!);
+  const aggregate = getMemoizedLoaderPromise(loaders);
+  const settle = settlesLoaders(
+    loaders,
+    settleLoaders ||
+      !isRenderableLoading(slot.loading) ||
+      loaders.every((l) => l.awaitBeforeFlush === true),
+  );
+  const awaitStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
+  const loaderDataPromise =
+    settle && aggregate instanceof Promise ? await aggregate : aggregate;
+  if (INTERNAL_RANGO_DEBUG) {
+    segDebugLog(
+      settle
+        ? `segment ${parentId}: parallel ${slot.id} loaders awaited (forceAwait/action/ssr: "await"/no loading())`
+        : `segment ${parentId}: parallel ${slot.id} loaders via aggregate (suspense)`,
+      settle
+        ? { loaderIds, ms: Math.round(performance.now() - awaitStart) }
+        : { loaderIds },
+    );
+  }
+  return {
+    loaderIds,
+    loaderDataPromise,
+    loaderStreams: undefined,
+    awaitedLoaderIds: undefined,
+  };
+}
+
 function isLoaderRedirectNode(node: ReactNode): boolean {
   return isValidElement(node) && node.type === LoaderRedirect;
 }
@@ -445,16 +457,7 @@ export async function renderSegments(
   }
 
   const temporalLazyRefs: Promise<any>[] = [];
-  // Back/forward restores an intercept entry unsplit (navigation-bridge.ts).
-  // Awaited only when there is something to fold: no extra microtask.
-  let folded = foldInterceptLoaders(segments, settleLoaders);
-  if (folded instanceof Promise) folded = await folded;
-  const normalizedSegments = restoreParallelLoaderMarkers(folded);
-  let normalizedInterceptSegments =
-    interceptSegments && foldInterceptLoaders(interceptSegments, settleLoaders);
-  if (normalizedInterceptSegments instanceof Promise) {
-    normalizedInterceptSegments = await normalizedInterceptSegments;
-  }
+  const normalizedSegments = restoreParallelLoaderMarkers(segments);
 
   /**
    * Registers promises from lazy/async components for awaiting.
@@ -479,9 +482,7 @@ export async function renderSegments(
     );
   }
   // Separate segments by type, passing intercept segments for explicit injection
-  const tree = [
-    ...segmentTreeWalk(normalizedSegments, normalizedInterceptSegments),
-  ];
+  const tree = [...segmentTreeWalk(normalizedSegments, interceptSegments)];
   // Dev only: the wrapper chain per segment, compared with the previous
   // tree's (suspense-audit.ts, I5).
   const treeAudit =
@@ -570,6 +571,22 @@ export async function renderSegments(
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
     );
+
+    // A slot's own loader segments (an intercept's, segmentTreeWalk) go to
+    // the slot, whether or not this segment has loading() or loaders, and
+    // never to this segment: as its loaders they would change its wrappers
+    // and remount the page under the modal. The slot is a new object; the one
+    // in the history cache is never written (rule 6, suspense-contract.md).
+    for (let j = 0; j < node.parallel.length; j++) {
+      const p = node.parallel[j]!;
+      const owned = node.slotLoaders.get(p.id);
+      if (owned) {
+        node.parallel[j] = {
+          ...p,
+          ...(await slotLoaderFields(id, p, owned, settleLoaders)),
+        };
+      }
+    }
 
     // A deferred unit's component is a hole (browser/defer.ts), never a
     // Promise: the awaits below pass it through.
@@ -835,49 +852,12 @@ export async function renderSegments(
             continue;
           }
 
-          p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
-          const aggregated = getMemoizedLoaderPromise(ownedLoaders);
-          // Parallel slots must NOT take the loaderStreams path.
-          // LoaderResolver skips use(aggregate) when streams are set, so
-          // the already-rendered slot handler commits immediately. That
-          // bakes a live-lane hole into the shell (semantic-matrix PPR3 /
-          // shell-cache slot-use: masked loaderData is what pins
-          // "srv badge pending...") and, on reuse, leaves a stale stream
-          // map that ignores the post-action aggregate (mini @cart).
-          // Flagged (ssr: "await") delivery still holds: when every owned
-          // loader paid the pre-flush await, settle the aggregate so
-          // LoaderResolver decodes the array without a Flight-chunk use().
-          const settleParallelAggregate = settlesLoaders(
-            ownedLoaders,
-            settleLoaders ||
-              ownedLoaders.every((l) => l.awaitBeforeFlush === true),
+          // Written in place: the known rule 6 violation
+          // (suspense-contract.md), which the e2e console baseline records.
+          Object.assign(
+            p,
+            await slotLoaderFields(id, p, ownedLoaders, settleLoaders),
           );
-          if (settleParallelAggregate) {
-            const parallelAwaitStart = segDebug ? performance.now() : 0;
-            p.loaderDataPromise =
-              aggregated instanceof Promise ? await aggregated : aggregated;
-            p.loaderStreams = undefined;
-            p.awaitedLoaderIds = undefined;
-            if (segDebug) {
-              segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr: "await")`,
-                {
-                  loaderIds: p.loaderIds,
-                  ms: Math.round(performance.now() - parallelAwaitStart),
-                },
-              );
-            }
-          } else {
-            p.loaderDataPromise = aggregated;
-            p.loaderStreams = undefined;
-            p.awaitedLoaderIds = undefined;
-            if (segDebug) {
-              segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
-                { loaderIds: p.loaderIds },
-              );
-            }
-          }
         }
       }
 
@@ -998,11 +978,16 @@ export async function renderSegments(
  *
  * Loader segments are also grouped by parent:
  * - "L0D0.cart" belongs to "L0"
+ * - "L0.@modalD0.item" belongs to the slot "L0.@modal": an intercept's
+ *   loaders are loader segments of its slot (router/intercept-resolution.ts),
+ *   handed to the slot, never to the slot's parent (`slotLoaders`)
  * - Loaders don't render directly, their data is passed to context
  *
  * Intercept segments are passed separately for explicit handling:
  * - They are injected into the correct parent's parallel array
  * - This makes the flow clearer than relying on ID pattern matching
+ * - Back/forward restores an intercept entry unsplit (navigation-bridge.ts):
+ *   its slot and loaders are in `segments` then, and are grouped the same way
  *
  * @param segments - Main segments from the route tree
  * @param interceptSegments - Optional intercept segments to inject
@@ -1025,6 +1010,8 @@ function* segmentTreeWalk(
   segment: ResolvedSegment;
   parallel: ResolvedSegment[];
   loaders: ResolvedSegment[];
+  /** Loader segments by parent id: a slot's are under the slot's id. */
+  slotLoaders: ReadonlyMap<string, ResolvedSegment[]>;
 }> {
   // Pre-group parallel and loader segments by their parent ID using prefix matching
   // This ensures each parallel/loader is associated with the correct parent segment
@@ -1051,14 +1038,16 @@ function* segmentTreeWalk(
     }
   }
 
-  // INTERCEPT SEGMENTS: Explicitly inject into parent's parallel array.
-  // Their loaders are on the slot already (foldInterceptLoaders).
+  // INTERCEPT SEGMENTS: Explicitly inject into parent's parallel array, and
+  // group the slot's loaders under the slot's id.
   if (interceptSegments && interceptSegments.length > 0) {
     for (const intercept of interceptSegments) {
       if (intercept.type === "parallel" && intercept.slot) {
         // Extract parent ID from intercept ID (e.g., "M4L0L0L2.@modal" → "M4L0L0L2")
         const parentId = intercept.id.split(".")[0];
         pushToGroup(parallelsByParent, parentId, intercept);
+      } else if (intercept.type === "loader") {
+        pushToGroup(loadersByParent, loaderParentId(intercept.id), intercept);
       }
     }
   }
@@ -1077,6 +1066,6 @@ function* segmentTreeWalk(
     const parallel = parallelsByParent.get(segment.id) || [];
     const loaders = loadersByParent.get(segment.id) || [];
 
-    yield { segment, parallel, loaders };
+    yield { segment, parallel, loaders, slotLoaders: loadersByParent };
   }
 }

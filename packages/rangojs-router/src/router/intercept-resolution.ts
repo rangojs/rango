@@ -304,7 +304,7 @@ function resolveInterceptLoaders<TEnv>(
 
 /**
  * An intercept slot with no loading() waits for its loaders that are not
- * deferred; the browser's side is foldInterceptLoaders (segment-system.tsx).
+ * deferred; the browser's side is slotLoaderFields (segment-system.tsx).
  */
 async function settleLoaderSegments(
   segments: readonly ResolvedSegment[],

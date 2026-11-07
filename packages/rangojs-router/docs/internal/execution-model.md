@@ -87,10 +87,10 @@ row). The intercept handler re-runs on every request that resolves the
 intercept, except a fill (flow 5) in which the client holds the slot: there
 neither the handler nor the intercept's layout runs, only the loaders the
 client lacks run. A runtime `cache()` hit or a `Prerender()` target serves the
-stored slot and resolves only its loaders. The browser folds the
-loader segments back onto the slot before it builds the tree
-(`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal
-keeps its element tree.
+stored slot and resolves only its loaders. The browser's tree walk hands the
+loader segments to the slot, never to the slot's parent, whatever the parent
+renders (`segment-system.tsx` `segmentTreeWalk`, `slotLoaderFields`), so the
+page under the modal keeps its element tree.
 
 The page under an intercept never renders on an intercept request: the
 route entry is skipped and not listed (`resolveAllSegments`,

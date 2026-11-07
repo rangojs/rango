@@ -127,7 +127,7 @@ as I2 on a refresh under CPU throttling (the shell layout's loader data fulfille
 after the build and its boundary rendered 94 ms after it). With an accessor on every
 promise handed unread, the same throttled refresh showed React writing a status on none
 of them, so those two baseline entries are gone. A parallel slot does read the
-aggregate: slots take no streams (`src/segment-system.tsx:806`), and there the gap is
+aggregate: slots take no streams (`slotLoaderFields`, `src/segment-system.tsx`), and there the gap is
 real. A full dev run of cloudflare-basic at a load average of 20 to 49 once caught the
 `@badge` slot of the PPR slot-hole route mounting its `loading()` fallback over an
 aggregate already settled (I3, idle-fallback); 6 reruns and 6 runs with 8x CPU
@@ -249,9 +249,11 @@ and the settled value in a later tree is fine: a different input at a different 
 A switch within one render, or one that shows a fallback, is not.
 
 The known violation on main: `renderSegments` writes `loaderIds`, `loaderDataPromise`,
-`loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place
-(`src/segment-system.tsx:804`, `:822-838`), and when the slot is reused from the cache
-that object is the one the previous tree handed to React. `ParallelOutlet` reads those
+`loaderStreams` and `awaitedLoaderIds` (`slotLoaderFields`) on a parallel slot's segment
+object in place, under a parent with loaders and no `loading()` (`src/segment-system.tsx`),
+and when the slot is reused from the cache that object is the one the previous tree handed
+to React. An intercept slot's loaders are handed to a new slot object instead, so no
+intercept slot is written. `ParallelOutlet` reads those
 fields during render (`renderSlotContent`, `src/client.tsx:40`). The audit reports a
 write to a segment object after its tree was handed to React as I7. Measured with the
 guard recording, twice: it fires in 15 dev tests, 7 in the router's suites and 8 in
