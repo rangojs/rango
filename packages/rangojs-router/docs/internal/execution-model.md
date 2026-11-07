@@ -2574,7 +2574,9 @@ Limits:
   context (`renderStaticSegment`'s `reverse`) only, and the handler's own
   `ctx.reverse` resolves root scope from the route registry
   (`createStaticContext`), so no artifact's links depend on it. The
-  nested-include limit above holds per mount.
+  nested-include limit above holds per mount. Pinned by
+  `router/__tests__/static-reverse-scope.rsc-test.tsx` (the bake) and
+  `router/__tests__/manifest-router-seed.test.ts` (the request-time rebuild).
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
