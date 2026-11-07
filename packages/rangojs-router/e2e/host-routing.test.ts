@@ -71,6 +71,31 @@ function hostRoutingTests(port: number) {
     await waitForHydration(page);
   });
 
+  // App B is mounted at /b-mount on app A's host. A Link from app A into it
+  // is a document navigation the browser makes itself: app A's viewport and
+  // hover prefetch skip it and the click sends no RSC request, which the
+  // server could only answer with X-RSC-Reload.
+  test("a Link into another app's mount on the same origin loads its document with no RSC request", async ({
+    page,
+  }) => {
+    const seen: string[] = [];
+    page.on("request", (request) => {
+      if (seen.includes("document")) return;
+      const url = new URL(request.url());
+      if (url.pathname !== "/b-mount") return;
+      if (request.resourceType() === "document") seen.push("document");
+      else if (url.searchParams.has("_rsc_partial")) seen.push("rsc");
+    });
+
+    await visit(page, "a.localhost");
+    await waitForHydration(page);
+    await page.getByTestId("cross-app-link").hover();
+    await page.getByTestId("cross-app-link").click();
+
+    await expect(page.getByTestId("b-mount")).toHaveText("App B mount");
+    expect(seen).toEqual(["document"]);
+  });
+
   test("returns 404 for an unmatched host (generated entry catches NoRouteMatchError)", async ({
     page,
   }) => {

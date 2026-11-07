@@ -7,11 +7,12 @@ import type { ComponentType, ReactNode } from "react";
  * through the AppShellRef when rendering segments.
  *
  * This is a per-document value. A navigation that crosses a host-router app
- * boundary is a full document load (the server returns X-RSC-Reload for it;
- * see request-classification.ts, mode "app-switch"), so the target app's shell
- * — along with everything else document-level (theme, warmup, prefetch-TTL) —
- * is established fresh by the target app's own load. The shell is never swapped
- * in place within a session.
+ * boundary is a full document load (the client knows the app's paths from
+ * app-bounds.ts, and the server answers any request that crosses anyway with
+ * X-RSC-Reload; see request-classification.ts, mode "app-switch"), so the
+ * target app's shell — along with everything else document-level (theme,
+ * warmup, prefetch-TTL) — is established fresh by the target app's own load.
+ * The shell is never swapped in place within a session.
  */
 export interface AppShell {
   /** Router identity. Used to namespace per-app client state (e.g. the

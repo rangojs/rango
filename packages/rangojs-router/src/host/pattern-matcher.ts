@@ -60,37 +60,51 @@ export function matchPattern(
   pathname: string,
   parts: string[],
 ): boolean {
-  const normalized = normalizePattern(pattern);
+  if (!matchDomainPart(pattern, hostname, parts)) {
+    return false;
+  }
+  // The rule src/app-bounds.ts pathHasPrefix states for the browser, kept
+  // inline so the host entry imports no module a router imports
+  // (server/app-bounds-scope.ts says why); app-bounds tests pin both.
+  const pathPattern = patternPath(pattern);
+  return (
+    !pathPattern ||
+    pathname === pathPattern ||
+    pathname.startsWith(pathPattern + "/")
+  );
+}
 
+/**
+ * The path prefix of a pattern (`example.com/admin` -> `/admin`), or `""` for
+ * a pattern that covers every path. Paths are case-sensitive and kept as
+ * written.
+ */
+export function patternPath(pattern: string): string {
+  const normalized = normalizePattern(pattern);
   const slashIndex = normalized.indexOf("/");
-  const hasPath = slashIndex !== -1;
+  return slashIndex === -1 ? "" : normalized.slice(slashIndex);
+}
+
+/** Whether the domain part of a pattern matches `hostname`, path ignored. */
+export function matchDomainPart(
+  pattern: string,
+  hostname: string,
+  parts: string[],
+): boolean {
+  const normalized = normalizePattern(pattern);
+  const slashIndex = normalized.indexOf("/");
   // Hosts are case-insensitive (RFC 3986): lowercase the domain literal and the
   // request host once so matching folds case. Wildcards (*, **, .) are
-  // unaffected by lowercasing. The path is left untouched (paths are
-  // case-sensitive).
+  // unaffected by lowercasing.
   const domainPattern = (
-    hasPath ? normalized.slice(0, slashIndex) : normalized
+    slashIndex === -1 ? normalized : normalized.slice(0, slashIndex)
   ).toLowerCase();
-  const pathPattern = hasPath ? normalized.slice(slashIndex) : null;
 
   const lowerHostname = hostname.toLowerCase();
   const lowerParts =
     lowerHostname === hostname ? parts : lowerHostname.split(".");
 
-  const domainMatch = matchDomainPattern(
-    domainPattern,
-    lowerHostname,
-    lowerParts,
-  );
-  if (!domainMatch) {
-    return false;
-  }
-
-  if (pathPattern) {
-    return pathname === pathPattern || pathname.startsWith(pathPattern + "/");
-  }
-
-  return true;
+  return matchDomainPattern(domainPattern, lowerHostname, lowerParts);
 }
 
 function matchDomainPattern(

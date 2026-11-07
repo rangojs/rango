@@ -354,9 +354,16 @@ router.host(["**.regional.example.com"]).lazy(() => import("./apps/regional"));
 
 A client-side navigation that crosses an app boundary (e.g. a `<Link>` or
 intercepted `<a>` from the app at `/` into an app mounted at `/shop`) is a **hard
-document navigation**, not a soft in-tree swap. When the server sees a partial
-(SPA) request whose router id doesn't match the matched app, it returns
-`X-RSC-Reload` and the client does a real document navigation to the target.
+document navigation**, not a soft in-tree swap. The host router tells each app
+which paths of the origin it owns (its mount prefix, minus the mounts matched
+before it), and the app's document carries that list to the browser. A link
+outside it is a plain document navigation from the start: `<Link>` and the
+link interceptor leave the click to the browser, prefetch skips it, and
+`router.push()` into it loads the document without an RSC request. Nothing to
+configure, and nothing extra is sent for an app that owns every path of its
+host. As a backstop, when the server sees a partial (SPA) request whose router
+id doesn't match the matched app, it returns `X-RSC-Reload` and the client
+does a real document navigation to the target.
 
 Why a reload rather than a soft swap: a soft swap can't faithfully re-establish
 the target app's **document-level** state. Stylesheets shared across apps are

@@ -14,6 +14,7 @@ import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
+import type { AppBounds } from "../app-bounds.js";
 import {
   pathKey,
   rendersForSharedAudience,
@@ -46,6 +47,7 @@ export function buildFullPayload(
       ...payloadLocation(reqCtx, url),
       routerId: ctx.router.id,
       basename: ctx.router.basename,
+      ...payloadAppBounds(reqCtx),
       segments: attachTransitionWhen(m.segments, reqCtx),
       matched: m.matched,
       diff: m.diff,
@@ -87,6 +89,17 @@ export function buildFullPayload(
       initialTheme: payloadInitialTheme(reqCtx),
     },
   };
+}
+
+/**
+ * A document payload's `appBounds`: the paths of the origin the app owns, as
+ * the host routers that dispatched the request named them. Spread, so a
+ * payload of an app that owns every path stays as it was.
+ */
+export function payloadAppBounds(
+  reqCtx: Pick<RequestContext<any>, "_appBounds"> | undefined,
+): { appBounds?: AppBounds } {
+  return reqCtx?._appBounds ? { appBounds: reqCtx._appBounds } : {};
 }
 
 /**

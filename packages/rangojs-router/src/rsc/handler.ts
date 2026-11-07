@@ -15,7 +15,7 @@ import {
   createRequestContext,
   captureRequestEntryContext,
 } from "../server/request-context.js";
-import { payloadLocation } from "./full-payload.js";
+import { payloadAppBounds, payloadLocation } from "./full-payload.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc/server";
 import type {
   RscPayload,
@@ -116,6 +116,7 @@ import {
   timeoutResponse,
 } from "./request-stages.js";
 import { WIRE } from "../wire-params.js";
+import { currentAppBounds } from "../server/app-bounds-scope.js";
 
 /**
  * Create an RSC request handler.
@@ -523,6 +524,7 @@ export function createRSCHandler<
     // Store basename on request context (scoped per-request via existing ALS)
     requestContext._basename = router.basename;
     requestContext._routerId = router.id;
+    requestContext._appBounds = currentAppBounds();
 
     // Resolved span tracing for this request (read at each traced phase).
     requestContext._tracing = router.tracing;
@@ -1094,6 +1096,7 @@ export function createRSCHandler<
               ...payloadLocation(getRequestContext(), url),
               routerId: router.id,
               basename: router.basename,
+              ...payloadAppBounds(getRequestContext()),
               segments: [notFoundSegment],
               matched: [],
               diff: [],

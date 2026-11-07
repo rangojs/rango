@@ -1,5 +1,6 @@
 import type { RscPayload } from "../types.js";
 import type { EventController } from "../event-controller.js";
+import { isOtherAppHref } from "../app-bounds.js";
 
 type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
 
@@ -62,6 +63,8 @@ export function prefetchDirect(
   routerId?: string,
   prefetchKey?: ":source",
 ): void {
+  // Another app's page is a document load; its answer would be X-RSC-Reload.
+  if (isOtherAppHref(url)) return;
   withRuntime((loaded) =>
     loaded.prefetchDirect(url, segmentIds, version, routerId, prefetchKey),
   );
@@ -74,6 +77,7 @@ export function prefetchQueued(
   routerId?: string,
   prefetchKey?: ":source",
 ): void {
+  if (isOtherAppHref(url)) return;
   withRuntime((loaded) =>
     loaded.prefetchQueued(url, segmentIds, version, routerId, prefetchKey),
   );

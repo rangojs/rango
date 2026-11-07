@@ -105,6 +105,30 @@ describe("defaultShouldIntercept", () => {
     expect(defaultShouldIntercept(link)).toBe(false);
   });
 
+  it("leaves a link into another app's mount to the browser", async () => {
+    const { setAppBounds } = await import("../browser/app-bounds");
+    // The catch-all app under a host router that mounts /app-a before it.
+    setAppBounds([
+      [
+        ["/app-a", false],
+        ["", true],
+      ],
+    ]);
+    try {
+      expect(defaultShouldIntercept(createLink("http://localhost/app-a"))).toBe(
+        false,
+      );
+      expect(
+        defaultShouldIntercept(createLink("http://localhost/app-a/page")),
+      ).toBe(false);
+      expect(defaultShouldIntercept(createLink("http://localhost/other"))).toBe(
+        true,
+      );
+    } finally {
+      setAppBounds(undefined);
+    }
+  });
+
   // Hash-only navigation tests
   it("does not intercept hash-only links (#section)", () => {
     const link = createLink("http://localhost/page#section");

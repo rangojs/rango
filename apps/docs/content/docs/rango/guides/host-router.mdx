@@ -273,7 +273,7 @@ All errors extend `HostRouterError`:
 
 ## Cross-app navigation is a full document load
 
-A client-side navigation that crosses an app boundary (a `<Link>` or intercepted `<a>` from the app at `/` into an app mounted at `/shop`) is a **hard document navigation**, not a soft in-tree swap. When the server sees a partial (SPA) request whose router id doesn't match the matched app, it returns `X-RSC-Reload` and the client performs a real document navigation.
+A client-side navigation that crosses an app boundary (a `<Link>` or intercepted `<a>` from the app at `/` into an app mounted at `/shop`) is a **hard document navigation**, not a soft in-tree swap. The host router tells each app which paths of the origin it owns, and the app's document carries that list to the browser, so a link outside it is a plain document navigation from the start: `<Link>` and intercepted `<a>` clicks are left to the browser, prefetch skips them, and `router.push()` loads the document without an RSC request. Nothing to configure. As a backstop, when the server sees a partial (SPA) request whose router id doesn't match the matched app, it returns `X-RSC-Reload` and the client performs a real document navigation.
 
 Why: a soft swap can't faithfully re-establish the target app's document-level state — stylesheets shared across apps are dropped by React 19's by-`href` resource dedup, and theme, warmup, and prefetch-TTL are captured once at document load. A full document load re-establishes the target app's entire document (CSS, theme, meta) by construction, so you do **not** need to coordinate stylesheet `href`s, `precedence`, or theme config across independently-authored apps — each app owns its own document.
 

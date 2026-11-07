@@ -1,4 +1,5 @@
 import { createRouter } from "@rangojs/router";
+import { Link } from "@rangojs/router/client";
 import { accountPath } from "../../account-path.js";
 import { Brand, BrandLoader } from "../../brand.js";
 import { cacheStore } from "../../cache-store.js";
@@ -65,6 +66,10 @@ export const router = createRouter({
           <PrefetchInvalidationButton />
           <PrefetchActionInvalidationButton />
           <PrefetchActionPlainButton />
+          {/* App B's mount on this host: another app on the same origin. */}
+          <Link to="/b-mount" data-testid="cross-app-link">
+            App B mount
+          </Link>
         </>
       ),
       {

@@ -10,6 +10,11 @@ import { createHostRouter } from "@rangojs/router/host";
 const hostRouter = createHostRouter({
   hostOverride: { cookieName: "x-rango-host", allowedHosts: ["localhost"] },
 });
+// App B is also mounted on app A's host under /b-mount: a link from app A
+// into it crosses apps on one origin, which is a document navigation.
+hostRouter
+  .host(["a.localhost/b-mount"])
+  .lazy(() => import("./apps/b/handler.js"));
 hostRouter.host(["a.localhost"]).lazy(() => import("./apps/a/handler.js"));
 hostRouter.host(["b.localhost"]).lazy(() => import("./apps/b/handler.js"));
 

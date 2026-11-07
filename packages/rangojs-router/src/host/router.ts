@@ -31,6 +31,7 @@ import {
   NoRouteMatchError,
   InvalidHandlerError,
 } from "./errors.js";
+import { appBoundsTable, runWithAppBounds } from "./app-bounds.js";
 
 export interface HostRouterRegistryEntry {
   routes: RouteEntry[];
@@ -340,8 +341,15 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
 
       const allMiddleware = [...globalMiddleware, ...matchedRoute.middleware];
 
-      return executeMiddleware(allMiddleware, request, input, () =>
-        executeHandler(matchedRoute, request, input),
+      // The app's document payload carries which paths of this origin it owns
+      // (src/app-bounds.ts), so its client sends a link into another mount
+      // straight to a document navigation.
+      return runWithAppBounds(
+        appBoundsTable(routes, matchedRoute, effectiveHostname),
+        () =>
+          executeMiddleware(allMiddleware, request, input, () =>
+            executeHandler(matchedRoute, request, input),
+          ),
       );
     },
   };
