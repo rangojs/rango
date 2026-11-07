@@ -14,8 +14,10 @@ import { waitForShellHydration } from "./shell-request.js";
  * count. An intercept is a page in the middle of a navigation:
  * a refresh reloads its URL, so router.refresh() and the refresh another
  * tab's action triggers render the item's full page, as a document load
- * does. Back onto the intercept's entry after an action inside it threw
- * restores the intercept over its page. Fixture: intercept-boundary.tsx in
+ * does. An action that throws inside the intercept shows the layout's
+ * errorBoundary() in the intercept's slot, over the list. Back onto the
+ * intercept's entry after that restores the intercept over its page.
+ * Fixture: intercept-boundary.tsx in
  * each app, mounted at /intercept-boundary; both apps call this from a dev
  * and a (production) describe.
  */
@@ -125,6 +127,34 @@ export function runInterceptBoundaryTests(
     expect(entry).not.toHaveProperty("intercept");
     expect(entry).not.toHaveProperty("sourceUrl");
     expect(entry.state).toEqual({ from: "list" });
+  });
+
+  test("an action that throws inside an open intercept shows the layout's boundary in the intercept, over the same page, with the layout's count showing the write", async ({
+    page,
+    context,
+  }) => {
+    expectConsole(page, { allow: [/\[Browser\] Action failed/] });
+    await open(context, page);
+    await openItem(page);
+    await page
+      .getByTestId("ib-list")
+      .evaluate((el) => el.setAttribute("data-e2e-kept", "1"));
+
+    await page.getByTestId("ib-fail").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-ib-result",
+      "error",
+    );
+    await expect(page.getByTestId("ib-boundary")).toBeVisible();
+    await expect(page.getByTestId("ib-modal")).toHaveCount(0);
+    await expect(page.getByTestId("ib-cart")).toHaveText("cart:1");
+    // The page under the intercept stays, as the same node.
+    await expect(page.getByTestId("ib-list")).toHaveAttribute(
+      "data-e2e-kept",
+      "1",
+    );
+    await expect(page.getByTestId("ib-item-page")).toHaveCount(0);
+    await expect(page).toHaveURL(options.url(ITEM));
   });
 
   test("Back onto an intercept whose action threw restores it over its page, and shows the write", async ({

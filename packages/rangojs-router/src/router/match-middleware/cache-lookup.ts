@@ -465,7 +465,8 @@ async function* serveStoredSegments<TEnv>(
   // routes keep a liveHandler, so a live render (rendersLive) re-renders
   // them fresh. A pass cut at an error boundary walks live too
   // (ActionContext.boundary, a follow-up's held one): the evicted handler is
-  // under the cut.
+  // under the cut. From an open intercept the walk skips the route and the
+  // slot shows the error, so no evicted handler runs either.
   if (
     (prerenderStoreShortCircuits(ctx.matched.pr, ctx.request) ||
       overlayEligible) &&

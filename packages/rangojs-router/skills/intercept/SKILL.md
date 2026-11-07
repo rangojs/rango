@@ -428,6 +428,14 @@ With `loading()`, an async handler streams after the response has started, so
 its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
 in a client error boundary.
 
+A server action submitted from the open modal that throws shows the same
+boundary in the modal slot, inside the modal layout, with the page underneath
+still on screen. The status is 500 and the action's call rejects. The loaders
+above the slot (the declaring layout's, and its ancestors') re-run as after a
+successful action from the modal, so a layout that reads what the action wrote
+before it threw shows the write. The intercept's handler and loaders do not
+run. Retrying the action from the modal re-renders the intercept.
+
 An `errorBoundary()` or `notFoundBoundary()` placed directly in the intercept's
 `use()` (or returned from its handler's `.use`) throws at definition time. Put
 it on the enclosing layout:
