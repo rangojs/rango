@@ -17,13 +17,13 @@ only the segment it names changes, and production still shows no message.
 before or after an `await`, from the handler or from a component it hands the
 `ctx` to — files under that segment and the error names it.
 
-Every field of the `ctx` still reads through the request's, `ctx.use(Loader)`
-and `ctx.set()` are unchanged, and `{ ...ctx }` copies what it copied before.
-A route handler's `ctx` is its own object now, as a layout's and a slot's
-already was: a field you add to it stays on that handler's `ctx` (use
-`ctx.set()` to share a value), and `ctx` object identity differs from the
-request's. Nothing reads that identity, and the documented API behaves as
-before.
+Every field of the `ctx` still reads through the request's, and
+`ctx.use(Loader)` and `ctx.set()` are unchanged. A route handler's `ctx` is
+its own object now, as a layout's and a slot's already was: a field you add to
+it stays on that handler's `ctx` (use `ctx.set()` to share a value), and `ctx`
+object identity differs from the request's. `{ ...ctx }` in a route handler
+copies what it copied before; in a layout or slot handler it now copies the
+same fields, where it used to copy only `reverse` and `_reverseScope`.
 
 ## 0.35.0 (2026-11-04)
 
