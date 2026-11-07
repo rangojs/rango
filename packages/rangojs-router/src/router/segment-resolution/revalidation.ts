@@ -808,6 +808,14 @@ async function resolveParallelSlotComponent<TEnv>(
   if (component === undefined) {
     const hasLoadingFallback =
       parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+    // An action awaits the slot's handler, as it awaits a route's
+    // (resolveRouteComponent above) and an intercept's
+    // (router/intercept-resolution.ts resolveInterceptEntry): a thrown
+    // Response then short-circuits the action's answer (204 + X-RSC-Redirect)
+    // instead of being serialised into the payload, where the browser renders
+    // it as the slot's component. Only a navigation streams the handler under
+    // the slot's loading().
+    const streamsUnderLoading = hasLoadingFallback && !pass.actionContext;
     if (!shouldResolve) {
       component = null;
     } else if (handler === undefined) {
@@ -832,7 +840,7 @@ async function resolveParallelSlotComponent<TEnv>(
             );
       // A throw before the slot streams reaches the owning entry's boundary.
       try {
-        if (hasLoadingFallback) {
+        if (streamsUnderLoading) {
           const result = runAsSegment(parallelId, run);
           if (result instanceof Promise) {
             warnOnStreamedResponse(result, parallelId);
@@ -852,8 +860,18 @@ async function resolveParallelSlotComponent<TEnv>(
             component = result as ReactNode;
           }
         } else {
-          // A static value (a Promise included) goes to render as is.
-          component = typeof handler === "function" ? await run() : handler;
+          // A static value (a Promise included) goes to render as is. A
+          // handler's result goes through handleHandlerResult, outside the
+          // span as at every other handler site: a Response it returns is
+          // thrown, so it short-circuits the answer (204 + X-RSC-Redirect on
+          // an action, a redirect on a navigation) instead of being
+          // serialised into the payload as the slot's component. The streamed
+          // branch above keeps the raw promise; warnOnStreamedResponse covers
+          // its Response.
+          component =
+            typeof handler === "function"
+              ? handleHandlerResult(await run())
+              : handler;
           doneHandler();
         }
       } catch (error) {

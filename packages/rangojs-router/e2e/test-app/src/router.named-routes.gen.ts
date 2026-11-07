@@ -713,6 +713,8 @@ export const NamedRoutes = {
   shellSecureDsl: "/shell-secure-dsl",
   shellSecureRuns: "/shell-secure-runs",
   shopPlayground: "/shop-playground",
+  "slotRedirect.item": "/slot-redirect/item",
+  "slotRedirect.list": "/slot-redirect/list",
   slow: "/slow",
   "slowProduct.detail": "/slow-product/:productId",
   slowStreaming: "/slow-streaming",

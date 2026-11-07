@@ -403,6 +403,8 @@ export const routes = {
   shopArchive: "/shop/:slug.archive.html",
   shopCategory: "/shop/:categoryId",
   shopProduct: "/shop/:productId.html",
+  "slotRedirect.item": "/slot-redirect/item",
+  "slotRedirect.list": "/slot-redirect/list",
   slow1: "/slow/1",
   slow2: "/slow/2",
   slowCache: "/slow-cache",

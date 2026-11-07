@@ -359,6 +359,7 @@ import { staleDefaultsPatterns } from "./pages/stale-defaults.js";
 import { actionBoundaryPatterns } from "./pages/action-boundary.js";
 import { interceptBoundaryPatterns } from "./pages/intercept-boundary.js";
 import { interceptRedirectPatterns } from "./pages/intercept-redirect.js";
+import { slotRedirectPatterns } from "./pages/slot-redirect.js";
 import actionFailureClientPatterns from "./pages/action-failure.client-urls.js";
 import {
   ActionFailureBoundedLayout,
@@ -3275,6 +3276,11 @@ export const urlpatterns = urls(
         // (e2e/intercept-redirect.test.ts).
         include("/intercept-redirect", interceptRedirectPatterns, {
           name: "interceptRedirect",
+        }),
+        // A parallel() slot under loading() whose handler redirects on an
+        // action (e2e/slot-redirect.test.ts).
+        include("/slot-redirect", slotRedirectPatterns, {
+          name: "slotRedirect",
         }),
         // A link to a page the history cache holds keeps that page's handle
         // pushes when the response re-renders part of it.
