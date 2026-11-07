@@ -155,8 +155,28 @@ function RwShop() {
   );
 }
 
+/**
+ * A product, with links to /rw/deal (a rewrite to the hat) and another
+ * product: a navigation to a rewritten URL from the page it renders.
+ */
 function RwProduct(ctx: HandlerContext<{ slug: string }>) {
-  return <h1 data-testid="rw-product">{`Product ${ctx.params.slug}`}</h1>;
+  const from = ctx.rewrittenFrom;
+  return (
+    <section>
+      <h1 data-testid="rw-product">{`Product ${ctx.params.slug}`}</h1>
+      <span data-testid="rw-product-from">{from ? from.pathname : "none"}</span>
+      <Link to="/rw/deal" prefetch="hover" data-testid="rw-product-to-deal">
+        Deal
+      </Link>{" "}
+      <Link
+        to="/rw/products/cap"
+        prefetch="none"
+        data-testid="rw-product-to-cap"
+      >
+        Cap
+      </Link>
+    </section>
+  );
 }
 
 function RwMaintenance(ctx: HandlerContext) {
@@ -253,6 +273,18 @@ export const rewritePatterns = urls(
         }),
       ]),
       path("/products/:slug", RwProduct, { name: "product" }),
+      // A rewrite to the hat: from the hat's page, its params and search
+      // equal the source's, but the visitor's URL moves.
+      path(
+        "/deal",
+        () => <h1>never rendered</h1>,
+        {},
+        () => [
+          middleware(() => {
+            throw rewrite("/rw/products/hat");
+          }),
+        ],
+      ),
       path("/items/:id", RwItem, { name: "item" }, () => [
         middleware(async (ctx, next) => {
           ctx.set(RwItemGuard, "target");

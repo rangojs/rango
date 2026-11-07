@@ -788,7 +788,7 @@ export interface RequestContext<
   _prevRouteKey?: string;
 
   /**
-   * @internal Leaving a rewritten page, the visitor's URL moved
+   * @internal Leaving or entering a rewritten page, the visitor's URL moved
    * (router/match-api.ts): the default revalidation counts it as a search
    * change, since the render may read `ctx.rewrittenFrom`.
    */

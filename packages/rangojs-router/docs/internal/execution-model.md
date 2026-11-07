@@ -1580,12 +1580,28 @@ test-app and cloudflare-basic).
 
 Can two visitor URLs share one target? Yes: `/promo/a` and `/promo/b` can
 both rewrite to `/landing`, and the target frame alone would hold the route
-between them, though its render may read `ctx.rewrittenFrom`. So when the
-visitor's URL moves, `matchPartial` sets `_visitorMoved` (`match-api.ts`,
-`visitorUrl()` against the snapshot's `prevVisitorUrl`), and the default
-revalidation counts it as a search change (`router/revalidation.ts`,
+between them, though its render may read `ctx.rewrittenFrom`. The same holds
+for a page and a URL rewritten to it: from `/item/1`, `/public-1` (rewritten
+to `/item/1`) has the same route, params and search. So when the visitor's
+URL moves and either side was rewritten, `matchPartial` sets `_visitorMoved`
+(`match-api.ts`: `visitorUrl()` against the snapshot's `prevVisitorUrl`, or
+`prevUrl` when the page left was not rewritten), and the default revalidation
+counts it as a search change (`router/revalidation.ts`,
 `match-middleware/cache-lookup.ts`): the route and its loaders re-run,
-layouts stay held.
+layouts stay held. A Prerender entry still keeps the route on equal params,
+since it renders the same for every visitor URL, and marks the answer
+source-held (`storedEntrySends`).
+
+Entering a rewritten page used to hold the route, and that keep was worse
+than a stale `ctx.rewrittenFrom`. A route kept by its default compares the
+source's params and search, which no `revalidate()` read records, so the
+answer carried no `x-rsc-prefetch-scope` (`router/source-reads.ts`
+`prefetchScopeOf`): the browser's prefetch cache and the document cache
+served it to every page with the same segment ids. A prefetch of `/rw/deal`
+(rewritten to `/rw/products/hat`) made on the hat, clicked from the cap,
+kept the cap at `/rw/deal`. Pinned by
+`testing/__tests__/rewritten-target-route-keep.rsc-test.tsx` and the
+rewrite suites of the test-app and cloudflare-basic.
 
 What this does not cover yet:
 
@@ -1598,9 +1614,6 @@ What this does not cover yet:
   it after a history-cache miss) name the source by its visitor URL without
   `_rsc_rt`, so an intercept `when()` that reads `from` sees the rewriting
   route there, and can reject on Back what it admitted on the open.
-- Entering a rewritten page from its own target URL (`/item/1` to
-  `/public-1`) holds the route, as before #1144, though `ctx.rewrittenFrom`
-  changed: `_visitorMoved` is set only when leaving a rewritten page.
 - A global rewrite written for GETs only leaves a mutation on the visitor's
   URL: the action runs on the visitor's route, if one matches, and its
   render replaces the page on screen. Global middleware wraps the action and
