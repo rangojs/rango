@@ -371,6 +371,93 @@ apps; each app owns its own document.
 **Within-app** navigation is unchanged — a normal soft SPA update (the document
 stays mounted). Only crossing an app boundary triggers the reload.
 
+## Making a cross-app navigation feel soft
+
+Two browser features work on the document navigation as it stands, need
+nothing from Rango, and degrade to a plain navigation where unsupported: a
+cross-document view transition, and a Speculation Rules prerender.
+
+**Link with a plain anchor first.** A plain same-origin `<Link>` to another app
+costs a partial request answered with `X-RSC-Reload` before the document
+request starts (plus a dropped prefetch). Make cross-app links a document
+navigation at the click, with a marker the rules below select on:
+
+```tsx
+// src/shared/app-link.tsx
+import { Link, type LinkProps } from "@rangojs/router/client";
+
+// A link into another app under the host router.
+export function AppLink(props: Omit<LinkProps, "reloadDocument" | "prefetch">) {
+  return <Link {...props} reloadDocument prefetch="none" data-app-link="" />;
+}
+```
+
+Both features also work on the `X-RSC-Reload` path (it ends in
+`window.location.href = url`), one round trip later.
+
+**Cross-document view transition.** One rule in the stylesheet every app's
+Document links (or an inline `<style>` in each Document); both documents need it:
+
+```css
+@view-transition {
+  navigation: auto;
+}
+/* optional: chrome both documents render morphs instead of fading */
+.site-header {
+  view-transition-name: site-header;
+}
+```
+
+- Same origin only: path-mounted apps (`host(["example.com/shop"])`). Apps on
+  different hosts never animate.
+- Back/Forward between apps animate; a reload does not. Chromium 126+ and
+  Safari 18.2+.
+- A CSS `view-transition-name` also takes part in every `transition()` view
+  transition inside the app (`/view-transitions`): name only chrome that looks
+  the same on both sides, unique on the page.
+- The animation starts once the new document can render: give each app's entry
+  pages a `ppr` shell or `Prerender`.
+- Unrelated to React's `<ViewTransition>` and `transition()`, which animate
+  inside one document.
+
+**Speculation Rules prerender.** Render the rules in each app's Document,
+matching only the links into other apps; the target is rendered and hydrated in
+the background and shown at once on the click (the view transition still runs):
+
+```tsx
+// in the "use client" Document's <head>
+const speculationRules = JSON.stringify({
+  prerender: [
+    { where: { selector_matches: "a[data-app-link]" }, eagerness: "moderate" },
+  ],
+});
+
+<script
+  type="speculationrules"
+  dangerouslySetInnerHTML={{ __html: speculationRules }}
+/>;
+```
+
+- `moderate` = pointer rests on the link (about 200 ms) or presses it;
+  `conservative` = press only. Match by URL with
+  `{ where: { href_matches: ["/shop", "/shop/*"] } }`.
+- Never match in-app links: a soft navigation never shows the prerendered
+  document, so the render is wasted on the server and in the browser.
+- The prerender is a real document GET with `Sec-Purpose: prefetch;prerender`
+  that runs the target app's middleware and handlers. Keep document GETs free of
+  side effects, or skip them when `headers().get("sec-purpose")` includes
+  `prerender`.
+- The page runs hidden: `document.prerendering` is `true` until activation, and
+  `prerenderingchange` fires on `document`. Count page views after it.
+- Chromium only; other browsers ignore the script.
+- Same-site apps on other hosts (`app.example.com` from `example.com`): Chromium
+  prerenders them only when the target's document response carries
+  `Supports-Loading-Mode: credentialed-prerender` (set it with `ctx.header()` in
+  that app's middleware). No view transition there (cross-origin).
+- A browser driven over the DevTools protocol (Playwright) reports every attempt
+  as `PrerenderingDisabledByDevTools`; check it in an ordinary Chrome window
+  (DevTools, Application, Speculative loads).
+
 ## Deploys and the cache
 
 Each `createRouter()` app has its own cache version, computed by `vite build` from that app's built code, so deploying a change to one app does not clear the cache of the others. Lazily mounting sub-apps (`.lazy(() => import("./apps/admin"))`) is what keeps them independent: an app's version covers everything the modules that statically import its router can run, and a lazy mount is where that stops. Routers that one module imports statically share that module's code, so a change to either moves both versions.
