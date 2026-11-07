@@ -462,8 +462,9 @@ export type InternalHandlerContext<
    * The segment a layout's or parallel slot's ctx belongs to
    * (withSegmentScope): a handle push made through it files under that
    * segment, before or after an `await`, however the ctx was called
-   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy). Only
-   * `handlePushSegment` reads it; `segmentPinOf` takes it as an argument.
+   * (`ctx.use`, a destructured `use`, a `{ ...ctx }` copy, a `use` borrowed
+   * onto another object). Only `handlePushSegment` reads it; `segmentPinOf`
+   * takes it as an argument.
    */
   _handleSegmentId?: string;
   /**

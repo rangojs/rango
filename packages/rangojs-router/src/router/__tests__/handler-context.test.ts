@@ -659,6 +659,57 @@ describe("createReverseFunction", () => {
       // The shared ctx keeps the record it had.
       expect((ctx as any).use).toBe(swapped);
     });
+
+    it("withSegmentScope: a `use` borrowed onto another object still passes the child", () => {
+      const seen: Array<{ receiver: any }> = [];
+      const ctx = {
+        reverse: routeReverse(),
+      } as unknown as InternalHandlerContext<any, any>;
+      (ctx as any).use = function (this: unknown) {
+        seen.push({ receiver: this });
+      };
+      const scoped = withSegmentScope(ctx, "M0L0L0R0", undefined);
+
+      // `{ use: ctx.use }` called as that object's method, as a prop reaches
+      // it: the receiver carries no segment, so the child supplies one.
+      const props = { use: (scoped as any).use as () => void };
+      props.use();
+      expect(seen[0]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+
+      // A wrapper that supplies its own `this` too.
+      (scoped as any).use.call({ other: true });
+      expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+    });
+
+    it("withSegmentScope: a copy carries the base's own fields, `_currentSegmentId` live", () => {
+      const variables: Record<string, unknown> = {};
+      const ctx = {
+        params,
+        pathname: "/acme/web",
+        url: new URL("http://localhost/acme/web"),
+        get: (key: string) => variables[key],
+        set: (key: string, value: unknown) => {
+          variables[key] = value;
+        },
+        reverse: routeReverse(),
+        _currentSegmentId: "L0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "M0L0L0", undefined);
+      // A copy exposes only own fields, so the child carries the base's.
+      const copy = { ...scoped } as Record<string, unknown>;
+      expect(copy.params).toEqual(params);
+      expect(copy.pathname).toBe("/acme/web");
+      expect((copy.url as URL).pathname).toBe("/acme/web");
+      expect(copy.get).toBeTypeOf("function");
+      expect(copy.set).toBeTypeOf("function");
+      expect(copy.reverse).toBeTypeOf("function");
+      expect(copy._handleSegmentId).toBe("M0L0L0");
+      // The pin is the walker's: the child reads it live, before and after a copy.
+      ctx._currentSegmentId = "L1";
+      expect(scoped._currentSegmentId).toBe("L1");
+      expect({ ...scoped }._currentSegmentId).toBe("L1");
+      expect(ctx._handleSegmentId).toBeUndefined();
+    });
   });
 
   describe("optional params", () => {

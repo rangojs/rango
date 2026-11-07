@@ -8,9 +8,12 @@
  * ctx made the push, not whichever segment the walker pinned last. A route's,
  * a layout's and a parallel slot's ctx each carry their own segment
  * (`withSegmentScope`), so the message names the handler's segment however the
- * component holds the ctx: as the object it calls `ctx.use` on, or as a
- * `use` it destructured off it (`{ use } = ctx`), which keeps the segment
- * through the child's own `use`.
+ * component holds the ctx: as the object it calls `ctx.use` on, as a `use`
+ * it destructured off it (`{ use } = ctx`), as a `{ ...ctx }` copy, or as a
+ * `use` borrowed onto another object (`{ use: ctx.use }`) and called as that
+ * object's method. The last one is why the child owns `use`: the shared
+ * implementation resolves the segment off the receiver, and a borrowed call
+ * arrives with an object that carries none.
  *
  * The route case is the one the pin cannot cover: the route resolves before
  * its orphan layouts and its parallels, so a route with a slot has a slot's
@@ -31,6 +34,7 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import {
   createHandle,
+  createLoader,
   createRouter,
   urls,
   type HandlerContext,
@@ -83,13 +87,31 @@ async function LateCopyPush({
   return <span>{label}</span>;
 }
 
+/**
+ * The same, holding `use` on another object and calling it as its method, as
+ * a prop or a borrowed function reaches it.
+ */
+async function LateBorrowedPush({
+  ctx,
+  label,
+}: {
+  ctx: HandlerContext;
+  label: string;
+}) {
+  const props = { use: ctx.use };
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  props.use(Crumbs)(label);
+  return <span>{label}</span>;
+}
+
 /** How the component holds the ctx it was handed. */
-type Hold = "ctx" | "detached" | "copy";
+type Hold = "ctx" | "detached" | "copy" | "borrowed";
 
 const HOLD = {
   ctx: LatePush,
   detached: LateDetachedPush,
   copy: LateCopyPush,
+  borrowed: LateBorrowedPush,
 } as const;
 
 function makeRouter(hold: Hold) {
@@ -253,6 +275,30 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     expect(latePushSegment(reported)).toBe(route);
   });
 
+  it("the layout's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-layout",
+      "borrowed",
+    );
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(layout);
+  });
+
+  it("the slot's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve(
+      "/component-slot",
+      "borrowed",
+    );
+    const slot = matched.find((id) => id.endsWith(".@panel"))!;
+    expect(latePushSegment(reported)).toBe(slot);
+  });
+
+  it("the route's, for a `use` borrowed onto another object", async () => {
+    const { errors: reported, matched } = await serve("/component", "borrowed");
+    const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment(reported)).toBe(route);
+  });
+
   it("the route's, for a detached `use` and a slot after the handler", async () => {
     const { errors: reported, matched } = await serve(
       "/component-with-slot",
@@ -260,6 +306,55 @@ describe("a LateHandlePushError names the segment whose ctx pushed", () => {
     );
     const route = matched.filter((id) => /R\d+$/.test(id)).at(-1)!;
     expect(latePushSegment(reported)).toBe(route);
+  });
+});
+
+/**
+ * A layout whose loader is cached: loader-cache.ts swaps the request ctx's
+ * `use` for its override interceptor, and the layout's own `use` reaches it.
+ */
+const CachedLoader = createLoader(async () => "cached");
+
+function cachedLoaderRouter() {
+  return createRouter({
+    cache: { store: new MemorySegmentCacheStore() },
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, loader, cache }) => [
+      layout(
+        (ctx) => (
+          <div>
+            <LatePush ctx={ctx} label="layout" />
+          </div>
+        ),
+        () => [
+          path(
+            "/cached-layout",
+            () => <p>page</p>,
+            { name: "cachedLayout" },
+            () => [loader(CachedLoader, () => [cache({ ttl: 300 })])],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe("a push after a cached loader swapped the ctx's `use`", () => {
+  it("still names the layout's segment", async () => {
+    errors.length = 0;
+    const result = await serveShellRequest(
+      cachedLoaderRouter(),
+      "/cached-layout",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+      },
+    );
+    const matched = await matchedOf(result.flight);
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    expect(latePushSegment([...errors])).toBe(layout);
   });
 });
 

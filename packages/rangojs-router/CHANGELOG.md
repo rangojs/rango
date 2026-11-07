@@ -17,9 +17,13 @@ shared id too, whichever handler handed it the ctx.
 **Now.** The message names the segment whose ctx the push went through, the
 route's, the layout's or the slot's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
-Each handler's ctx carries its own segment, and its own `use` keeps it when a
-component calls it detached from the ctx. The push is still rejected, at the
-same moment, and production still shows no message.
+Each handler's ctx carries its own segment, and its own `use` keeps it however
+a component holds it: detached (`const { use } = ctx`), passed on as a
+callback, borrowed onto another object (`{ use: ctx.use }`), or in a
+`{ ...ctx }` copy. A copy of a layout's, a slot's or an intercept's ctx
+carries the request's fields (`params`, `url`, `get`, the `"use cache"`
+taint), as a copy of the route's does. The push is still rejected, at the same
+moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

@@ -2550,11 +2550,15 @@ Limits:
   first (outer entries resolve first).
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
-- A layout's or slot's ctx is a different object from the route's. Its own
-  fields are `_handleSegmentId`, `use`, and `reverse` and `_reverseScope` when
-  the segment has a scope, so `{ ...ctx }` there copies only those. A getter
-  keyed by its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+- A layout's or slot's ctx is a different object from the route's, but a
+  `{ ...ctx }` copy of it carries what a copy of the route's does: the child
+  holds the base's own fields as descriptors (never read, so a Prerender
+  ctx's throwing `request`/`env`/`res`/`headers` getters are copied as
+  getters), plus `_handleSegmentId`, `use`, and `reverse` and `_reverseScope`
+  when the segment has a scope. `theme` and `rewrittenFrom` stay
+  non-enumerable, and `_currentSegmentId` reads the walker's live pin rather
+  than a copy of it. A getter keyed by its holder resolves through the
+  prototype chain (`rewrittenFrom`, `server/rewrite-trail.ts`).
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2613,7 +2617,10 @@ The receiver is what a caller can lose, so the child owns `use` too
 (`withSegmentScope`): `const { use } = ctx`, `use` passed on as a callback, or
 `{ ...ctx }` reaches the shared implementation without a receiver, and the
 child's own `use` supplies it. It reads the base ctx's `use` at call time,
-because `loader-cache.ts` swaps that for its override interceptor.
+because `loader-cache.ts` swaps that for its override interceptor. A receiver
+that carries no segment — `{ use: ctx.use }` called as that object's method,
+a prop, a wrapper that supplies its own `this` — gets the child in its place:
+the caller lost the ctx, not the segment.
 
 The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
 else the ctx's pin, and pass no carried segment: a started loader's owning

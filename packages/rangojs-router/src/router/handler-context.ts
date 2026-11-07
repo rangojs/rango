@@ -226,10 +226,20 @@ function createPrerenderPassthroughFn(
  * reads the base's `use` at call time because loader-cache.ts swaps it for
  * its override interceptor after the child exists.
  *
+ * The child carries the base's own fields too, as descriptors (never by
+ * reading them: a Prerender ctx's `request`/`env`/`res`/`headers` getters
+ * throw). A prototype child exposes only its own fields to `{ ...ctx }`, so
+ * without them a copy of a layout's, a slot's or an intercept's ctx would
+ * drop `params`, `url`, `get`, the request's fields and the "use cache"
+ * taint symbol — the copy a consumer passes on is only a copy of what is on
+ * the object. `theme` and `rewrittenFrom` stay non-enumerable, as on the
+ * base. `_currentSegmentId` is the exception: the walker moves the pin while
+ * a streamed handler or an async component still runs, so the child forwards
+ * it live (handler-context.test.ts pins that read).
+ *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
- * call that takes this ctx, cache-runtime.ts). Every other field reads
- * through live (`_currentSegmentId` as resolution moves it, ctx.set values).
+ * call that takes this ctx, cache-runtime.ts).
  */
 export function withSegmentScope<C>(
   ctx: C,
@@ -243,11 +253,29 @@ export function withSegmentScope<C>(
     reverse?: unknown;
     _reverseScope?: ReverseScope;
   };
+  const forwarded = Object.getOwnPropertyDescriptors(base);
+  delete forwarded._currentSegmentId;
+  Object.defineProperties(scoped, forwarded);
+  if (Object.hasOwn(base, "_currentSegmentId")) {
+    Object.defineProperty(scoped, "_currentSegmentId", {
+      get: () => base._currentSegmentId,
+      set: (value: string | undefined) => {
+        base._currentSegmentId = value;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
   scoped._handleSegmentId = segmentId;
   scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
+    // Only a receiver that carries a segment keeps it: a `{ ...ctx }` copy and
+    // a nested scope do, while a `use` borrowed onto another object (`{ use:
+    // ctx.use }`, a prop) or a wrapper that supplies its own `this` has none,
+    // and passing that on would file the push under the ctx `use` was
+    // installed on instead of this segment.
+    const carried = (this as { _handleSegmentId?: string } | undefined)
+      ?._handleSegmentId;
+    return Reflect.apply(base.use, carried === undefined ? scoped : this, args);
   };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse(base.reverse, scope);
