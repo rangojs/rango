@@ -695,15 +695,12 @@ export async function renderStaticSegment<TEnv = any>(
     reverseScope?.rootScoped ??
     rootScoped ??
     (routeName ? isRouteRootScoped(routeName, routerId) : undefined);
-  const bakeReverse = (params: Record<string, string>) => {
-    const reverse = createReverseFunction(
-      mergedRouteMap,
-      routeName,
-      params,
-      bakeRootScoped,
-    );
-    return reverseScope ? scopeReverse(reverse, reverseScope) : reverse;
-  };
+  // scopeReverse returns the plain reverse for a mount with no scope, so a
+  // path() mount keeps route-name resolution here as it does live.
+  const bakeReverse = scopeReverse(
+    createReverseFunction(mergedRouteMap, routeName, {}, bakeRootScoped),
+    reverseScope,
+  );
 
   // Minimal request context so setupBuildUse can find the HandleStore
   const stubRes = new Response(null, { status: 200 });
@@ -749,7 +746,7 @@ export async function renderStaticSegment<TEnv = any>(
     _renderBarrier: Promise.resolve(),
     _resolveRenderBarrier: () => {},
     _reportedErrors: new WeakSet<object>(),
-    reverse: bakeReverse({}),
+    reverse: bakeReverse,
     // Scope the bake context's own lookups (createStaticContext reads it
     // through the request ALS) per router as well.
     _routerId: routerId,
