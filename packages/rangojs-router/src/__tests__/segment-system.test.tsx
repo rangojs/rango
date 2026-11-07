@@ -3,7 +3,6 @@ import { withOptimisticCommitNone } from "../browser/optimistic-commit.js";
 import { describe, it, expect, vi } from "vitest";
 import { createElement, type ReactNode, type ReactElement } from "react";
 import type { ResolvedSegment } from "../types";
-import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
 
 // Sentinel components for identification in the element tree
 function MockOutletProvider(props: any) {
@@ -1694,12 +1693,9 @@ describe("segment-system", () => {
       });
 
       it("reuses pending parallel loader promise across rerenders with the same loader inputs", async () => {
-        // Router defect, rule 6: renderSegments writes loaderIds
-        // on the slot's segment object the previous tree was built from
-        // (segment-system.tsx `p.loaderIds =`; tools/e2e-console-baseline.json).
-        allowSuspenseAuditViolations(
-          "I7 mutated: renderSegments writes loaderIds on a handed slot segment",
-        );
+        // The second build reuses the slot object the first tree was built
+        // from, as the segment cache does; the audit lock fails the test on
+        // an I7 write to it (rule 6).
         let resolveLoader!: (value: unknown) => void;
         const loaderPromise = new Promise((resolve) => {
           resolveLoader = resolve;
@@ -1744,9 +1740,54 @@ describe("segment-system", () => {
 
         expect(firstPromise).toBeInstanceOf(Promise);
         expect(secondPromise).toBe(firstPromise);
+        // Each tree gets its own slot object; the input slot is never written.
+        expect(secondLayoutOutlet.props.parallel[0]).not.toBe(
+          firstLayoutOutlet.props.parallel[0],
+        );
+        expect(firstLayoutOutlet.props.parallel[0]).not.toBe(segments[1]);
+        expect(segments[1]).not.toHaveProperty("loaderIds");
+        expect(segments[1]).not.toHaveProperty("loaderDataPromise");
 
         resolveLoader({ sidebar: true });
         await firstPromise;
+      });
+
+      it("hands a settled parallel aggregate on a new slot object, leaving the input slot as it was (forceAwait)", async () => {
+        const loadingSkeleton = createElement("div", null, "Loading sidebar");
+        const staleData = Promise.resolve([{ ok: true, data: "stale" }]);
+        const slot = seg({
+          id: "L0.@sidebar",
+          namespace: "parallel.sidebar",
+          type: "parallel",
+          slot: "@sidebar",
+          loading: loadingSkeleton,
+          loaderIds: ["stale-loader"],
+          loaderDataPromise: staleData,
+        });
+        const before = { ...slot };
+        const segments: ResolvedSegment[] = [
+          seg({ id: "L0", type: "layout" }),
+          slot,
+          seg({
+            id: "L0D0.sidebar-data",
+            namespace: "parallel.sidebar",
+            type: "loader",
+            loaderId: "sidebar-loader",
+            loaderData: Promise.resolve({ ok: true, data: "fresh" }),
+          }),
+          seg({ id: "L0R0", type: "route" }),
+        ];
+
+        const result = await renderSegments(segments, { forceAwait: true });
+        const outlets = collectByType(toTreeNode(result), MockOutletProvider);
+        const handed = outlets.find((o) => o.props.segment.id === "L0")!.props
+          .parallel[0] as ResolvedSegment;
+
+        expect(handed).not.toBe(slot);
+        expect(handed.loaderIds).toEqual(["sidebar-loader"]);
+        expect(Array.isArray(handed.loaderDataPromise)).toBe(true);
+        expect(slot).toEqual(before);
+        expect(slot.loaderDataPromise).toBe(staleData);
       });
 
       it("does not attach loaderStreams to a parallel slot — mixed flagged/unflagged stays on the aggregate promise", async () => {
