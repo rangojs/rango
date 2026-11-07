@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: on the Node and Vercel presets' dev server, a page request no longer fails when an edit reloads the server mid-request
+### Fixed: on the Node and Vercel presets' dev server, a page request no longer fails when an edit reloads the server mid-request ([#1429](https://github.com/rangojs/rango/pull/1429))
 
 **Before.** With `preset: "node"` (or `"vercel"`) under `vite dev`, a GET that
 was running when an edit reloaded the RSC module runner ("(rsc) program
