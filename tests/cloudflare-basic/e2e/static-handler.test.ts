@@ -213,6 +213,24 @@ test.describe("static-handler (dev)", () => {
       "/shared-mount-b/settings",
     );
   });
+
+  // A Static() layout inside a NESTED include (`nestedMount.admin`): the bake
+  // resolves `.settings` in that module, as dev does, instead of reading the
+  // prefix as a route name and failing the build.
+  test("a Static layout in a nested include links into that include", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/nested-mount/admin/settings"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "nested-mount-settings-link")).toHaveAttribute(
+      "href",
+      "/nested-mount/admin/settings",
+    );
+    await expect(testId(page, "nested-mount-page")).toBeVisible();
+  });
 });
 
 // ==========================================================================
@@ -523,6 +541,24 @@ test.describe("static-handler (production)", () => {
       "href",
       "/shared-mount-b/settings",
     );
+  });
+
+  // A Static() layout inside a NESTED include (`nestedMount.admin`): the bake
+  // resolves `.settings` in that module, as dev does, instead of reading the
+  // prefix as a route name and failing the build.
+  test("a Static layout in a nested include links into that include", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/nested-mount/admin/settings"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "nested-mount-settings-link")).toHaveAttribute(
+      "href",
+      "/nested-mount/admin/settings",
+    );
+    await expect(testId(page, "nested-mount-page")).toBeVisible();
   });
 });
 

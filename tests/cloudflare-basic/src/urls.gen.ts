@@ -210,6 +210,7 @@ export const routes = {
   nestedKey: "/nested-key",
   nestedKeyComposed: "/nested-key-composed",
   nestedKeySibling: "/nested-key-sibling",
+  "nestedMount.admin.settings": "/nested-mount/admin/settings",
   nestedTags: "/nested-tags",
   nestedUseCache: "/nested-use-cache/:probe",
   optSettleNone: "/opt-settle/none/:id",

@@ -324,6 +324,7 @@ import {
   sharedMountScopeA,
   sharedMountScopeB,
 } from "./pages/static-shared-mount.js";
+import { nestedMountScope } from "./pages/static-nested-mount.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
@@ -3186,6 +3187,10 @@ export const urlpatterns = urls(
         include("/shared-mount-b", sharedMountScopeB, {
           name: "sharedMountB",
         }),
+
+        // The same Static() layout in a NESTED include: its bake resolves
+        // `.settings` in `nestedMount.admin`, not in the enclosing module.
+        include("/nested-mount", nestedMountScope, { name: "nestedMount" }),
 
         // Composable docs package (demonstrates include + factory pattern)
         include("/docs", docsPatterns, { name: "docs" }),

@@ -69,6 +69,7 @@ import {
   sharedMountScopeA,
   sharedMountScopeB,
 } from "./urls/static-shared-mount.js";
+import { nestedMountScope } from "./urls/static-nested-mount.js";
 import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -1401,6 +1402,10 @@ export const urlpatterns = urls(
       // include scopes (one artifact per mount scope).
       include("/shared-mount-a", sharedMountScopeA, { name: "sharedMountA" }),
       include("/shared-mount-b", sharedMountScopeB, { name: "sharedMountB" }),
+
+      // The same Static() layout in a NESTED include: its bake resolves
+      // `.settings` in `nestedMount.admin`, not in the enclosing module.
+      include("/nested-mount", nestedMountScope, { name: "nestedMount" }),
 
       // On-demand (ISR-style) prerender: Passthrough + onDemand route and its
       // requestless router.prerender() trigger.

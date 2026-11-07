@@ -440,6 +440,7 @@ export const NamedRoutes = {
   negotiateTest: "/negotiate-test",
   negotiateTestJson: "/negotiate-test",
   negotiateTestMd: "/negotiate-test",
+  "nestedMount.admin.settings": "/nested-mount/admin/settings",
   notFoundNoBoundary: "/not-found-no-boundary",
   "ns.nsChild": "/ns-reverse",
   onDemandDetail: "/on-demand/:slug",

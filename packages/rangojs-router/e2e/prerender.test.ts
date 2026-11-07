@@ -673,6 +673,25 @@ test.describe("reverse() in Prerender/Static handlers", () => {
       page.locator('[data-testid="shared-mount-aside-link"]'),
     ).toHaveAttribute("href", "/shared-mount-b/settings");
   });
+
+  // A Static() layout inside a NESTED include (`nestedMount.admin`): the bake
+  // resolves `.settings` in that module, as dev does, instead of reading the
+  // prefix as a route name and failing the build.
+  test("a Static layout in a nested include links into that include", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/nested-mount/admin/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="nested-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/nested-mount/admin/settings");
+    await expect(
+      page.locator('[data-testid="nested-mount-page"]'),
+    ).toBeVisible();
+  });
 });
 
 test.describe("reverse() in Prerender/Static handlers (production build)", () => {
@@ -737,6 +756,25 @@ test.describe("reverse() in Prerender/Static handlers (production build)", () =>
     await expect(
       page.locator('[data-testid="shared-mount-aside-link"]'),
     ).toHaveAttribute("href", "/shared-mount-b/settings");
+  });
+
+  // A Static() layout inside a NESTED include (`nestedMount.admin`): the bake
+  // resolves `.settings` in that module, as dev does, instead of reading the
+  // prefix as a route name and failing the build.
+  test("a Static layout in a nested include links into that include", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/nested-mount/admin/settings"));
+    await waitForHydration(page);
+
+    await expect(
+      page.locator('[data-testid="nested-mount-settings-link"]'),
+    ).toHaveAttribute("href", "/nested-mount/admin/settings");
+    await expect(
+      page.locator('[data-testid="nested-mount-page"]'),
+    ).toBeVisible();
   });
 });
 
