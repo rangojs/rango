@@ -409,12 +409,15 @@ The public DOM seam is
   its loaders and predicates in
   [fixtures/source-independence-data.ts](../../src/testing/__tests__/fixtures/source-independence-data.ts):
   held layouts, loading(), parallel slots, layout and route loaders and
-  middleware vars, under clientUrls(), Prerender and cache()) on every other page (loaded
+  middleware vars, under clientUrls(), Prerender and cache(), and pages
+  middleware rewrites: two URLs rewritten to one product and that product's
+  own page) on every other page (loaded
   as a document, reached by a client navigation from any page of its family
   (including a page at the source's URL, which adopts the source's
   source-scoped prefetch), or with the target in the tab's history) and compares the tree with that page's own
   navigation,
-  through `serveShellRequest`, the prefetch cache's slot choice and lookup
+  through `serveShellRequest` (sending a rewritten page's `rewriteTarget` as
+  `_rsc_rt`, as the browser does), the prefetch cache's slot choice and lookup
   (`prefetchStorageSlot` in `browser/prefetch/fetch.ts`,
   `consumeStoredPrefetch` in `browser/navigation-client.ts`) and
   `reconcileSegments`
@@ -424,7 +427,7 @@ The public DOM seam is
   live in hook-locked files;
   [prefetch-browser-commit.test.tsx](../../src/testing/__tests__/prefetch-browser-commit.test.tsx)
   pins them to the real bridge and partial updater. The request URL the
-  keys derive from
+  keys derive from, `_rsc_rt` included
   ([helpers/fetch-url.ts](../../src/testing/__tests__/helpers/fetch-url.ts))
   is pinned to the navigation client's own request by
   [browser/**tests**/wire-urls.test.ts](../../src/browser/__tests__/wire-urls.test.ts).

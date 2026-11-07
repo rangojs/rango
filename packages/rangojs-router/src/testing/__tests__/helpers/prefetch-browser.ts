@@ -7,7 +7,7 @@
  * - the server: every request is serveShellRequest, the production handler,
  *   with the URL params and headers browser/navigation-client.ts and
  *   browser/prefetch/fetch.ts send (writePartialParams, the prefetch header,
- *   X-RSC-Router-Client-Path);
+ *   X-RSC-Router-Client-Path, and `_rsc_rt` from a page middleware rewrote);
  * - the prefetch cache (browser/prefetch/cache.ts): the keys
  *   (buildSourceKey, buildPrefetchKey, paramsCandidateKeys), the slot a
  *   prefetch is stored in (prefetchStorageSlot, prefetch/fetch.ts) and the
@@ -93,18 +93,26 @@ export const pageOf = (answer: Answer): SourcePage => ({
   routeName: answer.routeName,
 });
 
+/** The page a commit of `answer` shows at `href`, built from `segments`. */
+const screenOf = (
+  href: string,
+  segments: ResolvedSegment[],
+  answer: Answer,
+): Screen => ({
+  href,
+  segments,
+  matched: answer.matched,
+  page: pageOf(answer),
+  rewriteTarget: answer.rewriteTarget,
+});
+
 /** A document load of `href`: every segment rendered. */
 export async function loadScreen(serve: Serve, href: string): Promise<Screen> {
   const url = new URL(href, ORIGIN);
   const answer = await answerOf(
     await serve(pathOf(url), { partial: { from: pathOf(url) } }),
   );
-  return {
-    href: url.href,
-    segments: answer.segments,
-    matched: answer.matched,
-    page: pageOf(answer),
-  };
+  return screenOf(url.href, answer.segments, answer);
 }
 
 /** A response to the page on `from`. */
@@ -115,20 +123,21 @@ export interface Fetched {
 }
 
 /**
- * The partial request for `to` sent from the page at `from` holding `ids`:
+ * The partial request for `to` sent from the page `from` holding `ids`:
  * a `<Link>` prefetch, a click's own request, or the stale refetch holding
- * nothing that follows a commit with a missing segment. Undefined for a
- * prefetch of the page on screen, which prefetch/fetch.ts skips
- * (isSamePage).
+ * nothing that follows a commit with a missing segment. Each sends the
+ * page's rewrite target, as partial-update.ts and prefetch/fetch.ts read it
+ * from the history entry. Undefined for a prefetch of the page on screen,
+ * which prefetch/fetch.ts skips (isSamePage).
  */
 export async function request(
   serve: Serve,
-  from: string,
+  from: Pick<Screen, "href" | "rewriteTarget">,
   ids: readonly string[],
   to: string,
   kind: "prefetch" | "navigation" | "refetch",
 ): Promise<Fetched | undefined> {
-  const source = new URL(from);
+  const source = new URL(from.href);
   const target = new URL(to, source);
   if (kind === "prefetch" && pathOf(target) === pathOf(source)) {
     return undefined;
@@ -136,6 +145,7 @@ export async function request(
   const result = await serve(pathOf(target), {
     partial: {
       from: pathOf(source),
+      rewriteTarget: from.rewriteTarget,
       segments: kind === "refetch" ? [] : ids,
       prefetch: kind === "prefetch",
       stale: kind === "refetch",
@@ -153,8 +163,7 @@ export const requestFrom = (
   from: Screen,
   to: string,
   kind: "prefetch" | "navigation",
-): Promise<Fetched | undefined> =>
-  request(serve, from.href, from.matched, to, kind);
+): Promise<Fetched | undefined> => request(serve, from, from.matched, to, kind);
 
 /** A new tab: an empty prefetch cache. */
 export function resetPrefetchCache(): void {
@@ -167,7 +176,7 @@ export function storePrefetchOf(
   to: string,
   fetched: Fetched,
 ): void {
-  const fetchUrl = fetchUrlOf(to, from.href, from.matched);
+  const fetchUrl = fetchUrlOf(to, from.href, from.matched, from.rewriteTarget);
   const slot = prefetchStorageSlot(
     false,
     fetched.scope,
@@ -202,7 +211,7 @@ export async function adoptPrefetch(
   to: string,
   ids: readonly string[] = from.matched,
 ): Promise<Answer | null> {
-  const fetchUrl = fetchUrlOf(to, from.href, ids);
+  const fetchUrl = fetchUrlOf(to, from.href, ids, from.rewriteTarget);
   const { entry } = consumeStoredPrefetch(
     true,
     buildSourceKey(RANGO_STATE, from.href, fetchUrl),
@@ -274,20 +283,15 @@ export function createPrefetchBrowser(serve: Serve): PrefetchBrowser {
       const adopted = await adoptPrefetch(screen, to, ids);
       const answer =
         adopted ??
-        (await request(serve, screen.href, ids, to, "navigation"))!.answer;
+        (await request(serve, screen, ids, to, "navigation"))!.answer;
       const base = entry ? historyBase(entry, screen.segments) : undefined;
       const segments = commitAnswer(answer, screen, base);
       if (segments === "missing") {
-        const fresh = (await request(serve, screen.href, [], to, "refetch"))!;
-        show({
-          href,
-          segments: fresh.answer.segments,
-          matched: fresh.answer.matched,
-          page: pageOf(fresh.answer),
-        });
+        const fresh = (await request(serve, screen, [], to, "refetch"))!;
+        show(screenOf(href, fresh.answer.segments, fresh.answer));
         return { screen, adoption: "refetched" };
       }
-      show({ href, segments, matched: answer.matched, page: pageOf(answer) });
+      show(screenOf(href, segments, answer));
       return { screen, adoption: adopted ? "prefetch" : "fetched" };
     },
   };
