@@ -16,7 +16,7 @@ import {
   getReverseScope,
   getUrlPrefix,
   requireDslContext,
-  stampStaticDefScope,
+  recordStaticMount,
   type EntryData,
   type EntryPropDatas,
   type EntryPropSegments,
@@ -637,12 +637,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       hasStaticSlot = true;
       unwrappedSlots[slotName] = slotHandler.handler;
       if (slotHandler.$$id) {
-        staticSlotIds[slotName] = slotHandler.$$id;
-        // Capture namespace prefix for build-time reverse() resolution
-        if (ctx.namePrefix) {
-          (slotHandler as any).$$routePrefix = ctx.namePrefix;
-        }
-        stampStaticDefScope(slotHandler);
+        staticSlotIds[slotName] = recordStaticMount(slotHandler);
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -1182,18 +1177,12 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     ...(isStatic
       ? {
           isStaticPrerender: true as const,
-          ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}),
+          ...(handler.$$id
+            ? { staticHandlerId: recordStaticMount(handler) }
+            : {}),
         }
       : {}),
   } satisfies EntryData;
-
-  // Capture namespace prefix on static handler for build-time reverse() resolution
-  if (isStatic && handler.$$id) {
-    if (ctx.namePrefix) {
-      (handler as any).$$routePrefix = ctx.namePrefix;
-    }
-    stampStaticDefScope(handler);
-  }
 
   // Merge handler.use defaults with explicit use
   const handlerUseFn = resolveHandlerUse(handler);

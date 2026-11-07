@@ -17,6 +17,7 @@ import type { ContextVar } from "../context-var.js";
 import type { PrefetchFlag } from "../prefetch-markers.js";
 import { PPR_LANE_HINT } from "../rsc/shell-capture-constants.js";
 import type { ShellCaptureState } from "../rsc/shell-capture.js";
+import type { StaticMount } from "../static-handler.js";
 import {
   noteWarmIdentityRead,
   type WarmContext,
@@ -853,25 +854,57 @@ export function scopeReverse(
 }
 
 /**
- * Stamp build-time scope identity onto a Static() definition at mount time.
- * The bake collector (prerender-collection.ts) renders defs OUTSIDE any
- * evaluation scope and used to iterate the registry first-non-null, so these
- * are the ONLY reliable carriers of the def's owning router, root-scope, and
- * full route name — a name-keyed registry lookup at bake time reproduces the
- * cross-router collision #757/#762 fixed (and the collector's historical
- * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
- * never contains, silently degrading to the dot-heuristic).
- * A definition mounted more than once is stamped each time; the last mount wins.
+ * Record the DSL position mounting a Static() definition and return the static
+ * manifest key of its artifact, which the mounting entry looks up at runtime
+ * (staticHandlerId / staticHandlerIds, segment-resolution/helpers.ts).
+ *
+ * The key is the definition's `$$id` plus every input its build-time render
+ * reads (owning router, route name or segment scope, root scope), so one
+ * definition mounted in two include scopes bakes two artifacts, each linking
+ * in its own module. Keyed by `$$id` alone, the collector baked one artifact in
+ * the last mount's scope and every other mount served it. Mounts with the same
+ * inputs share one key and one artifact. Discovery (generateManifestFull) and
+ * the runtime evaluate the same positions, so both derive the same key.
+ *
+ * The bake collector (prerender-collection.ts) renders each recorded mount
+ * outside any evaluation scope, so the record is the only carrier of the
+ * owning router and scope: a name-keyed registry lookup at bake time
+ * reproduces the cross-router collision #757/#762 fixed.
+ *
+ * `routeName` marks a path() mount, whose handler ctx resolves `.name` from
+ * the route's name; without it, a layout() or parallel() mount, whose handler
+ * ctx resolves `.name` in the segment's ReverseScope (withReverseScope).
  */
-export function stampStaticDefScope(
-  handler: unknown,
+export function recordStaticMount(
+  def: { $$id: string },
   routeName?: string,
-): void {
-  const store = RangoContext.getStore();
-  const def = handler as Record<string, unknown>;
-  if (routeName !== undefined) def.$$routeName = routeName;
-  def.$$rootScoped = getRootScoped();
-  if (store?.routerId !== undefined) def.$$routerId = store.routerId;
+): string {
+  const routerId = RangoContext.getStore()?.routerId;
+  const rootScoped = getRootScoped();
+  const reverseScope = routeName === undefined ? getReverseScope() : undefined;
+  const key = `${def.$$id}@${JSON.stringify([
+    routerId ?? null,
+    routeName ?? null,
+    reverseScope?.prefix ?? null,
+    rootScoped,
+  ])}`;
+  const mounts = ((
+    def as { $$mounts?: Record<string, StaticMount> }
+  ).$$mounts ??= {});
+  mounts[key] = { key, routerId, routeName, reverseScope, rootScoped };
+  mountedStaticDefs.add(def);
+  return key;
+}
+
+const mountedStaticDefs = new Set<{ $$id: string }>();
+
+/**
+ * Every Static() definition a DSL evaluation in this realm mounted. The build
+ * collector finds definitions through their modules' exports instead; the
+ * testing kit (serveShellRequest) bakes these the way the collector bakes them.
+ */
+export function getMountedStaticDefs(): ReadonlySet<{ $$id: string }> {
+  return mountedStaticDefs;
 }
 
 // Export HelperContext type for use in other modules

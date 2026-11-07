@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withReverseScope,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -23,7 +24,11 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -658,6 +663,10 @@ export async function matchForPrerender<TEnv = any>(
  * Creates a minimal BuildContext, calls the handler, and RSC-serializes
  * the component. Returns the encoded Flight string (or null on failure).
  * Used by the Vite plugin to collect static segment data at build time.
+ *
+ * `reverseScope` is a layout or parallel slot mount's include scope: its
+ * handler ctx resolves `.name` there, as the live ctx withReverseScope builds
+ * does. A path() mount passes its route name instead.
  */
 export async function renderStaticSegment<TEnv = any>(
   handler: Function,
@@ -668,6 +677,7 @@ export async function renderStaticSegment<TEnv = any>(
   devMode?: boolean,
   routerId?: string,
   rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -723,9 +733,9 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       {},
-      // Def-stamped value first: the collector passes the mount-time
-      // root-scope captured on the Static definition (stampStaticDefScope),
-      // which needs no registry lookup and survives name-prefix arguments.
+      // Mount-recorded value first: the collector passes the root scope
+      // recordStaticMount captured at the mount, which needs no registry
+      // lookup and survives name-prefix arguments.
       rootScoped ??
         (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
     ),
@@ -749,7 +759,7 @@ export async function renderStaticSegment<TEnv = any>(
 
     setupBuildUse(buildCtx);
 
-    const raw = await handler(buildCtx);
+    const raw = await handler(withReverseScope(buildCtx, reverseScope));
 
     // Static handlers must return a ReactNode. A returned Response (e.g. an
     // accidental redirect()) would otherwise be serialized as a corrupt build

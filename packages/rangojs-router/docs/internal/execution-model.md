@@ -2554,10 +2554,12 @@ Limits:
   those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
-- `Static()` layouts and slots bake at build time through
-  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
-  through this scope. At one include level that gives the same module; in a
-  nested module the last name segment is dropped.
+- `Static()` layouts and slots bake at build time through the same scope:
+  `recordStaticMount` (`server/context.ts`) records each mount's
+  `ReverseScope`, and `renderStaticSegment` hands the handler a
+  `withReverseScope` ctx built from it. A definition mounted in two modules
+  bakes one artifact per mount, under a manifest key the mounting entry looks
+  up (`staticHandlerId`), so each mount links in its own module at any depth.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,

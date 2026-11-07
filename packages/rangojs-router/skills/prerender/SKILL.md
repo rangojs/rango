@@ -306,6 +306,15 @@ layout(DocsNav, () => [
 - `Static()` always renders sequentially (no `concurrency` option) and supports
   `throw new Skip()` (see "Skipping Entries with Skip").
 - The same export rules as `Prerender` apply (`export const X = Static(...)`).
+- One `Static()` mounted in several places (a module included twice, under
+  `include("/a", m, { name: "a" })` and `include("/b", m, { name: "b" })`)
+  renders once per mount, so `ctx.reverse(".settings")` links `/a/settings` in
+  the `a` mount and `/b/settings` in the `b` mount, at any include depth,
+  exactly as in dev. A layout or slot resolves `.name` in the include that
+  declares it; a `path()` resolves it from its own route name.
+- `serveShellRequest` (`@rangojs/router/testing/flight`) serves `Static()`
+  segments from the artifact each mount bakes, so a unit test sees what a build
+  serves: the handler runs once per mount, not per request.
 
 ## Interaction with DSL Items
 

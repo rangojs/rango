@@ -175,6 +175,11 @@ export async function loadManifest(
     // Same rule for the include's tree position (hidden include names).
     Store.scopePath = lazyContext?.scopePath;
     Store.hiddenScopePath = lazyContext?.hiddenScopePath;
+    // The owning router, as createRouter and build discovery
+    // (generateManifestFull) evaluate the tree: a Static() mount's manifest
+    // key carries it (recordStaticMount), so a rebuild without it looks up a
+    // key the build never baked. Same always-write rule.
+    Store.routerId = entry.routerId;
 
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(

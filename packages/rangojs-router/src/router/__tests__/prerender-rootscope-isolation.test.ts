@@ -21,7 +21,11 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", pluginRscMock);
 import { createRouter } from "../../router.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";
 import { urls } from "../../urls/urls-function.js";
-import { Static } from "../../static-handler.js";
+import {
+  Static,
+  getStaticMounts,
+  renderStaticMount,
+} from "../../static-handler.js";
 import { generateManifestFull } from "../../build/generate-manifest.js";
 
 // Issue #762: bake-time reverse() resolved root-scope through the name-keyed
@@ -30,10 +34,10 @@ import { generateManifestFull } from "../../build/generate-manifest.js";
 // id and route map to every Static handler regardless of ownership; (2) it
 // passes `$$routePrefix` — a name PREFIX ("scope"), never present in the
 // root-scope registry — so even a router-scoped registry lookup degrades to
-// the `!prefix.includes(".")` heuristic. The fix stamps the definitive values
-// on the Static definition at mount time (stampStaticDefScope: $$routerId,
-// $$routeName, $$rootScoped) and the collector selects the owning router and
-// passes the stamped root-scope through.
+// the `!prefix.includes(".")` heuristic. The fix records the definitive values
+// for each mount of the Static definition (recordStaticMount: router id,
+// route name, root scope) and the collector selects the owning router and
+// passes the recorded root scope through.
 let resolved: string | undefined;
 let reverseError: unknown;
 
@@ -81,29 +85,24 @@ describe("bake-time root-scope isolation (issue #762)", () => {
     await generateManifestFull(patternsB, 1, { routerId: "bake-admin" });
 
     // Replicate the collector's EXACT production call on the OWNING router
-    // (prerender-collection.ts): full route name with the prefix fallback,
-    // and the def-stamped root-scope. Pre-fix this shape leaked "/foo": the
-    // stamps did not exist, the prefix-shaped fallback name is never in the
+    // (prerender-collection.ts): each recorded mount through
+    // renderStaticMount. Pre-fix this shape leaked "/foo": nothing carried the
+    // mount's root scope, the prefix-shaped fallback name is never in the
     // root-scope registry, and the lookup fell to the no-dot heuristic.
-    const def = staticDef as any;
-    await routerA
-      .renderStaticSegment(
-        def.handler,
-        def.$$id,
-        def.$$routeName ?? def.$$routePrefix,
-        undefined,
-        undefined,
-        def.$$rootScoped,
-      )
-      .catch(() => {});
+    const mounts = getStaticMounts(staticDef);
+    expect(mounts).toHaveLength(1);
+    const [mount] = mounts;
+    await renderStaticMount(routerA, staticDef, mount!).catch(() => {});
 
     expect(resolved).toBeUndefined();
     expect(reverseError).toBeTruthy();
 
-    // Mount-time stamps: the collector's ownership + scoping inputs.
-    expect(def.$$routerId).toBe("bake-site");
-    expect(def.$$routeName).toBe("scope.shared");
-    expect(def.$$rootScoped).toBe(false);
-    expect(def.$$routePrefix).toBe("scope");
+    // The recorded mount: the collector's ownership + scoping inputs.
+    expect(mount).toMatchObject({
+      routerId: "bake-site",
+      routeName: "scope.shared",
+      rootScoped: false,
+      reverseScope: undefined,
+    });
   });
 });

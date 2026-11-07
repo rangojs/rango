@@ -65,6 +65,7 @@ import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { orphanFetchablePatterns } from "./urls/orphan-fetchable.js";
 import { prerenderPatterns } from "./urls/prerender.js";
+import { staticMountsPatterns } from "./urls/static-mounts-urls.js";
 import { onDemandPatterns } from "./urls/on-demand-prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
@@ -1392,6 +1393,11 @@ export const urlpatterns = urls(
 
       // Pre-render handler test patterns
       include("/", prerenderPatterns, { name: "" }),
+
+      // One Static() layout and slot mounted in several include scopes
+      include("/static-mounts", staticMountsPatterns, {
+        name: "staticMounts",
+      }),
 
       // On-demand (ISR-style) prerender: Passthrough + onDemand route and its
       // requestless router.prerender() trigger.

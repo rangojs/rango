@@ -35,6 +35,10 @@
  * build-time shell is in production; build-time shells are e2e-only. An
  * on-demand route (`Prerender(..., { onDemand })`) bakes nothing here: it
  * serves from its prerender store, as a refresh-only page does in production.
+ * A `Static()` layout, parallel slot or route serves from the artifact the
+ * build bakes for its mount (one per mount scope; baked on the first request
+ * that reaches the mount, kept until resetShellTestState), so its handler
+ * does not run per request; a `passthrough` one renders live.
  *
  * Must run under the `react-server` condition (the rsc Vitest project), with
  * `rangoTestAliases()` resolving `@vitejs/plugin-rsc/rsc/server` to the stub
@@ -56,7 +60,14 @@ import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
   createPrerenderStore,
   prerenderManifestEntries,
+  type StaticEntry,
 } from "../prerender/store.js";
+import { getMountedStaticDefs } from "../server/context.js";
+import {
+  getStaticMounts,
+  isStaticHandler,
+  renderStaticMount,
+} from "../static-handler.js";
 import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
@@ -528,6 +539,66 @@ async function servePrerenderArtifacts(
 }
 
 /**
+ * Each router's Static() artifacts by manifest key, as `vite build` bakes
+ * them: one per mount of a Static() definition the router mounts, rendered by
+ * renderStaticMount as the build's collector renders it. `baked` holds the
+ * keys already tried, one whose render returned nothing included.
+ */
+let staticArtifacts = new WeakMap<
+  object,
+  { entries: Map<string, StaticEntry>; baked: Set<string> }
+>();
+
+/**
+ * Serve every Static() segment of the router from its build-time artifact, as
+ * production does: through the store the built worker reads (static-store.ts
+ * over globalThis.__STATIC_MANIFEST). Installing the router's trie first, as
+ * the handler does on its first request, evaluates every include() body
+ * (generateManifestFull, as build discovery does), so every mount is
+ * recorded and every route name reachable before the bake. `env` stands in
+ * for the build's `buildEnv`. A `passthrough` Static() renders live, as it
+ * does in production. Returns the undo, or undefined when nothing is baked
+ * for the router.
+ */
+async function serveStaticArtifacts(
+  router: Rango<any, any>,
+  env: unknown,
+): Promise<(() => void) | undefined> {
+  const internal = toInternal(router);
+  const { ensureRouterTrie } = await import("../rsc/manifest-init.js");
+  await ensureRouterTrie(internal);
+  let artifacts = staticArtifacts.get(router);
+  if (!artifacts) {
+    staticArtifacts.set(
+      router,
+      (artifacts = { entries: new Map(), baked: new Set() }),
+    );
+  }
+  const { entries, baked } = artifacts;
+  for (const def of getMountedStaticDefs()) {
+    if (!isStaticHandler(def) || def.options?.passthrough) continue;
+    for (const mount of getStaticMounts(def)) {
+      if (mount.routerId !== internal.id || baked.has(mount.key)) continue;
+      baked.add(mount.key);
+      const result = await renderStaticMount(internal, def, mount, env);
+      if (result) entries.set(mount.key, result);
+    }
+  }
+  if (entries.size === 0) return undefined;
+  const { resetStaticStoreForTests } =
+    await import("../router/segment-resolution/static-store.js");
+  const previous = globalThis.__STATIC_MANIFEST;
+  globalThis.__STATIC_MANIFEST = Object.fromEntries(
+    [...entries].map(([key, entry]) => [key, async () => ({ default: entry })]),
+  );
+  resetStaticStoreForTests();
+  return () => {
+    globalThis.__STATIC_MANIFEST = previous;
+    resetStaticStoreForTests();
+  };
+}
+
+/**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
  * handler binds its router's document version when it is created, so an entry
  * is reused only while the router would still resolve that version: a
@@ -687,13 +758,14 @@ async function buildRequest(
  * once-per-key warnings, the build-shell manifest memo, the "use cache"
  * in-flight leaders and warnings, CFCacheStore's isolate memos (shells,
  * tag markers, tag hints) and warnings, which every CFCacheStore in the
- * process shares by namespace and URL, and the Prerender artifacts baked so
- * far. Call it in `beforeEach`, never while a request is in flight.
+ * process shares by namespace and URL, and the Prerender and Static artifacts
+ * baked so far. Call it in `beforeEach`, never while a request is in flight.
  * VercelCacheStore's memos live on the `cache` handle it is given: a new
  * handle starts empty.
  */
 export async function resetShellTestState(): Promise<void> {
   prerenderArtifacts = new WeakMap();
+  staticArtifacts = new WeakMap();
   const [capture, serve, buildShells, cf, cacheRuntime, cacheLookup] =
     await Promise.all([
       import("../rsc/shell-capture.js"),
@@ -758,6 +830,7 @@ export async function serveShellRequest<TEnv = any>(
     target.pathname,
     options.env,
   );
+  const unserveStatic = await serveStaticArtifacts(router, options.env);
   await awaitLaterMillisecond(called);
 
   const { response, body } = await recorders.run(recorder, async () => {
@@ -770,6 +843,7 @@ export async function serveShellRequest<TEnv = any>(
     } finally {
       await settle(tasks);
       unservePrerender?.();
+      unserveStatic?.();
     }
   });
 

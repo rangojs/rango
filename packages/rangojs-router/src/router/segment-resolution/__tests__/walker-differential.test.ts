@@ -39,7 +39,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createElement, isValidElement, type ReactNode } from "react";
 import { createRouter } from "../../../router.js";
 import { createLoader } from "../../../loader.rsc.js";
-import { Static } from "../../../static-handler.js";
+import { Static, getStaticMounts } from "../../../static-handler.js";
 import { urls } from "../../../urls.js";
 import { buildRouterTrieFromUrlpatterns } from "../../../rsc/manifest-init.js";
 import {
@@ -84,11 +84,6 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", async () => ({
     new Response(stream).json(),
 }));
 
-// The build-time static store holds one Static() handler's output, so its
-// route is a static hit (tryStaticHandler); every other lookup misses.
-globalThis.__STATIC_MANIFEST = {
-  "walker#Static": async () => ({ default: JSON.stringify("static hit") }),
-};
 afterAll(() => {
   globalThis.__STATIC_MANIFEST = undefined;
 });
@@ -107,6 +102,11 @@ const SlotLoader = (createLoader as Function)(
 const el = (tag: string, text: string): ReactNode =>
   createElement(tag, null, text);
 const Spinner = el("i", "spinner");
+const StaticHit = Static(
+  () => el("p", "static live"),
+  undefined,
+  "walker#Static",
+);
 
 /** The RouterContext the router's own match built, captured by /probe. */
 let routerCtx: RouterContext;
@@ -250,11 +250,7 @@ beforeAll(async () => {
               }),
             ],
           ),
-          path(
-            "/static-hit",
-            Static(() => el("p", "static live"), undefined, "walker#Static"),
-            { name: "staticHit" },
-          ),
+          path("/static-hit", StaticHit, { name: "staticHit" }),
           layout(
             () => el("section", "response slot"),
             () => [
@@ -274,6 +270,15 @@ beforeAll(async () => {
     ],
   );
   await buildRouterTrieFromUrlpatterns(router);
+  // The build-time static store holds the Static() route's output under each
+  // key its mount records, so its route is a static hit (tryStaticHandler);
+  // every other lookup misses. Installed before the first lookup latches it.
+  globalThis.__STATIC_MANIFEST = Object.fromEntries(
+    getStaticMounts(StaticHit).map(({ key }) => [
+      key,
+      async () => ({ default: JSON.stringify("static hit") }),
+    ]),
+  );
   const request = new Request("https://example.com/probe");
   // match() is the internal router surface the RSC handler calls.
   const internal = router as unknown as {
