@@ -218,8 +218,8 @@ export async function createTempRscServer(
         },
       },
       // Forwarded user resolution plugins (e.g. vite-tsconfig-paths). Stripped
-      // to resolveId/load (plus transform for import rewriters, see
-      // IMPORT_REWRITE_PLUGINS) and placed last so framework resolution runs first;
+      // to resolveId/load (plus transform for listed plugins, see
+      // FORWARDED_TRANSFORM_PLUGINS) and placed last so framework resolution runs first;
       // Vite re-sorts by `enforce`, so `enforce: "pre"` resolvers still lead.
       ...state.userResolvePlugins,
       ...(options.plugins ?? []),

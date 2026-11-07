@@ -126,6 +126,8 @@ import { devDebugPatterns, devInfoHandler } from "./urls/dev-routes.js";
 import { contextDedupPatterns } from "./urls/context-dedup.js";
 import { clientPackageResolutionPatterns } from "./urls/client-package-resolution.js";
 import { BarrelImportsPage } from "./components/BarrelImportsPage.js";
+import MdxPage from "./components/MdxPage.mdx";
+import { MdxPrerenderPage } from "./components/MdxPrerenderPage.js";
 import { parallelMetaPatterns } from "./urls/parallel-meta.js";
 import { parallelMetaStalePatterns } from "./urls/parallel-meta-stale.js";
 import { renderedBarrierPatterns } from "./urls/rendered-barrier.js";
@@ -1984,6 +1986,13 @@ export const urlpatterns = urls(
 
       // Nameless so the named-routes gen files stay unchanged.
       path("/barrel-imports", BarrelImportsPage),
+      // Compiled by @mdx-js/rollup (e2e/mdx-imports.test.ts). Nameless too.
+      path("/mdx-page", () => (
+        <article data-testid="mdx-page">
+          <MdxPage />
+        </article>
+      )),
+      path("/mdx-prerender", MdxPrerenderPage),
 
       // @meta parallel slot pattern (handles from parallel slots)
       include("/parallel-meta", parallelMetaPatterns, {
