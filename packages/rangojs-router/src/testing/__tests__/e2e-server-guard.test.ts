@@ -157,6 +157,27 @@ describe("ServerGuard", { timeout: 20_000 }, () => {
     );
   });
 
+  it("a kill() that throws neither rejects dispose nor leaves the other servers running", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const guard = new ServerGuard({ exitWaitMs: 300 });
+    guard.track({
+      pid: undefined,
+      done: new Promise<void>(() => {}),
+      kill: () => {
+        throw new Error("kill failed");
+      },
+    });
+    const server = guard.track(spawnIdleServer());
+
+    await expect(guard.dispose()).resolves.toBeUndefined();
+
+    expect(isAlive(server.pid)).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("SIGTERM to server (pid unknown) failed"),
+      expect.any(Error),
+    );
+  });
+
   it("track, assertLive and dispose work detached from the guard", async () => {
     const guard = new ServerGuard();
     const { track, assertLive, dispose } = guard;

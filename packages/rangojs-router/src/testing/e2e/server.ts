@@ -234,10 +234,25 @@ async function groupsExitedWithin(
 }
 
 /**
+ * `server.kill(sig)`, logging rather than throwing when it fails, so one
+ * server's kill() cannot leave the others unsignalled.
+ */
+function signal(server: GuardedServer, sig: NodeJS.Signals): void {
+  try {
+    server.kill(sig);
+  } catch (error) {
+    console.error(
+      `[rango e2e] ${sig} to server (pid ${server.pid ?? "unknown"}) failed:`,
+      error,
+    );
+  }
+}
+
+/**
  * Stop servers and wait for each whole process group to exit: SIGTERM to every
  * group, then SIGKILL (and one log naming the pids) for any that outlive
  * `exitWaitMs` (default 10 s), so a leaked server is visible rather than left
- * holding its port. A rejecting `done` counts as exited.
+ * holding its port. A rejecting `done` counts as exited. Never rejects.
  */
 export async function stopServers(
   servers: readonly GuardedServer[],
@@ -248,7 +263,7 @@ export async function stopServers(
   for (const server of servers) {
     const markExited = () => void exited.add(server);
     server.done.then(markExited, markExited);
-    server.kill();
+    signal(server, "SIGTERM");
   }
   if (await groupsExitedWithin(servers, exitWaitMs)) return;
   // A leader that exited can still leave a live group (the vite `pnpm`
@@ -259,7 +274,7 @@ export async function stopServers(
       (server.pid !== undefined && groupAlive(server.pid)),
   );
   if (survivors.length === 0) return;
-  for (const server of survivors) server.kill("SIGKILL");
+  for (const server of survivors) signal(server, "SIGKILL");
   const pids = survivors.map((server) => server.pid ?? "unknown").join(", ");
   console.error(
     `[rango e2e] ${survivors.length} server(s) ignored SIGTERM for ` +
@@ -314,9 +329,7 @@ export class ServerGuard {
   readonly track: <T extends GuardedServer>(server: T) => T = (server) => {
     if (this.#disposed) {
       // Not awaited: the caller learns of the teardown from the throw below.
-      // stopServers rejects only when a kill() throws, and that must not
-      // surface as an unhandled rejection.
-      stopServers([server], { exitWaitMs: this.#exitWaitMs }).catch(() => {});
+      void stopServers([server], { exitWaitMs: this.#exitWaitMs });
       this.assertLive();
     }
     this.#tracked.add(server);

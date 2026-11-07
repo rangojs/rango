@@ -231,6 +231,8 @@ describe.skipIf(process.platform === "win32")("runCli", () => {
         "console.log(JSON.stringify([process.env.RANGO_RUN_CLI_INHERITED, process.env.RANGO_RUN_CLI_SET, 'RANGO_RUN_CLI_REMOVED' in process.env]));",
         { RANGO_RUN_CLI_SET: "set", RANGO_RUN_CLI_REMOVED: undefined },
       );
+      // close, not exit: stdout is fully read only once the pipes close.
+      await new Promise((resolve) => handle.proc!.once("close", resolve));
       expect(await handle.exitCode).toBe(0);
       expect(JSON.parse(handle.stdout())).toEqual(["inherited", "set", false]);
     } finally {

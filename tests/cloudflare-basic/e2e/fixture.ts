@@ -32,7 +32,7 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       ...options.env,
       // undefined leaves NODE_OPTIONS out of the child's environment.
       NODE_OPTIONS: sanitizeNodeOptions(
-        options.env?.NODE_OPTIONS ?? process.env.NODE_OPTIONS,
+        { ...process.env, ...options.env }.NODE_OPTIONS,
       ),
     },
   });
