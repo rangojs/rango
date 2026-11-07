@@ -135,6 +135,16 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
       hiddenScopePath: nextSegment ? "" : hiddenSoFar,
     };
 
+    // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
+    // This ensures lazy evaluation restores the correct scope state.
+    const parentRootScoped = ctx.rootScoped;
+    const capturedRootScoped =
+      nextSegment === ""
+        ? (parentRootScoped ?? true)
+        : nextSegment !== undefined
+          ? (parentRootScoped ?? false)
+          : parentRootScoped;
+
     // Track this include for build-time manifest generation
     if (ctx.trackedIncludes) {
       ctx.trackedIncludes.push({
@@ -143,6 +153,7 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         namePrefix: fullNamePrefix,
         patterns,
         lazy: true,
+        rootScoped: capturedRootScoped,
         ...position,
       });
     }
@@ -170,16 +181,6 @@ export function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     // they key off `${parent.shortCode}${includeScope}_*` (not shared with
     // siblings outside the include).
     const capturedCounters = { ...ctx.counters };
-
-    // Compute rootScoped at capture time, mirroring the logic in runWithPrefixes.
-    // This ensures lazy evaluation restores the correct scope state.
-    const parentRootScoped = ctx.rootScoped;
-    const capturedRootScoped =
-      nextSegment === ""
-        ? (parentRootScoped ?? true)
-        : nextSegment !== undefined
-          ? (parentRootScoped ?? false)
-          : parentRootScoped;
 
     return {
       type: "include",

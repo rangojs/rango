@@ -46,7 +46,11 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { toInternal, type Rango } from "../router/router-interfaces.js";
+import {
+  toInternal,
+  type Rango,
+  type RangoInternal,
+} from "../router/router-interfaces.js";
 import { ensureRouterManifest } from "../route-map-builder.js";
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import {
@@ -62,7 +66,7 @@ import {
   prerenderManifestEntries,
   type StaticEntry,
 } from "../prerender/store.js";
-import { getMountedStaticDefs } from "../server/context.js";
+import { captureStaticMounts } from "../server/context.js";
 import {
   getStaticMounts,
   isStaticHandler,
@@ -540,25 +544,52 @@ async function servePrerenderArtifacts(
 
 /**
  * Each router's Static() artifacts by manifest key, as `vite build` bakes
- * them: one per mount of a Static() definition the router mounts, rendered by
- * renderStaticMount as the build's collector renders it. `baked` holds the
- * keys already tried, one whose render returned nothing included.
+ * them, baked on the router's first request.
  */
-let staticArtifacts = new WeakMap<
-  object,
-  { entries: Map<string, StaticEntry>; baked: Set<string> }
->();
+let staticArtifacts = new WeakMap<object, Map<string, StaticEntry>>();
+
+/**
+ * Bake the router's Static() artifacts as `vite build` does: evaluate every
+ * urlpatterns mount and include() body as discovery does
+ * (generateManifestFull), and render each Static() mount that evaluation
+ * records with renderStaticMount, as the collector renders it. Only this
+ * router's tree counts: mounts other route trees recorded on a shared
+ * definition are not baked. A `passthrough` Static() bakes nothing.
+ */
+async function bakeStaticArtifacts(
+  internal: RangoInternal<any, any>,
+  env: unknown,
+): Promise<Map<string, StaticEntry>> {
+  const { generateManifestFull } =
+    await import("../build/generate-manifest.js");
+  const captured = await captureStaticMounts(async () => {
+    for (const mount of internal.__urlpatternMounts) {
+      await generateManifestFull(mount.patterns, mount.mountIndex, {
+        routerId: internal.id,
+        ...(internal.__basename ? { urlPrefix: internal.__basename } : {}),
+      });
+    }
+  });
+  const entries = new Map<string, StaticEntry>();
+  for (const { def, key } of captured) {
+    if (entries.has(key)) continue;
+    if (!isStaticHandler(def) || def.options?.passthrough) continue;
+    const mount = getStaticMounts(def).find((m) => m.key === key)!;
+    const result = await renderStaticMount(internal, def, mount, env);
+    if (result) entries.set(key, result);
+  }
+  return entries;
+}
 
 /**
  * Serve every Static() segment of the router from its build-time artifact, as
  * production does: through the store the built worker reads (static-store.ts
- * over globalThis.__STATIC_MANIFEST). Installing the router's trie first, as
- * the handler does on its first request, evaluates every include() body
- * (generateManifestFull, as build discovery does), so every mount is
- * recorded and every route name reachable before the bake. `env` stands in
- * for the build's `buildEnv`. A `passthrough` Static() renders live, as it
- * does in production. Returns the undo, or undefined when nothing is baked
- * for the router.
+ * over globalThis.__STATIC_MANIFEST). The router's trie is installed first,
+ * as the handler does on its first request, so a bake's reverse() reads the
+ * route map a live request reads. `env` stands in for the build's
+ * `buildEnv`. A bake that throws rejects the request and is tried again on
+ * the next one, as a failed build is. Returns the undo, or undefined when
+ * nothing is baked for the router.
  */
 async function serveStaticArtifacts(
   router: Rango<any, any>,
@@ -567,22 +598,10 @@ async function serveStaticArtifacts(
   const internal = toInternal(router);
   const { ensureRouterTrie } = await import("../rsc/manifest-init.js");
   await ensureRouterTrie(internal);
-  let artifacts = staticArtifacts.get(router);
-  if (!artifacts) {
-    staticArtifacts.set(
-      router,
-      (artifacts = { entries: new Map(), baked: new Set() }),
-    );
-  }
-  const { entries, baked } = artifacts;
-  for (const def of getMountedStaticDefs()) {
-    if (!isStaticHandler(def) || def.options?.passthrough) continue;
-    for (const mount of getStaticMounts(def)) {
-      if (mount.routerId !== internal.id || baked.has(mount.key)) continue;
-      baked.add(mount.key);
-      const result = await renderStaticMount(internal, def, mount, env);
-      if (result) entries.set(mount.key, result);
-    }
+  let entries = staticArtifacts.get(router);
+  if (!entries) {
+    entries = await bakeStaticArtifacts(internal, env);
+    staticArtifacts.set(router, entries);
   }
   if (entries.size === 0) return undefined;
   const { resetStaticStoreForTests } =
@@ -830,7 +849,13 @@ export async function serveShellRequest<TEnv = any>(
     target.pathname,
     options.env,
   );
-  const unserveStatic = await serveStaticArtifacts(router, options.env);
+  let unserveStatic: (() => void) | undefined;
+  try {
+    unserveStatic = await serveStaticArtifacts(router, options.env);
+  } catch (error) {
+    unservePrerender?.();
+    throw error;
+  }
   await awaitLaterMillisecond(called);
 
   const { response, body } = await recorders.run(recorder, async () => {

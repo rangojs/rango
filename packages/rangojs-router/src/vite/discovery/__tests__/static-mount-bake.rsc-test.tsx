@@ -34,7 +34,12 @@ import { renderStaticHandlers } from "../prerender-collection.js";
 import { RANGO_BUILD_DIR } from "../../utils/prerender-utils.js";
 
 const calls = { nav: 0, side: 0, page: 0 };
-const LINKS = ["/a/settings", "/b/settings", "/outer/inner/settings"];
+const LINKS = [
+  "/a/settings",
+  "/b/settings",
+  "/outer/inner/settings",
+  "/flat/sub/settings",
+];
 
 const SharedNav = Static(
   (ctx) => {
@@ -61,6 +66,13 @@ const SharedPage = Static(
   "static-mount-bake#SharedPage",
 );
 
+// Exported but mounted by no route: no entry looks it up.
+const Unmounted = Static(
+  () => <p>unmounted</p>,
+  undefined,
+  "static-mount-bake#Unmounted",
+);
+
 const module = urls(({ path, layout, parallel }) => [
   layout(SharedNav, () => [
     parallel({ "@side": SharedSide }),
@@ -71,17 +83,24 @@ const module = urls(({ path, layout, parallel }) => [
 const nested = urls(({ include }) => [
   include("/inner", module, { name: "inner" }),
 ]);
+const underTransparent = urls(({ include }) => [
+  include("/sub", module, { name: "sub" }),
+]);
 
 // The build injects the generated route names ($$routeNames), so a build-time
 // reverse() reaches routes in includes no request has evaluated yet.
 const $$routeNames = Object.fromEntries(
-  ["a", "b", "outer.inner"].flatMap((prefix) => {
-    const base = `/${prefix.replace(".", "/")}`;
-    return [
-      [`${prefix}.settings`, `${base}/settings`],
-      [`${prefix}.page`, `${base}/page`],
-    ];
-  }),
+  (
+    [
+      ["a", "/a"],
+      ["b", "/b"],
+      ["outer.inner", "/outer/inner"],
+      ["sub", "/flat/sub"],
+    ] as const
+  ).flatMap(([prefix, base]) => [
+    [`${prefix}.settings`, `${base}/settings`],
+    [`${prefix}.page`, `${base}/page`],
+  ]),
 );
 
 const router = createRouter({ id: "static-mount-bake", $$routeNames }).routes(
@@ -89,11 +108,15 @@ const router = createRouter({ id: "static-mount-bake", $$routeNames }).routes(
     include("/a", module, { name: "a" }),
     include("/b", module, { name: "b" }),
     include("/outer", nested, { name: "outer" }),
+    // A named include under a transparent { name: "" } one keeps root scope
+    // (runWithPrefixes): discovery must record the mount as runtime does.
+    include("/flat", underTransparent, { name: "" }),
   ]),
 );
 
 let projectRoot: string;
 let state: any;
+let warnings: string[] = [];
 
 beforeAll(async () => {
   projectRoot = mkdtempSync(join(tmpdir(), "rango-static-mount-bake-"));
@@ -108,16 +131,33 @@ beforeAll(async () => {
     projectRoot,
     buildData: [],
     resolvedStaticModules: new Map([
-      ["static-mount-bake.tsx", ["SharedNav", "SharedSide", "SharedPage"]],
+      [
+        "static-mount-bake.tsx",
+        ["SharedNav", "SharedSide", "SharedPage", "Unmounted"],
+      ],
     ]),
   };
-  await renderStaticHandlers(
-    state,
-    {
-      runner: { import: async () => ({ SharedNav, SharedSide, SharedPage }) },
-    },
-    new Map([[router.id, router]]),
-  );
+  const warn = vi
+    .spyOn(console, "warn")
+    .mockImplementation((...args) => void warnings.push(args.join(" ")));
+  try {
+    await renderStaticHandlers(
+      state,
+      {
+        runner: {
+          import: async () => ({
+            SharedNav,
+            SharedSide,
+            SharedPage,
+            Unmounted,
+          }),
+        },
+      },
+      new Map([[router.id, router]]),
+    );
+  } finally {
+    warn.mockRestore();
+  }
   // What bundle-postprocess.ts writes: key -> import of the staged module.
   const assets = join(projectRoot, RANGO_BUILD_DIR, "rsc-assets");
   globalThis.__STATIC_MANIFEST = Object.fromEntries(
@@ -148,22 +188,20 @@ async function serve(pathname: string): Promise<string> {
 describe("Static() collector: one artifact per mount", () => {
   it("bakes each mount of a layout, slot and route once, in its own scope", () => {
     const baked = Object.keys(state.staticManifestEntries ?? {});
-    expect(baked.filter((key) => key.startsWith(SharedNav.$$id))).toHaveLength(
-      3,
-    );
-    expect(baked.filter((key) => key.startsWith(SharedSide.$$id))).toHaveLength(
-      3,
-    );
-    expect(baked.filter((key) => key.startsWith(SharedPage.$$id))).toHaveLength(
-      3,
+    for (const def of [SharedNav, SharedSide, SharedPage]) {
+      expect(baked.filter((key) => key.startsWith(def.$$id))).toHaveLength(4);
+    }
+  });
+
+  it("bakes nothing for a definition no route mounts, and says so", () => {
+    const baked = Object.keys(state.staticManifestEntries ?? {});
+    expect(baked.filter((key) => key.startsWith(Unmounted.$$id))).toEqual([]);
+    expect(warnings).toContainEqual(
+      expect.stringContaining('"Unmounted" is not mounted by any router'),
     );
   });
 
-  it.each([
-    ["/a/settings", "/a/settings"],
-    ["/b/settings", "/b/settings"],
-    ["/outer/inner/settings", "/outer/inner/settings"],
-  ])(
+  it.each(LINKS.map((link) => [link, link]))(
     "%s serves the layout and slot artifacts of its own mount",
     async (pathname, link) => {
       const before = { ...calls };
@@ -178,11 +216,7 @@ describe("Static() collector: one artifact per mount", () => {
     },
   );
 
-  it.each([
-    ["/a/page", "/a/settings"],
-    ["/b/page", "/b/settings"],
-    ["/outer/inner/page", "/outer/inner/settings"],
-  ])(
+  it.each(LINKS.map((link) => [link.replace(/settings$/, "page"), link]))(
     "%s serves the route artifact of its own mount",
     async (pathname, link) => {
       const before = { ...calls };

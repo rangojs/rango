@@ -373,6 +373,14 @@ export interface TrackedInclude extends IncludeScopePosition {
   namePrefix?: string;
   patterns: unknown; // UrlPatterns
   lazy: boolean;
+  /**
+   * The include's root scope as runtime expansion restores it
+   * (lazyContext.rootScoped): a named include under a transparent
+   * { name: "" } one keeps root scope, which its full name prefix alone
+   * does not tell. Discovery evaluates the include with it, so a route's
+   * root scope and a Static() mount's key agree across realms.
+   */
+  rootScoped?: boolean;
 }
 
 /**
@@ -892,19 +900,31 @@ export function recordStaticMount(
     def as { $$mounts?: Record<string, StaticMount> }
   ).$$mounts ??= {});
   mounts[key] = { key, routerId, routeName, reverseScope, rootScoped };
-  mountedStaticDefs.add(def);
+  staticMountCapture.getStore()?.push({ def, key });
   return key;
 }
 
-const mountedStaticDefs = new Set<{ $$id: string }>();
+/** One mount recordStaticMount recorded inside captureStaticMounts. */
+export interface CapturedStaticMount {
+  def: { $$id: string };
+  key: string;
+}
+
+const staticMountCapture = new AsyncLocalStorage<CapturedStaticMount[]>();
 
 /**
- * Every Static() definition a DSL evaluation in this realm mounted. The build
- * collector finds definitions through their modules' exports instead; the
- * testing kit (serveShellRequest) bakes these the way the collector bakes them.
+ * The Static() mounts a DSL evaluation inside `fn` records, as the build
+ * collector finds them on the definitions discovery evaluated. Scoped to the
+ * call: a definition's mounts from other evaluations (another router object
+ * with the same id, an earlier route tree) are not in it. The testing kit
+ * (serveShellRequest) bakes these.
  */
-export function getMountedStaticDefs(): ReadonlySet<{ $$id: string }> {
-  return mountedStaticDefs;
+export async function captureStaticMounts(
+  fn: () => Promise<unknown>,
+): Promise<CapturedStaticMount[]> {
+  const captured: CapturedStaticMount[] = [];
+  await staticMountCapture.run(captured, fn);
+  return captured;
 }
 
 // Export HelperContext type for use in other modules

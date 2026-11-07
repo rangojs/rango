@@ -15,7 +15,12 @@ handler in its own scope.
 **Now.** The build bakes one artifact per mount and each mount serves its
 own, so a `Static()` links in its own module at any include depth, exactly as
 in dev. A layout or slot resolves `.name` in the include that declares it, a
-`path()` from its own route name.
+`path()` from its own route name. A named include under a transparent
+`{ name: "" }` include keeps the root scope it has at runtime during build
+discovery too, so its routes reach bare root names from `.name` there as
+they do live. A `Static()` that no route mounts is now reported by the build
+(`not mounted by any router: nothing baked`) instead of being baked for
+nothing.
 
 ```tsx
 export const SettingsNav = Static((ctx) => (

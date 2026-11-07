@@ -122,6 +122,49 @@ describe("Static() served from its artifact links in its own mount's scope", () 
     );
   });
 
+  it("a named include under a transparent one links in its own module", async () => {
+    const router = createRouter({ id: "static-scope-flat" }).routes(
+      urls(({ include }) => [
+        include(
+          "/flat",
+          urls(({ include }) => [
+            include("/sub", settingsModule, { name: "sub" }),
+          ]),
+          { name: "" },
+        ),
+      ]),
+    );
+    await serveShellRequest(router, "/flat/sub/page");
+    const baked = { ...runs };
+    const result = await serveShellRequest(router, "/flat/sub/page");
+    expect(links(result.flight).sort()).toEqual(
+      [
+        "nav:/flat/sub/settings",
+        "page:/flat/sub/settings",
+        "side:/flat/sub/settings",
+      ].sort(),
+    );
+    expect(runs).toEqual(baked);
+  });
+
+  it("a router reusing an id bakes only its own tree's mounts", async () => {
+    // Another tree under the same id mounts the same definitions in "gone";
+    // the next router's bake must not render that mount.
+    const gone = createRouter({ id: "static-scope-reused" }).routes(
+      urls(({ include }) => [
+        include("/gone", settingsModule, { name: "gone" }),
+      ]),
+    );
+    await serveShellRequest(gone, "/gone/page");
+    const router = createRouter({ id: "static-scope-reused" }).routes(
+      urls(({ include }) => [include("/a", settingsModule, { name: "a" })]),
+    );
+    const result = await serveShellRequest(router, "/a/page");
+    expect(links(result.flight).sort()).toEqual(
+      ["nav:/a/settings", "page:/a/settings", "side:/a/settings"].sort(),
+    );
+  });
+
   it("under a basename each mount links with the basename and its own scope", async () => {
     const router = makeRouter({ id: "static-scope-base", basename: "/app" });
     for (const { at, link } of MOUNTS) {
