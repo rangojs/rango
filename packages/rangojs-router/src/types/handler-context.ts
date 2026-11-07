@@ -295,6 +295,11 @@ export type HandlerContext<
    * Or call `.defer()` to reserve the slot now and resolve it later (e.g. from a
    * deep async component), with a timeout safety net — see {@link HandlePush}.
    *
+   * The segment is the one whose handler holds this `ctx`: a push through a
+   * layout's `ctx` files under the layout, even from a component it was handed
+   * to, after an `await`. A push made after handle collection has completed
+   * still throws `LateHandlePushError`, and the message names that segment.
+   *
    * @example
    * ```typescript
    * // Loader escape hatch — use when handler needs the data directly

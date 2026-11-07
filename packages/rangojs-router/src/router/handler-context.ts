@@ -229,6 +229,12 @@ export function withHandlerScope<C>(
   scope?: ReverseScope,
 ): C {
   const scoped = Object.create(ctx as object) as Record<string, unknown>;
+  const own = (value: unknown): PropertyDescriptor => ({
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
   for (const key of Reflect.ownKeys(ctx as object)) {
     // Non-enumerable fields (theme, rewrittenFrom) read through the
     // prototype; the enumerable ones, the taint brand's symbol included,
@@ -246,25 +252,20 @@ export function withHandlerScope<C>(
       configurable: true,
     });
   }
-  const pin: PropertyDescriptor = {
-    value: segmentId,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  };
-  Object.defineProperty(scoped, "_currentSegmentId", pin);
+  Object.defineProperty(scoped, "_currentSegmentId", own(segmentId));
   // Bound, so a component that destructures `use` off the ctx still resolves
   // the segment its handler ran for: `use` reads its receiver.
   const use = (ctx as any).use;
   if (typeof use === "function") {
-    Object.defineProperty(scoped, "use", { ...pin, value: use.bind(scoped) });
+    Object.defineProperty(scoped, "use", own(use.bind(scoped)));
   }
   if (scope !== undefined) {
-    Object.defineProperty(scoped, "reverse", {
-      ...pin,
-      value: scopeReverse((ctx as any).reverse, scope),
-    });
-    Object.defineProperty(scoped, "_reverseScope", { ...pin, value: scope });
+    Object.defineProperty(
+      scoped,
+      "reverse",
+      own(scopeReverse((ctx as any).reverse, scope)),
+    );
+    Object.defineProperty(scoped, "_reverseScope", own(scope));
   }
   return scoped as C;
 }
