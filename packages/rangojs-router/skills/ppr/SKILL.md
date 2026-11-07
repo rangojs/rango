@@ -186,7 +186,8 @@ throw rewrite("maintenance").shell("target").disallowMutations();
   renders neither.
 
 A rewritten navigation without `.shell()` reports
-`x-rango-ppr-replay: BYPASS; reason=rewritten`.
+`x-rango-ppr-replay: BYPASS; reason=rewritten`. The document cache follows
+the same choice (`/document-cache`, "Cache Key Generation").
 
 ### Request-partitioned shells
 

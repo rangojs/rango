@@ -1421,6 +1421,14 @@ Guarantees, each pinned by a semantic matrix row:
   (`_shellCaptureState.forVisitor`); the target's own shell stays its own.
   `.shell("target")` reads and captures the target's shared shell, as before
   #1146. `[RW8]`
+- The document cache follows the same `.shell()` choice
+  (`cache/document-cache.ts`): a rewritten pass without one neither reads
+  nor stores an entry, so it renders live at the visitor's location, the
+  target's entry warm or not; `"visitor"` keys an entry by the visitor's URL
+  and the target (`#rw:<target path+search>` after the visitor's key),
+  rendered at the visitor's location with `ctx.rewrittenFrom`
+  (`rendersForVisitorKey` in `server/rewrite-trail.ts`); `"target"` reads
+  and stores the target's entry, rendered as a direct visit. `[RW12]`
 - A navigation, prefetch or action from a page middleware rewrote diffs
   against the route that rendered the page, not the route the visitor's URL
   matches: `revalidate()` sees the target's params and URL, so a
@@ -1434,6 +1442,15 @@ pathname and the HIT tail replays it, while the browser hydrates
 mismatched on hydration and no app code could fix it. The capture also
 inherits the first pass's variables (`Object.create(reqCtx)`), so a value a
 rewriting middleware set reached every direct visitor of the target.
+
+RW12 is the same rule for the document cache, and the same scar: a rewritten
+pass keyed its read by the target's URL, so a direct visit's stored document
+(the target's pathname) answered the visitor's URL, and a rewritten MISS
+rendered the target's pathname so it could be stored there. Both mismatched
+`usePathname()` on hydration. A `"visitor"` entry's key ends in the target as
+well as the visitor's URL because the visitor's own pass cannot know the
+target yet: a conditional rewrite (an A/B arm, a lock) must not answer with
+another arm's document.
 
 Why does a mutation move at two different points? Because of where each
 middleware sits around the action. Global middleware runs before the

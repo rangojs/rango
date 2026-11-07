@@ -17,6 +17,7 @@ import type { Theme } from "../theme/types.js";
 import {
   pathKey,
   rendersForSharedAudience,
+  rendersForVisitorKey,
   rewriteTrail,
   visitorUrl,
 } from "../server/rewrite-trail.js";
@@ -95,10 +96,12 @@ export function buildFullPayload(
  * URL, so the server markup and the hydrating client (which reads the address
  * bar) agree on `usePathname()` and `useSearchParams()`. A render other
  * visitors may be served shows `url`, the target, as a direct visit does: a
- * shell capture, and a render the document cache stores (its key is the
- * target), except a visitor-keyed shell capture, whose key covers the
- * visitor's URL. Any other render that shows the visitor's URL marks
- * `_payloadVisitorLocation`, and the document cache does not store it.
+ * shell capture, and a render the document cache stores under the target's
+ * key (`.shell("target")`), except one whose key covers the visitor's URL
+ * (rendersForVisitorKey: a visitor-keyed shell capture, a `.shell("visitor")`
+ * document). Every render that shows the visitor's URL marks
+ * `_payloadVisitorLocation`: a cache keyed by the target (a response route's
+ * `cache()`, the document cache's target entry) does not store it.
  */
 export function renderedLocation(
   reqCtx:
@@ -114,10 +117,8 @@ export function renderedLocation(
   url: URL,
 ): URL {
   if (!reqCtx || !rewriteTrail(reqCtx)) return url;
-  if (rendersForSharedAudience(reqCtx)) {
-    return reqCtx._shellCaptureState?.forVisitor
-      ? visitorUrl(reqCtx, url)
-      : url;
+  if (rendersForSharedAudience(reqCtx) && !rendersForVisitorKey(reqCtx)) {
+    return url;
   }
   reqCtx._payloadVisitorLocation = true;
   return visitorUrl(reqCtx, url);

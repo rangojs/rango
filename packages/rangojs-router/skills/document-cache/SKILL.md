@@ -202,6 +202,17 @@ A custom `keyGenerator(url)` replaces the whole
 used by routers that share a store must keep them apart itself; the variant
 suffixes are still appended.
 
+A request middleware rewrote (`throw rewrite()`, `/middleware` → "Rewrite")
+uses the key its `.shell()` choice names, as a PPR shell does. Without one,
+the rewritten pass neither reads nor stores a document, so a URL's stored
+document is read and written only by requests on that URL. With
+`.shell("visitor")` the key is the visitor's URL (the default base, or
+`keyGenerator(visitorUrl)`) followed by `#rw:` and the target's encoded path
+and search, before the variant suffixes; the page renders with the visitor's
+location and `ctx.rewrittenFrom`. With `.shell("target")` the key is the
+target's, shared with direct visits, and the page renders as a direct visit
+to the target.
+
 ## What Gets Cached
 
 - Full HTML responses (document requests)

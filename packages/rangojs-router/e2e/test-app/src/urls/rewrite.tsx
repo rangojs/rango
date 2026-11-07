@@ -32,6 +32,8 @@ const RwCount = createVar<number>();
 const RwTargetRuns = createVar<number>();
 /** The visitor's path, set before a rewrite to the ppr item (#1146). */
 const RwPublic = createVar<string>();
+/** The visitor's path, set before a rewrite to the document-cached item. */
+const RwDocPublic = createVar<string>();
 /** Set by the item route's own middleware: the target's chain ran. */
 const RwItemGuard = createVar<string>();
 
@@ -60,6 +62,18 @@ export const rwLockMiddleware: Middleware = async (ctx, next) => {
     const target = rewrite("rw.pprItem", { id: ppr[2]! });
     if (ppr[1] === "summer") throw target.shell("visitor");
     if (ppr[1] === "shared") throw target.shell("target");
+    throw target;
+  }
+  // A rewrite to a route the document cache stores: /rw/doc/promo/:id
+  // chooses no entry (it renders live at the visitor's URL),
+  // /rw/doc/summer/:id keys an entry of its own by the visitor's URL,
+  // /rw/doc/shared/:id shares the target's entry.
+  const doc = /^\/rw\/doc\/(promo|summer|shared)\/([\w-]+)$/.exec(ctx.pathname);
+  if (doc) {
+    ctx.set(RwDocPublic, ctx.pathname);
+    const target = rewrite("rw.docItem", { id: doc[2]! });
+    if (doc[1] === "summer") throw target.shell("visitor");
+    if (doc[1] === "shared") throw target.shell("target");
     throw target;
   }
   // A global rewrite into a pattern-guarded path.
@@ -255,6 +269,22 @@ function RwPprItem(ctx: HandlerContext<{ id: string }>) {
   );
 }
 
+/**
+ * A page the document cache stores (s-maxage before next()), rendering the
+ * location (usePathname) and the visitor's path.
+ */
+function RwDocItem(ctx: HandlerContext<{ id: string }>) {
+  const from = ctx.rewrittenFrom;
+  return (
+    <section data-testid="rw-doc-item">
+      <h1>{`Doc item ${ctx.params.id}`}</h1>
+      <span data-testid="rw-doc-public">{ctx.get(RwDocPublic) ?? "none"}</span>
+      <span data-testid="rw-doc-from">{from ? from.pathname : "none"}</span>
+      <RwClientLocation />
+    </section>
+  );
+}
+
 export const rewritePatterns = urls(
   ({ path, layout, middleware, errorBoundary, loader, revalidate }) => [
     layout(RwLayout, () => [
@@ -392,6 +422,15 @@ export const rewritePatterns = urls(
       path("/promo/:id", () => <h1>never rendered</h1>),
       path("/summer/:id", () => <h1>never rendered</h1>),
       path("/shared/:id", () => <h1>never rendered</h1>),
+      path("/doc/item/:id", RwDocItem, { name: "docItem" }, () => [
+        middleware(async (ctx, next) => {
+          ctx.header("Cache-Control", "s-maxage=60");
+          await next();
+        }),
+      ]),
+      path("/doc/promo/:id", () => <h1>never rendered</h1>),
+      path("/doc/summer/:id", () => <h1>never rendered</h1>),
+      path("/doc/shared/:id", () => <h1>never rendered</h1>),
       path("/handler-throws", () => {
         throw rewrite("/rw/shop");
       }),
