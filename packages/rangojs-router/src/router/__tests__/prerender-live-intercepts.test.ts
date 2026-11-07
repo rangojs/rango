@@ -69,6 +69,9 @@ const shop = urls(({ path }) => [
 const shell = (): string => "shell";
 const modal = (): string => "modal body";
 const redirect = (): Response => Response.redirect("http://prerender/", 302);
+const throwRedirect = (): never => {
+  throw redirect();
+};
 
 /**
  * The route is "shop.item", mounted under the layout that declares these
@@ -81,6 +84,8 @@ type Shape =
   | "same slot"
   | "handler response"
   | "layout response"
+  | "handler throws a Response"
+  | "layout throws a Response"
   | "local name"
   | "local name, unnamed include"
   | "local name, full name behind when()"
@@ -101,6 +106,14 @@ function makeRouter(shape: Shape): InternalRouter {
           ],
           "layout response": () => [
             intercept("@modal", "shop.item", modal, () => [layout(redirect)]),
+          ],
+          "handler throws a Response": () => [
+            intercept("@modal", "shop.item", throwRedirect),
+          ],
+          "layout throws a Response": () => [
+            intercept("@modal", "shop.item", modal, () => [
+              layout(throwRedirect),
+            ]),
           ],
           "local name": () => [intercept("@modal", "item", modal)],
           "local name, unnamed include": () => [
@@ -207,6 +220,22 @@ describe("a Prerender() route's intercepts the build does not bake", () => {
       `[rango] Prerender route "shop.item": intercept @modal is not pre-rendered: its layout returned a Response for /shop/item/1. ${LIVE} To pre-render it, return a node from its layout at build time.`,
     ]);
   });
+
+  // A thrown Response is the same answer as a returned one (a live request
+  // makes them one in handleHandlerResult): the intercept renders live and
+  // the route is still baked, rather than the whole URL failing the build.
+  for (const [shape, reason] of [
+    ["handler throws a Response", "handler-response"],
+    ["layout throws a Response", "layout-response"],
+  ] as const) {
+    test(`an intercept ${shape.replace(" throws", " that throws")} at build time`, async () => {
+      const result = await bake(shape, "/shop/item/1");
+
+      expect(result.routeName).toBe("shop.item");
+      expect(result.interceptSegments).toBeUndefined();
+      expect(result.liveIntercepts).toEqual([{ slot: "@modal", reason }]);
+    });
+  }
 
   test("an intercept that targets the route by its local name", async () => {
     const result = await bake("local name", "/shop/item/1");

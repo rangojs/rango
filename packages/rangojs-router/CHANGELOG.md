@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Prerender()` handler can return `redirect()`, and a build that meets one names the redirect
+
+**Before.** A `Prerender()` handler's type allowed a node or
+`ctx.passthrough()` only, so `return redirect(url)` was a type error and
+`throw redirect(url)` was the only spelling that compiled. A build that met
+one, from the handler, a layout inside the route or an async child, failed
+with `FAIL /old - undefined`, and the router's `onError` got an Error whose
+message was `[object Response]`. A `Static()` handler that threw a redirect
+failed the same way, and so did an intercept over a `Prerender()` route whose
+handler or layout threw one, though returning it only left that intercept to
+render live.
+
+**Now.** Both `Prerender()` overloads take `ReactNode | Response |
+PrerenderPassthroughResult` (or a promise of one), as a `path()` handler
+does. A build still cannot bake a redirect: the FAIL line, the build's error
+and `onError` name the URL, the target and the status, and say where the
+redirect belongs instead. `prerender.onError: "warn"` skips the param with
+the same message. An intercept's handler or layout that throws a redirect is
+now treated like one that returns it: the build warns that the intercept
+renders live and bakes the page. In dev the prerender endpoint logs the
+message and the request falls through to the live render, as before. An
+on-demand refresh
+(`router.prerender()`) that meets a redirect still reports `render-failed`
+and keeps the stored page.
+
+```tsx
+export const Article = Prerender(
+  async () => (await listArticles()).map(({ slug }) => ({ slug })),
+  async (ctx) => {
+    const article = await getArticle(ctx.params.slug);
+    if (article.movedTo) return redirect(`/articles/${article.movedTo}`, 308);
+    return <ArticlePage article={article} />;
+  },
+);
+// vite build, when getParams() lists a moved article:
+// [rango]   FAIL /articles/old (9ms) - The prerender of /articles/old
+//   redirected to /articles/new (308). A build cannot store a redirect or
+//   other Response. Leave this param out of getParams() or throw new Skip()
+//   for it, and redirect at request time from middleware or from the live
+//   handler of a Passthrough() route.
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
