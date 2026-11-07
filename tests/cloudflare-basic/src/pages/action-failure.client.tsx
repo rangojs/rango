@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Component, useState } from "react";
+import { Component, useEffect, useState } from "react";
 import {
   Link,
   useAction,
@@ -48,12 +48,17 @@ function useOutcome(): [string, (saved: Promise<string>) => void] {
 // The draft is a form's React state. The revalidation line shows the
 // useAction `revalidationError` of either switch action, the slow line the
 // slow action's. The reload link navigates to the page's own URL. The
-// concurrent button calls the switch and the slow action together.
+// concurrent button calls the switch and the slow action together. The
+// hydrated line turns "yes" once these controls hydrate: under loading() their
+// boundary can hydrate after the root's data-hydrated marker, and React drops
+// a click on a button that has not hydrated yet.
 function ActionFailureControls(): ReactNode {
   const [search] = useSearchParams();
   const pathname = usePathname();
   const run = search.get("run") ?? "none";
   const [draft, setDraft] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
   const [outcome, settle] = useOutcome();
   const callFailure = useAction(actionFailureSwitch).revalidationError;
   const formFailure = useAction(actionFailureSwitchForm).revalidationError;
@@ -77,6 +82,7 @@ function ActionFailureControls(): ReactNode {
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
+      <output data-testid="af-hydrated">{hydrated ? "yes" : "no"}</output>
       <output data-testid="af-outcome">{outcome}</output>
       <output data-testid="af-revalidation-error">{revalidation}</output>
       <output data-testid="af-slow-revalidation-error">
