@@ -24,3 +24,29 @@ export function teeThrough(
     return { decoded, serialized };
   };
 }
+
+/**
+ * A teeHandles stand-in for tests that mock handle-snapshot with a JSON
+ * codec: an empty capture tees nothing, as the real one does; any other is
+ * encoded through the mocked encodeHandles and its copy decoded through the
+ * mocked decodeHandles.
+ */
+export function teeHandlesThrough(
+  encode: (handles: any, onError?: (error: unknown) => void) => unknown,
+  decode: (encoded: string) => unknown,
+): (
+  handles: Record<string, unknown>,
+  onError?: (error: unknown) => void,
+) => Promise<
+  { decoded: Promise<unknown>; serialized: Promise<string> } | undefined
+> {
+  return async (handles, onError) => {
+    if (Object.keys(handles).length === 0) return undefined;
+    const serialized = Promise.resolve(
+      encode(handles, onError),
+    ) as Promise<string>;
+    const decoded = serialized.then((text) => decode(text));
+    decoded.catch(() => {});
+    return { decoded, serialized };
+  };
+}

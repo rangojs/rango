@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `"use cache"` miss no longer stores lazy state a handle value started outside the guard
+
+**Before.** A `"use cache"` function that pushed a `React.lazy` or a
+memoizing thenable into a handle (`ctx.use(Handle)`), or read a loader that
+did, kept the pushed value itself on the miss's page. When the returned value
+took a while to encode (a Suspense child that resolves later), the page's
+render reached the lazy state first, outside the `"use cache"` guard, so a
+`cookies()` or `headers()` read in it went through, and the entry stored that
+visitor's value. The next visitor's hit replayed it.
+
+**Now.** The miss encodes its handle pushes inside the guard, stores that
+encode, and the page gets the decoded copy, as on a hit. A read the guard
+refuses renders as an error in that handle value, nothing is stored, and the
+refusal reaches `onError` as `cache-write`. Lazy state that reads nothing
+request-scoped is stored and replayed as before. The copies reach the page
+before the call returns, in the order the function pushed them, so they still
+land between the caller's own pushes before and after the call.
+
+```tsx
+async function Crumbs(ctx: HandlerContext) {
+  "use cache";
+  const Session = lazy(async () => {
+    const user = cookies().get("session")?.value; // refused on the miss now
+    return { default: () => <span>{user}</span> };
+  });
+  ctx.use(Breadcrumbs)(<Session />);
+  return <SlowList />;
+}
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

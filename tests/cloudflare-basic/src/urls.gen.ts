@@ -498,6 +498,7 @@ export const routes = {
   txSrc: "/tx-src/:n",
   txWhen: "/tx-when/:hold/:n",
   useCacheDep: "/use-cache-dep",
+  useCacheHandleLazy: "/use-cache-handle-lazy/:shape/:probe",
   useCacheMemoBinding: "/use-cache-memo/binding",
   useCacheMemoHandlerFirst: "/use-cache-memo/handler-first",
   useCacheMemoPlain: "/use-cache-memo/plain",

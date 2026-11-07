@@ -51,13 +51,20 @@ vi.mock("../segment-codec.js", async () => {
 });
 
 const mockAppendHandles = vi.fn();
-vi.mock("../handle-snapshot.js", () => ({
-  appendHandles: (...args: any[]) => mockAppendHandles(...args),
-  encodeHandles: vi.fn(async (h: any) => JSON.stringify(h)),
-  decodeHandles: vi.fn(async (s: any) =>
+vi.mock("../handle-snapshot.js", async () => {
+  const { teeHandlesThrough } = await import("./helpers/tee-through.js");
+  const encodeHandles = vi.fn(async (h: any) => JSON.stringify(h));
+  const decodeHandles = vi.fn(async (s: any) =>
     typeof s === "string" ? JSON.parse(s) : s,
-  ),
-}));
+  );
+  return {
+    appendHandles: (...args: any[]) => mockAppendHandles(...args),
+    deliverRecordedPushes: vi.fn(),
+    encodeHandles,
+    decodeHandles,
+    teeHandles: teeHandlesThrough(encodeHandles, decodeHandles),
+  };
+});
 
 vi.mock("../../internal-debug.js", () => ({ INTERNAL_RANGO_DEBUG: false }));
 

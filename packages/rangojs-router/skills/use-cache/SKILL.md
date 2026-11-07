@@ -250,10 +250,12 @@ error, to its nearest error boundary. Nothing is stored. The same holds for a
 the request's memo of it rejects, so a later read of it in the request throws
 too) and for a `React.lazy` or a memoizing thenable created in the body.
 
-A handle value the function pushes (`ctx.use(Handle)`) is encoded inside the
-guard as well, and one that reads the request is not stored. One handle case
-is not covered yet: a handle value that holds a lazy component or a memoized
-promise. Don't push lazy state that reads the request from a cached function.
+A handle value the function pushes (`ctx.use(Handle)`), or a loader it reads
+pushes, is encoded inside the guard as well, and on a miss the page gets the
+decoded copy, as on a hit. So a handle value that reads the request, or holds a
+`React.lazy` or a memoizing thenable that does, refuses there: that value
+renders as an error and nothing is stored. The copies reach the page before
+the call returns, where the function's live pushes used to land.
 
 Two memo gaps remain, where the read happened before the guard could see it:
 

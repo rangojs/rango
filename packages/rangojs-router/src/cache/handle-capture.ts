@@ -65,19 +65,26 @@ export function replayLoaderPush(
  * own pushes and those of cached functions it calls. Groups keep push order
  * across owners. Create at call time: the caller's loader body is the
  * function's own scope.
+ *
+ * `replayed` collects the keys of groups that are an inner HIT's replay of a
+ * loader's recorded pushes rather than that loader's run (a miss delivers
+ * the two differently, deliverRecordedPushes). A group is one or the other.
  */
-export function useCacheRecordKey(): () => string {
+export function useCacheRecordKey(replayed?: Set<string>): () => string {
   const callerBody = getCurrentLoaderBodyId();
   let seq = 0;
   let last: string | undefined;
   return () => {
     const body = replayingOwner ?? getCurrentLoaderBodyId();
     const owner = body === callerBody ? "" : (body ?? "");
-    if (owner !== last) {
-      last = owner;
+    const group = `${owner}:${replayingOwner !== undefined}`;
+    if (group !== last) {
+      last = group;
       seq++;
     }
-    return `${seq}:${owner}`;
+    const key = `${seq}:${owner}`;
+    if (replayingOwner !== undefined) replayed?.add(key);
+    return key;
   };
 }
 
@@ -114,8 +121,15 @@ function ensureInterceptorInstalled(handleStore: HandleStore): void {
     segmentId: string,
     value: unknown,
   ) => {
+    // Innermost first: the captures that accept one push are nested, and a
+    // capture starts after the ones enclosing it. Past the innermost
+    // diverting one, none records the push: that capture delivers it again
+    // (a "use cache" miss's copy), or never to the page (a stale refresh),
+    // and the enclosing captures see what reaches it.
+    const ordered = [...captures];
     let diverted = false;
-    for (const capture of captures) {
+    for (let i = ordered.length - 1; i >= 0 && !diverted; i--) {
+      const capture = ordered[i]!;
       if (capture.accept && !capture.accept()) continue;
       if (capture.divert) diverted = true;
       const key = capture.key ? capture.key() : segmentId;

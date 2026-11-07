@@ -122,7 +122,7 @@ Key points:
 - Cached elements render correctly in both RSC stream and HTML output
 - A component that is still a promise (a route, parallel slot or intercept handler streamed under `loading()`) is awaited before encoding (`serializeSegments` in `src/cache/segment-codec.ts`); if it rejects, the serialize step throws and `cacheRoute` writes nothing, so a handler that fails after the 200 has gone out, which the MISS gate's `response.status !== 200` check in `withCacheStore` cannot see, never replaces an entry
 - A component that throws while a segment is encoded (an async server component in a handler's tree) does not reject the encode: Flight reports it through `onError` and completes normally with an error row (`1:E{"digest":""}`) that throws wherever the decoded tree renders. `cacheRoute` passes an `onError` to `serializeSegments` (`src/cache/segment-codec.ts`) and, if it fires, writes nothing and reports the error as `cache-write`, so the next request is a MISS and a stale entry keeps serving. The encode re-runs the tree, so only a throw during the encode blocks the write. Prerender passes an `onError` the same way and hands the first error to the build's `prerender.onError` policy (see Render Errors in `packages/rangojs-router/docs/prerender-api-design.md`)
-- The item writers and handle values follow the same rule. Besides an async component that throws, Flight reports a rejected promise, a function, a class instance and a local symbol through `onError` and writes an error row, so `serializeResult`'s `null` never fires for them. `serializeResult` (`src/cache/segment-codec.ts`) and `encodeHandles` / `encodeHandleValue` (`src/cache/handle-snapshot.ts`) take the same optional `onError`, and each writer passes one collector to its value encode and its handle encode: `"use cache"` (`src/cache/cache-runtime.ts`, the miss leader and the stale-hit refresh), a loader's own `cache()` (`src/router/segment-resolution/loader-cache.ts`, whose `setItem` throws into `readThroughItem`'s report) and `cacheRoute`. If it fires, nothing is written and the error is reported as `cache-write` (miss) or `stale-revalidation` (background refresh), so the next call re-runs and a stale entry keeps serving. A handle value that fails to encode refuses the whole entry rather than dropping only the handle blob: a hit replays the blob in place of the body's pushes, so an entry without it would serve a page missing its title or breadcrumbs until expiry. The blob is still dropped, entry kept, when its encode passes the 5 s `HANDLE_ENCODE_TIMEOUT_MS`. Prerender passes the same collector and hands the first error to its `prerender.onError` policy. The PPR shell capture passes one to its encode of each bake-lane loader container for the snapshot (`captureAndStoreShell` in `src/rsc/shell-capture.ts`); if it fires, the capture stores nothing, reports `cache-write` and backs the key off, like a render error (issue #927)
+- The item writers and handle values follow the same rule. Besides an async component that throws, Flight reports a rejected promise, a function, a class instance and a local symbol through `onError` and writes an error row, so `serializeResult`'s `null` never fires for them. `serializeResult` (`src/cache/segment-codec.ts`) and `encodeHandles` / `encodeHandleValue` / `teeHandles` (`src/cache/handle-snapshot.ts`; the `"use cache"` miss tees its handles) take the same optional `onError`, and each writer passes one collector to its value encode and its handle encode: `"use cache"` (`src/cache/cache-runtime.ts`, the miss leader and the stale-hit refresh), a loader's own `cache()` (`src/router/segment-resolution/loader-cache.ts`, whose `setItem` throws into `readThroughItem`'s report) and `cacheRoute`. If it fires, nothing is written and the error is reported as `cache-write` (miss) or `stale-revalidation` (background refresh), so the next call re-runs and a stale entry keeps serving. A handle value that fails to encode refuses the whole entry rather than dropping only the handle blob: a hit replays the blob in place of the body's pushes, so an entry without it would serve a page missing its title or breadcrumbs until expiry. The blob is still dropped, entry kept, when its encode passes the 5 s `HANDLE_ENCODE_TIMEOUT_MS`. Prerender passes the same collector and hands the first error to its `prerender.onError` policy. The PPR shell capture passes one to its encode of each bake-lane loader container for the snapshot (`captureAndStoreShell` in `src/rsc/shell-capture.ts`); if it fires, the capture stores nothing, reports `cache-write` and backs the key off, like a render error (issue #927)
 
 ## API
 
@@ -1475,19 +1475,59 @@ shell capture settles before it reads the tags; it records them as the
 encode's stream ends, while the page's render is still taking the copy's last
 rows, and the document cache reads the tags only after the body has drained.
 
-Three edges stay open. First, handle values are not teed: on a miss the
-request's handle store keeps what the body pushed (the capture does not
-divert, unlike the refresh's), the response renders that value, and
-`encodeHandles` encodes it after the value's encode. A handle value that reads
-the request directly is refused there, but a lazy component or a memoized
-promise in a handle value is started by whichever render reaches it first.
-Closing it means diverting a miss's pushes and replaying decoded copies, as a
-hit does, which changes when a miss's handle values arrive; that is its own
-change. Second, the live fallback decides on the root row's errors only:
+Handle values got the same treatment. The miss's capture used to keep what
+the body pushed in the request's handle store, so the response rendered the
+pushed value itself, and `encodeHandles` encoded it only after the value's
+encode had finished. A `React.lazy` or a memoizing thenable the body pushed,
+or a loader it read pushed, was started by the response's render, outside the
+scope, and the entry stored what that render read. Now the capture diverts
+(`divert: true`, as the refresh's always did), `teeHandles`
+(`src/cache/handle-snapshot.ts`) encodes the record inside the scope as soon
+as the body returns, the write stores that encode, and the call delivers the
+decoded copy to the store before it returns (`deliverRecordedPushes`). A
+refusal in a handle value is an error row in the copy and refuses the entry;
+a copy whose root row fails falls back as the value does, on the handle
+encode's own errors (`pushErrors`), and a body that throws delivers its pushes
+as made, since nothing is stored.
+
+When the values arrive: before the call returns, in the order they were
+pushed, so they still land between the caller's own pushes before and after
+the call, and in the same lane (a handler's pushes before the handler settles,
+a loader's on the auxiliary lane). What moves is only how long after the push
+they land, by the handle encode's root row, which a promise or a lazy value
+does not hold back (each is its own later row). The client's commit of
+`useHandle` relative to its page does not change, since the handler that
+awaited the call has not returned either way.
+
+Delivery is "as made", not a hit's replay, because the miss's own pushes were
+never on the page: the function's own pushes are plain pushes, an inner hit's
+replay of a loader's pushes is that replay again (`replayLoaderPush`; the
+record key marks those groups, `useCacheRecordKey(replayed)`), and a loader
+that ran in the body has its pushes re-made inside its own body scope
+(`runInsideLoaderBodyScope`), so the store credits them to that run as it did
+the live ones. Delivering them as replays instead lost data: a loader the
+body started and returned unawaited pushed again after the call returned,
+and that live push replaced the "replayed" copies of its own earlier pushes
+(`use-cache-handle-capture.test.ts`, "a loader the body started pushes after
+the call returned").
+
+Nested captures needed one rule (`ensureInterceptorInstalled` in
+`src/cache/handle-capture.ts`): the captures that accept a push are nested
+and start in that order, so the interceptor walks them innermost first and
+stops after the first diverting one. An outer miss, or a loader's `cache()`
+capture around a miss, then records the inner miss's delivered copy once
+instead of the original and the copy. Two positions differ from the live
+pushes: a loader's placeholders (`pushPlaceholder`) that its run inside the
+body would have replaced in place are dropped when its run settles and its
+copies are appended, and an inner hit's replay inside the body loses the
+placeholder anchor it claimed. Both keep the values and lose only their
+place among the placeholders' neighbours.
+
+Two edges stay open. First, the live fallback decides on the root row's errors only:
 `{ a: <Reader />, b: new Money(250) }` fails its root with the class
 instance, so the call returns the live value, the visitor sees their own
 value, nothing is stored, and the refusal in `a` never reaches `onError`
-(only the unsupported-value error does). Third, the tags a miss's tree
+(only the unsupported-value error does). Second, the tags a miss's tree
 records reach the request when the background encode ends; a response that
 does not render all of the value can finish first, and its document or shell
 then lacks those tags until a hit records them. That is staleness, not a

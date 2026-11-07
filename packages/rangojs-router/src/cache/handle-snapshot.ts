@@ -7,6 +7,7 @@
  */
 
 import { replayLoaderPush } from "./handle-capture.js";
+import { runInsideLoaderBodyScope } from "../server/context.js";
 import type { ResolvedSegment } from "../types.js";
 import type { HandleStore, RecordAuthority } from "../server/handle-store.js";
 import type { HandleOwners, SegmentHandleData } from "./types.js";
@@ -61,6 +62,39 @@ export async function encodeHandles(
 ): Promise<string> {
   if (!hasHandleData(handles)) return "";
   return encodeHandleValue(handles, onError);
+}
+
+/** A capture's Flight encode and a decoded copy of it (teeHandles). */
+export interface TeedHandles {
+  /** The copy: settles when the root row arrives; later rows stream in. */
+  decoded: Promise<HandleRecord>;
+  /** What encodeHandles would return for the same record. */
+  serialized: Promise<string>;
+}
+
+/**
+ * Encode a capture once and decode a copy of it as the encode streams: a
+ * "use cache" miss delivers the copy, as a hit delivers a stored record, and
+ * stores the same bytes (cache-runtime.ts). Undefined for an empty capture,
+ * null when the encode could not start. Call it inside the execution's
+ * scopes: the encode starts any lazy state the values hold.
+ */
+export async function teeHandles(
+  handles: HandleRecord,
+  onError?: (error: unknown) => void,
+): Promise<TeedHandles | null | undefined> {
+  if (!hasHandleData(handles)) return undefined;
+  const { teeResult } = await import("./segment-codec.js");
+  const teed = teeResult(handles, onError);
+  if (!teed) return null;
+  return {
+    decoded: teed.decoded as Promise<HandleRecord>,
+    serialized: withTimeout(
+      teed.serialized,
+      HANDLE_ENCODE_TIMEOUT_MS,
+      null,
+    ).then((encoded) => encoded ?? ""),
+  };
 }
 
 export function decodeHandles(encoded: string): Promise<HandleRecord | null> {
@@ -250,6 +284,44 @@ export async function restoreRecordHandles(
     }
   }
   restoreHandles(decoded, handleStore, record.handleOwners, owned, sent);
+}
+
+/**
+ * Deliver a "use cache" MISS's recorded pushes (useCacheRecordKey groups),
+ * which its capture diverted, to the store as they were made: the function's
+ * own as plain pushes, an inner HIT's replay of a loader's pushes as that
+ * replay (keys in `replayed`), and a loader's run as pushes inside that
+ * loader's body, so the store credits them to its run as it did the live
+ * ones (HandleStore.push): they replace that loader's copies, and a later
+ * push of the same run follows them instead of replacing them. Nothing is
+ * claimed: each push was made for this request. `segmentId` redirects every
+ * value to one segment (the caller's), as appendHandles does.
+ */
+export function deliverRecordedPushes(
+  handles: Record<string, SegmentHandleData>,
+  handleStore: HandleStore,
+  segmentId: string | undefined,
+  replayed: ReadonlySet<string>,
+): void {
+  for (const [key, segHandles] of Object.entries(handles)) {
+    const colon = key.indexOf(":");
+    const owner = colon < 0 ? "" : key.slice(colon + 1);
+    const target = segmentId ?? key;
+    for (const [handleName, values] of Object.entries(segHandles)) {
+      for (const value of values) {
+        if (!owner) {
+          handleStore.push(handleName, target, value);
+        } else if (replayed.has(key)) {
+          replayLoaderPush(handleStore, handleName, target, value, owner);
+        } else {
+          runInsideLoaderBodyScope(
+            () => handleStore.push(handleName, target, value),
+            owner,
+          );
+        }
+      }
+    }
+  }
 }
 
 /**
