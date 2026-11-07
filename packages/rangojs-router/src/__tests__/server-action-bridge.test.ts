@@ -1693,6 +1693,56 @@ describe("server-action-bridge follow-up", () => {
     expect(t.followUps()).toEqual(["http://localhost/other"]);
   });
 
+  it("a follow-up the page answers with a redirect navigates there in place of the entry, and is owed no more", async () => {
+    const t = setup();
+    const call = t.act();
+    t.show("/other");
+
+    await t.respond(0, saved());
+    await expect(call).resolves.toBe("saved");
+    await t.flush();
+    expect(t.followUps()).toEqual(["http://localhost/other"]);
+
+    t.answerRefetch(0, {
+      ...answer,
+      redirect: { url: "/login" },
+      locationState: { __rsc_ls_reason: "expired" },
+    });
+    await t.flush();
+    expect(t.onNavigate).toHaveBeenCalledExactlyOnceWith(
+      "http://localhost/login",
+      {
+        state: { __rsc_ls_reason: "expired" },
+        replace: true,
+        _skipCache: true,
+      },
+    );
+    await t.flush();
+    expect(t.fetchPartial).toHaveBeenCalledOnce();
+  });
+
+  it("a follow-up the user left follows no redirect, and is owed again", async () => {
+    const t = setup();
+    const call = t.act();
+    t.show("/other");
+
+    await t.respond(0, saved());
+    await expect(call).resolves.toBe("saved");
+    await t.flush();
+    expect(t.followUps()).toEqual(["http://localhost/other"]);
+
+    const click = t.navigate("/next");
+    t.answerRefetch(0, { ...answer, redirect: { url: "/login" } });
+    await t.flush();
+    expect(t.onNavigate).not.toHaveBeenCalled();
+    click.commit();
+    await t.flush();
+    expect(t.followUps()).toEqual([
+      "http://localhost/other",
+      "http://localhost/next",
+    ]);
+  });
+
   it("follows up a thrown action whose page has a click in flight at its exit, after that click", async () => {
     const t = setup();
     const failure = new Error("out of stock");

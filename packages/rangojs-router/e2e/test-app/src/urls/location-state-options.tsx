@@ -1,6 +1,6 @@
-import { urls } from "@rangojs/router";
+import { redirect, urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import { ServerPageStamp } from "../location-states.js";
+import { LoadMoreNote, ServerPageStamp } from "../location-states.js";
 import {
   AppVersionPanel,
   LoadMoreList,
@@ -27,10 +27,16 @@ export const locationStateOptionsPatterns = urls(({ path, loader, layout }) => [
     // #994 clearOnReload, #1029, #1030: a "load more" list. LoadMoreLoader
     // loads the page the URL names; the earlier pages ride along as location
     // state on the Link. The handler sets state of its own on every request,
-    // document loads included.
+    // document loads included. `x-lm-redirect` stands for a session that
+    // expired: the page redirects to page 1 with a note.
     path(
       "/load-more",
       (ctx) => {
+        if (ctx.request.headers.get("x-lm-redirect")) {
+          throw redirect("/location-state/load-more?page=1", {
+            state: LoadMoreNote({ text: "redirected" }),
+          });
+        }
         const page = Number(ctx.searchParams.get("page") ?? "1");
         // The e2e skips it on a document load to see a stale stamp kept,
         // and marks a request with a number to see which response set it.

@@ -185,10 +185,32 @@ export function createNavigationTransaction(
       intercept,
       interceptSource: interceptSourceUrl,
     });
+    // Read before this commit moves the store's key.
+    const onScreen = store.getHistoryKey() === historyKey;
+
+    /**
+     * Server-set state of a commit that re-renders the entry on screen
+     * without writing it (an action's refetch, Back's background
+     * revalidation): merged into the entry and added to what readers show,
+     * as a refresh does (sameEntry), never re-read from the entry. Only
+     * while that entry is the one on screen: the stale revalidation commits
+     * before partial-update.ts drops a page the user left.
+     */
+    const addServerState = (): void => {
+      if (!onScreen || !serverState || Object.keys(serverState).length === 0) {
+        return;
+      }
+      mergeLocationState(serverState);
+      eventController.commitLocationState(
+        shownLocationState(eventController.getLocationState(), serverState),
+        opts.treeless,
+      );
+    };
 
     if (cacheOnly) {
       const currentHandleData = eventController.getHandleState().data;
       store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
+      addServerState();
       handle.complete(parsedUrl);
       debugLog("[Browser] Cache-only commit, historyKey:", historyKey);
       return {};
@@ -213,6 +235,7 @@ export function createNavigationTransaction(
       // Same entry (an action refetch): refresh its state, keep its name
       // unless the payload names it.
       store.rememberDisplayedEntry(opts.metadata);
+      addServerState();
       debugLog("[Browser] Store updated (action)");
       handle.complete(parsedUrl);
       return {};
