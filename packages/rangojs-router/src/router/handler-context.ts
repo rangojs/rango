@@ -207,23 +207,66 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx with its own `reverse` in the segment's
- * ReverseScope, so `.name` resolves in the module that declared the segment.
- * The scope rides the object, not the call frame: it holds after an `await`
- * and in a component the ctx is handed to. Every other field reads through
- * live (`_currentSegmentId` as resolution moves it, ctx.set values).
- * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
+ * The ctx one handler gets: a prototype child of the request's one handler
+ * ctx, pinned to the segment the handler runs for and, when the segment
+ * declares one, with its own `reverse` in the segment's ReverseScope so
+ * `.name` resolves in the module that declared the segment. The scope and the
+ * pin ride the object, not the call frame: they hold after an `await` and in
+ * a component the ctx is handed to, which React renders after the handler
+ * returned and the walker moved its shared `_currentSegmentId` on. A handle
+ * push a component makes through this ctx therefore files under the segment
+ * whose handler handed it over, not under a later one (handle-store.ts
+ * createLateHandlePushError names it).
+ *
+ * Every other field reads through live, and `{ ...ctx }` copies what it copies
+ * on the request's ctx: a route handler's ctx is this child too, so a spread
+ * there must keep its fields. `_reverseScope` keys a "use cache" call that
+ * takes this ctx (cache-runtime.ts).
  */
-export function withReverseScope<C>(
+export function withHandlerScope<C>(
   ctx: C,
-  scope: ReverseScope | undefined,
+  segmentId: string,
+  scope?: ReverseScope,
 ): C {
-  if (scope === undefined) return ctx;
-  const scoped = Object.create(ctx as object);
-  scoped.reverse = scopeReverse((ctx as any).reverse, scope);
-  scoped._reverseScope = scope;
-  return scoped;
+  const scoped = Object.create(ctx as object) as Record<string, unknown>;
+  for (const key of Reflect.ownKeys(ctx as object)) {
+    // Non-enumerable fields (theme, rewrittenFrom) read through the
+    // prototype; the enumerable ones, the taint brand's symbol included,
+    // must stay own so `{ ...ctx }` copies them as it does on the request's
+    // ctx (a "use cache" call given the copy keys by it).
+    if (!Object.getOwnPropertyDescriptor(ctx as object, key)?.enumerable) {
+      continue;
+    }
+    Object.defineProperty(scoped, key, {
+      get: () => (ctx as any)[key],
+      set: (value: unknown) => {
+        (ctx as any)[key] = value;
+      },
+      enumerable: true,
+      configurable: true,
+    });
+  }
+  const pin: PropertyDescriptor = {
+    value: segmentId,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  };
+  Object.defineProperty(scoped, "_currentSegmentId", pin);
+  // Bound, so a component that destructures `use` off the ctx still resolves
+  // the segment its handler ran for: `use` reads its receiver.
+  const use = (ctx as any).use;
+  if (typeof use === "function") {
+    Object.defineProperty(scoped, "use", { ...pin, value: use.bind(scoped) });
+  }
+  if (scope !== undefined) {
+    Object.defineProperty(scoped, "reverse", {
+      ...pin,
+      value: scopeReverse((ctx as any).reverse, scope),
+    });
+    Object.defineProperty(scoped, "_reverseScope", { ...pin, value: scope });
+  }
+  return scoped as C;
 }
 
 /**
@@ -245,7 +288,7 @@ export function createReverseFunction(
 ): ScopableReverse {
   return (name, hrefParams, search, segmentScope) => {
     // A dot-local name from a segment's handler or loader resolves in the
-    // segment's own include scope (withReverseScope); everything else from
+    // segment's own include scope (withHandlerScope); everything else from
     // the route's name.
     const scope = name.startsWith(".") ? segmentScope : undefined;
     const pattern = scope

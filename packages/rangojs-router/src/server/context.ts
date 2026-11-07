@@ -814,7 +814,7 @@ export function getRootScoped(): boolean {
  * module's route. Structural entries (layout, cache, parallel, wrapping
  * middleware) and the loaders they declare capture the scope where the DSL
  * defined them. Their handler gets a ctx whose `reverse` carries it
- * (withReverseScope, router/handler-context.ts), and their loaders' DSL
+ * (withHandlerScope, router/handler-context.ts), and their loaders' DSL
  * kickoff carries it in the loader scope (runInsideLoaderScope) for the
  * loader ctx the executor builds. Global names and mount-param autofill do
  * not change.

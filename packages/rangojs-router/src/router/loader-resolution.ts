@@ -982,11 +982,20 @@ export function setupLoaderAccess<TEnv>(
       },
     )(loader, null);
 
-  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+  // A handler's ctx is a child of this one, pinned to its segment
+  // (withHandlerScope): read the receiver so a push through it after an
+  // await files under the handler that handed the ctx over. A loader it
+  // starts keeps this ctx, and with it the loader ownership it had.
+  ctx.use = function (
+    this: HandlerContext<any, TEnv> | undefined,
+    item: LoaderDefinition<any, any> | Handle<any, any>,
+  ) {
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = segmentPinOf(ctx as InternalHandlerContext<any, TEnv>);
+      const segmentId = segmentPinOf(
+        (this ?? ctx) as InternalHandlerContext<any, TEnv>,
+      );
 
       if (!segmentId) {
         throw new Error(
@@ -1044,7 +1053,7 @@ export function setupLoaderAccess<TEnv>(
     }
 
     return useLoader(loader, null);
-  }) as typeof ctx.use;
+  } as typeof ctx.use;
 }
 
 /**
@@ -1055,12 +1064,17 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
   const handleStoreRef = _getRequestContext()?._handleStore;
 
-  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+  ctx.use = function (
+    this: HandlerContext<any, TEnv> | undefined,
+    item: LoaderDefinition<any, any> | Handle<any, any>,
+  ) {
     // Handle case: return a push function bound to the current segment
     if (isHandle(item)) {
       const handle = item;
       const store = handleStoreRef;
-      const segmentId = segmentPinOf(ctx as InternalHandlerContext<any, TEnv>);
+      const segmentId = segmentPinOf(
+        (this ?? ctx) as InternalHandlerContext<any, TEnv>,
+      );
 
       if (!segmentId) {
         throw new Error(
@@ -1092,7 +1106,7 @@ export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
         "Use them on parent layouts with cache() for request-time data, " +
         "or use a passthrough prerender handler.",
     );
-  }) as typeof ctx.use;
+  } as typeof ctx.use;
 }
 
 /**

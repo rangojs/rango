@@ -464,7 +464,7 @@ export type InternalHandlerContext<
   _routeName?: string;
   /**
    * The segment's ReverseScope on a layout's / parallel's ctx and its
-   * loaders' (withReverseScope): keys a "use cache" call taking the ctx.
+   * loaders' (withHandlerScope): keys a "use cache" call taking the ctx.
    */
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**

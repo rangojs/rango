@@ -22,7 +22,7 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
-  withReverseScope,
+  withHandlerScope,
 } from "../handler-context";
 import { scopeReverse, type ReverseScope } from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
@@ -537,7 +537,7 @@ describe("createReverseFunction", () => {
     });
   });
 
-  describe("segment reverse scope (withReverseScope)", () => {
+  describe("segment reverse scope (withHandlerScope)", () => {
     // include("/:accountId", account, { name: "account" }) containing
     // include("/:projectId", project, { name: "project" }).
     const nestedMap: Record<string, string> = {
@@ -589,24 +589,28 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+    it("withHandlerScope: the scope and the segment ride the ctx; other fields read through live", () => {
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
-      const scoped = withReverseScope(ctx, scope);
+      const scoped = withHandlerScope(ctx, "L0", scope);
       // Destructured and called later, as a component handed the ctx does.
       const { reverse } = scoped;
+      // The walker moves the request ctx's pin on to the route; the handler's
+      // ctx keeps its own, so a push through it after an await is the layout's.
       ctx._currentSegmentId = "L1";
       expect(reverse(".settings")).toBe("/acme/settings");
-      expect(scoped._currentSegmentId).toBe("L1");
+      expect(scoped._currentSegmentId).toBe("L0");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
+      // `{ ...ctx }` copies what it copies on the request's ctx.
+      expect({ ...scoped }.params).toBe(params);
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
-      expect(withReverseScope(ctx, undefined)).toBe(ctx);
+      expect(withHandlerScope(ctx, "R0")._currentSegmentId).toBe("R0");
     });
   });
 

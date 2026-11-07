@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `LateHandlePushError` names the segment whose handler handed the component its `ctx`
+
+**Before.** A server component handed a layout's (or a slot's, or a route's)
+`ctx` that pushed a handle after an `await` threw `LateHandlePushError`
+naming a later segment: a layout's push said the child route's segment, and a
+route's said its slot's. `ctx.use(Handle)` read the walker's shared
+`_currentSegmentId` when the component called it, and by then the walker had
+resolved the next segment. The error is still thrown, at the same moment;
+only the segment it names changes, and production still shows no message.
+
+**Now.** The `ctx` a handler gets carries the segment that handler runs for
+(`withHandlerScope`, `router/handler-context.ts`), so a push through it —
+before or after an `await`, from the handler or from a component it hands the
+`ctx` to — files under that segment and the error names it.
+
+Every field of the `ctx` still reads through the request's, `ctx.use(Loader)`
+and `ctx.set()` are unchanged, and `{ ...ctx }` copies what it copied before.
+A route handler's `ctx` is its own object now, as a layout's and a slot's
+already was: a field you add to it stays on that handler's `ctx` (use
+`ctx.set()` to share a value), and `ctx` object identity differs from the
+request's. Nothing reads that identity, and the documented API behaves as
+before.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -16,6 +16,10 @@
  * resolves after the main walk, on the shared ctx; the intercept case guards
  * that order. `{ ...ctx }` in a loading() route copies what it copies in an
  * awaited route.
+ *
+ * A component a handler hands its ctx to runs after the handler returned, so
+ * no scope covers it: the ctx carries the segment the handler ran for
+ * (withHandlerScope), and the push names it in LateHandlePushError.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -418,6 +422,172 @@ describe("{ ...ctx } in a loading() route", () => {
     expect(await serve(router, "/u/7", "document", options)).toEqual(expected);
     expect(cachedCrumbRuns.count - runs).toBe(1);
   });
+});
+
+/** A component a handler hands its ctx to, pushing after an `await`. */
+async function LatePush({ ctx }: { ctx: any }) {
+  await wait("a timer");
+  ctx.use(Crumbs)("late");
+  return <p>late</p>;
+}
+
+/**
+ * The segment each handler kind runs for, on the router that reaches it: a
+ * component it hands its ctx to pushes after the walker moved its shared
+ * `_currentSegmentId` on to the next segment.
+ */
+const LATE_PUSH_SEGMENTS: ReadonlyArray<
+  readonly [kind: string, url: string, segment: string]
+> = [
+  ["layout", "/late-layout", "M0L0L0"],
+  ["route", "/late-route", "M0L0L0R0"],
+  ["slot", "/late-slot", "M0L0L0R0.@side"],
+  ["intercept", "/late-item/1", "M0L0L0.@modal"],
+  ["intercept layout", "/late-item/1", "M0L0L0.@modal"],
+];
+
+/** A router whose `kind` handler hands its ctx to LatePush. */
+function latePushRouter(
+  kind: string,
+  errors: Error[],
+): Parameters<typeof serveShellRequest>[0] {
+  const create = (build: (dsl: any) => any) =>
+    createRouter({
+      telemetry: {
+        emit: (event: any) => {
+          if (event.type === "handler.error") errors.push(event.error as Error);
+        },
+      },
+    }).routes(urls(build));
+  // A shell layout that pushes a crumb of its own, so a late push has a
+  // sibling bucket to land in by mistake.
+  const shell = (ctx: any) => {
+    ctx.use(Crumbs)("shell");
+    return <main>shell</main>;
+  };
+  switch (kind) {
+    case "layout":
+      // The route's handler runs after the layout's.
+      return create(({ path, layout }) => [
+        layout(
+          (ctx: any) => (
+            <main>
+              <LatePush ctx={ctx} />
+            </main>
+          ),
+          () => [
+            path("/late-layout", () => <p>page</p>, { name: "lateLayout" }),
+          ],
+        ),
+      ]);
+    case "route":
+      // The slot's handler runs after the route's.
+      return create(({ path, layout, parallel }) => [
+        layout(shell, () => [
+          path(
+            "/late-route",
+            (ctx: any) => <LatePush ctx={ctx} />,
+            { name: "lateRoute" },
+            () => [
+              parallel({
+                "@side": (ctx: any) => {
+                  ctx.use(Crumbs)("side");
+                  return <aside>side</aside>;
+                },
+              }),
+            ],
+          ),
+        ]),
+      ]);
+    case "slot":
+      return create(({ path, layout, parallel }) => [
+        layout(shell, () => [
+          path(
+            "/late-slot",
+            (ctx: any) => {
+              ctx.use(Crumbs)("route");
+              return <p>page</p>;
+            },
+            { name: "lateSlot" },
+            () => [
+              parallel({
+                "@side": (ctx: any) => (
+                  <aside>
+                    <LatePush ctx={ctx} />
+                  </aside>
+                ),
+              }),
+            ],
+          ),
+        ]),
+      ]);
+    case "intercept":
+    case "intercept layout":
+      return create(({ path, layout, intercept }) => [
+        layout(shell, () => [
+          path("/list", () => <ul>list</ul>, { name: "list" }),
+          path("/late-item/:id", () => <article>item</article>, {
+            name: "lateItem",
+          }),
+          intercept(
+            "@modal",
+            ".lateItem",
+            (ctx: any) =>
+              kind === "intercept" ? (
+                <LatePush ctx={ctx} />
+              ) : (
+                <dialog>modal</dialog>
+              ),
+            () =>
+              kind === "intercept layout"
+                ? [layout((ctx: any) => <LatePush ctx={ctx} />)]
+                : [],
+          ),
+        ]),
+      ]);
+    default:
+      throw new Error(`unknown handler kind: ${kind}`);
+  }
+}
+
+/** The segment a LateHandlePushError names, from the handler.error events. */
+function latePushSegment(errors: Error[]): string | undefined {
+  const message = errors
+    .map((error) => error.message)
+    .find((text) => text.includes("was pushed after"));
+  return /for segment "([^"]+)" was pushed after/.exec(message ?? "")?.[1];
+}
+
+describe("a component given a handler's ctx pushes after an await", () => {
+  for (const mode of ["document", "navigation"] as const) {
+    for (const [kind, url, segment] of LATE_PUSH_SEGMENTS) {
+      it(`names the ${kind}'s segment, not the segment the walker moved on to (${mode})`, async () => {
+        const errors: Error[] = [];
+        const router = latePushRouter(kind, errors);
+        const cacheStore = new MemorySegmentCacheStore();
+        if (kind.startsWith("intercept")) {
+          // An intercept renders on a navigation from its source page.
+          const list = await serveShellRequest(router, "/list", {
+            cacheStore,
+            partial: true,
+          });
+          const { metadata } = await deserializeResult<{
+            metadata: { matched: string[] };
+          }>(list.flight!);
+          await serveShellRequest(router, url, {
+            cacheStore,
+            partial: { from: "/list", segments: metadata.matched },
+          });
+        } else {
+          await serveShellRequest(router, url, {
+            cacheStore,
+            ...(mode === "navigation" ? { partial: true as const } : {}),
+          });
+        }
+        expect(latePushSegment(errors)).toBe(segment);
+      });
+    }
+  }
 });
 
 for (const mode of ["document", "navigation"] as const) {

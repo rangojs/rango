@@ -185,7 +185,7 @@ function copyFor(holder: object, href: string | undefined): URL | undefined {
 
 /**
  * The ctx defineRewrittenFrom ran on: `holder`, or the one it derives from
- * (a layout's ctx is an Object.create child of the route's, withReverseScope).
+ * (a layout's ctx is an Object.create child of the route's, withHandlerScope).
  */
 function definedOn(holder: object): object {
   while (!SOURCES.has(holder)) holder = Object.getPrototypeOf(holder);

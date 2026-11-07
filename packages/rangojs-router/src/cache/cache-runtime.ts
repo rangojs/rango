@@ -491,9 +491,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     const keyArgs: unknown[] = [];
     let hasTaintedArgs = false;
     // The calling segment, read synchronously as ctx.use(Handle) does: a HIT
-    // replays into it. A route's layouts and page share one handler ctx and
-    // so one key; the recorded ids are the first caller's. Its ctx's claim
-    // keeps a replayed loader's pushes to one copy per request.
+    // replays into it. A route's layouts and page read the same key fields
+    // and so one key; the recorded ids are the first caller's. Its ctx's
+    // claim keeps a replayed loader's pushes to one copy per request.
     let callerSegmentId: string | undefined;
     let claimLoaderPushes: ((loaderId: string) => boolean) | undefined;
     // A fetchable loader's request body (loader-fetch.ts) is an input the
@@ -528,7 +528,7 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
             keyArgs.push(ctx._routeName);
           }
           // A layout's / parallel's / their loader's ctx resolves dot names
-          // in its own module (withReverseScope), so one route's segments
+          // in its own module (withHandlerScope), so one route's segments
           // can reverse the same name differently.
           const scope = ctx._reverseScope;
           if (scope) {

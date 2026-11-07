@@ -28,6 +28,7 @@ import { fillSends } from "./segment-resolution/prefetch-deferral.js";
 import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
 import { getRouterContext, type InterceptResult } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
+import { withHandlerScope } from "./handler-context.js";
 import {
   RangoContext,
   latchPprHeaderScopeForEntries,
@@ -400,7 +401,11 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(
+                slotSegmentId,
+                handler,
+                withHandlerScope(context, slotSegmentId),
+              ),
             ),
           )
         : handler;
@@ -425,7 +430,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        withHandlerScope(context, slotSegmentId),
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;
