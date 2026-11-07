@@ -32,7 +32,9 @@
  * value sync — no `storage` event is needed. An in-memory mirror is a
  * write-through copy that is authoritative only when the cookie is unreadable
  * (e.g. a sandboxed frame, or site data blocked wholesale): the failure
- * direction is always toward freshness.
+ * direction is always toward freshness. There no response's `Set-Cookie`
+ * reaches it, so an action's landing bumps the mirror's write part itself
+ * (bumpRangoStateWriteWhenUnbacked).
  *
  * Precedence is load-bearing: when `document.cookie` is readable, the
  * per-request read wins; the mirror is a fallback, never a cache of the read.
@@ -42,6 +44,7 @@
 
 import {
   DEFAULT_STATE_COOKIE_PREFIX,
+  bumpStateWrite,
   decodeStateValue,
   getRawCookieValue,
   mintStateValue,
@@ -221,6 +224,27 @@ export function invalidateRangoState(): void {
   mirror = mintValue();
   cookieBacked = false;
   writeCookie(cookieName, mirror);
+}
+
+/**
+ * A server action without a directive wrote (this tab's landing, or a soft
+ * broadcast of another tab's): when the jar holds no state value, bump the
+ * write part of the mirror.
+ *
+ * The action's response bumps the write part through its `Set-Cookie`, which
+ * only a jar that keeps the cookie carries. Where it cannot (cookies blocked,
+ * so the value reads as absent, or a sandboxed frame, where the read throws)
+ * the request carried no state, the server set none, and without this the
+ * `X-Rango-State` this tab sends would stay the same across the write: the
+ * browser HTTP cache would answer the next prefetch with what it stored
+ * before the write, as fresh. A value the jar holds is left to the next read,
+ * which adopts it (the response's bump, or a later one).
+ */
+export function bumpRangoStateWriteWhenUnbacked(): void {
+  const read = readCookie(cookieName);
+  if (read.readable && read.value !== null) return;
+  const bumped = mirror === null ? null : bumpStateWrite(mirror);
+  if (bumped !== null) mirror = bumped;
 }
 
 /**

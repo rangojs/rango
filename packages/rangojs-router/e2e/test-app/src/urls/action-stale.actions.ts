@@ -18,6 +18,11 @@ export async function addToActionStaleCart(
   return actionStaleState().cart;
 }
 
+/** Adds an item to the cart: a form's action. */
+export async function addToActionStaleCartFromForm(): Promise<void> {
+  actionStaleState().cart += 1;
+}
+
 /**
  * Adds an item to the cart and answers at once, with a client-cache
  * directive: "keep" calls keepClientCache(), "invalidate" the server seat of

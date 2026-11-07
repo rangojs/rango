@@ -18,6 +18,7 @@ import {
   markPrefetchesStale,
 } from "../browser/prefetch/cache";
 import { resetPrefetchPolicy } from "../browser/prefetch/policy";
+import { stateEpoch } from "../browser/cookie-name";
 import { abortAllPrefetches } from "../browser/prefetch/queue";
 import { createNavigationClient } from "../browser/navigation-client";
 import type { FetchPartialResult, RscPayload } from "../browser/types";
@@ -283,6 +284,135 @@ describe("a server action's write bump of the rango state", () => {
       const click = await clickBlog();
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(click.stalePrefetch).toBe(false);
+    });
+  });
+
+  // navigation-store.ts keeps the first BroadcastChannel it opens for the
+  // module's life, so every case talks through this one object.
+  const channel: {
+    onmessage: ((event: MessageEvent) => void) | null;
+    postMessage: (message: unknown) => void;
+  } = { onmessage: null, postMessage: vi.fn() };
+
+  /**
+   * A jar that keeps no state value: cookies blocked (the read is empty and
+   * a write is dropped) or a sandboxed frame (the read throws). The action's
+   * Set-Cookie never reaches it, so the mirror takes the write: a hover after
+   * the landing sends a value the browser HTTP cache holds nothing under.
+   */
+  describe.each([
+    {
+      jar: "drops the cookie",
+      doc: (): object => ({
+        get cookie(): string {
+          return "";
+        },
+        set cookie(_v: string) {},
+      }),
+    },
+    {
+      jar: "cannot be read",
+      doc: (): object => ({
+        get cookie(): string {
+          throw new Error("blocked");
+        },
+        set cookie(_v: string) {
+          throw new Error("blocked");
+        },
+      }),
+    },
+  ])("where the jar $jar", ({ doc }) => {
+    beforeEach(() => {
+      vi.stubGlobal(
+        "document",
+        Object.assign(doc(), { querySelectorAll: () => [] }),
+      );
+      initRangoState("v1", NAME);
+      channel.onmessage = null;
+      channel.postMessage = vi.fn();
+      vi.stubGlobal(
+        "BroadcastChannel",
+        class {
+          set onmessage(listener: ((event: MessageEvent) => void) | null) {
+            channel.onmessage = listener;
+          }
+
+          postMessage(message: unknown): void {
+            channel.postMessage(message);
+          }
+        },
+      );
+    });
+
+    afterEach(() => {
+      setRangoStateObserver(null);
+      setRangoStateWriteObserver(null);
+    });
+
+    function makeStore(): ReturnType<typeof createNavigationStore> {
+      const store = createNavigationStore({
+        initialLocation: { href: SOURCE },
+        initialSegmentIds: ["A0"],
+        crossTabSync: true,
+      });
+      registerNavigationStore(store);
+      return store;
+    }
+
+    it("the acting tab's landing changes the state a hover after it sends, keeping its epoch", async () => {
+      const store = makeStore();
+      const fetchMock = stubServer();
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      const before = sentState(fetchMock, 0);
+
+      enterActionFence();
+      store.markCacheAsStaleAndBroadcast();
+      exitActionFence();
+
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const after = sentState(fetchMock, 1);
+      expect(after, "a value no response was cached under").not.toBe(before);
+      expect(stateEpoch(after)).toBe(stateEpoch(before));
+      // The soft broadcast carries it.
+      expect(channel.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ soft: true, rangoState: after }),
+      );
+
+      // The prefetch sent after the landing is fresh.
+      const click = await clickBlog();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(click.stalePrefetch).toBe(false);
+    });
+
+    it("another tab's soft broadcast changes the state this tab sends", async () => {
+      makeStore();
+      const fetchMock = stubServer();
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      const before = sentState(fetchMock, 0);
+
+      // The sender's mirror is its own (no shared jar): an older timestamp,
+      // so this tab adopts nothing.
+      channel.onmessage?.({
+        data: {
+          type: "invalidate",
+          path: "/current",
+          segmentIds: ["A0"],
+          rangoState: "v1:1:5000",
+          stateCookieName: NAME,
+          soft: true,
+        },
+      } as MessageEvent);
+
+      prefetchDirect("/blog", ["A0"], "v1");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const after = sentState(fetchMock, 1);
+      expect(after).not.toBe(before);
+      expect(stateEpoch(after)).toBe(stateEpoch(before));
     });
   });
 });

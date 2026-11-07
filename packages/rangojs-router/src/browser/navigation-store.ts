@@ -18,6 +18,7 @@ import {
 import { LoaderStore } from "../loader-store.js";
 import {
   adoptRangoState,
+  bumpRangoStateWriteWhenUnbacked,
   getRangoState,
   getRangoStateCookieName,
 } from "./rango-state.js";
@@ -367,15 +368,17 @@ export function createNavigationStore(
     // The read reports an external rotation or write the jar holds to the
     // fence. Either branch below marks every cache stale, so it covers a
     // write seen so far.
-    const rangoState = getRangoState();
+    getRangoState();
     takeStateWriteInActionFence();
     if (takeStateRotationInActionFence()) {
       clearPrefetchCache();
       broadcastInvalidation(false);
       return;
     }
+    // A jar that keeps no state value never got the response's write bump.
+    bumpRangoStateWriteWhenUnbacked();
     markPrefetchesStale();
-    broadcastInvalidation(true, rangoState);
+    broadcastInvalidation(true);
   }
 
   /**
@@ -443,7 +446,10 @@ export function createNavigationStore(
               // post-invalidation prefetches.
               clearPrefetchCache(false);
             } else if (event.data.soft === true) {
-              // A server action that rotated nothing: mark, never flush.
+              // A server action that rotated nothing: mark, never flush. A
+              // jar that keeps no state value is not shared with the sender,
+              // so this tab's own value takes the write.
+              bumpRangoStateWriteWhenUnbacked();
               markPrefetchesStale();
             } else {
               clearPrefetchCache(true);

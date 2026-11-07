@@ -17,6 +17,7 @@ import {
   ActionStaleCount,
   ActionStaleFillValue,
 } from "./action-stale.client.js";
+import { addToActionStaleCartFromForm } from "./action-stale.actions.js";
 import { actionStaleState, wait } from "./action-stale.store.js";
 
 // The action follow-up fixture: a layout with a cart count whose loader opts
@@ -29,7 +30,8 @@ import { actionStaleState, wait } from "./action-stale.store.js";
 // defer the page's `prefetch: false` loader;
 // =transition: the transition() basket's; =inflight: on hover, a basket that
 // answers after 1500 ms, which an action's start does not cancel as it
-// cancels queued ones), so no other case has a prefetch to consume.
+// cancels queued ones; =item: the item, which opens over it as a modal), so
+// no other case has a prefetch to consume.
 // /action-stale/bare/* sit under a layout with no revalidate(): a basket and
 // a chain of pages whose first prefetches it. /action-stale/counted is a
 // layout whose loader re-runs on every navigation, with a prefetching link to
@@ -110,6 +112,15 @@ const ActionStalePdp: Handler = (ctx) => {
           data-testid="as-to-slow-basket-prefetched"
         >
           Basket, answering after 1500 ms, prefetched on hover
+        </Link>
+      )}
+      {prefetch === "item" && (
+        <Link
+          to="/action-stale/item"
+          prefetch="render"
+          data-testid="as-to-item-prefetched"
+        >
+          Item, prefetched
         </Link>
       )}
       {prefetch === "transition" && (
@@ -230,10 +241,17 @@ const ActionStaleBasket: Handler = async (ctx) => {
 // test-app's 60 s prefetchCacheTTL however slow the hops are.
 const BARE_HOP_PREFETCHING = 22;
 
+// The add, and the same write as a form a document without JavaScript posts
+// (the progressive-enhancement path).
 function ActionStaleBareLayout() {
   return (
     <div data-testid="as-bare">
       <ActionStaleBareAdd />
+      <form action={addToActionStaleCartFromForm}>
+        <button type="submit" data-testid="as-bare-add-form">
+          Add, from a form
+        </button>
+      </form>
       <Outlet />
     </div>
   );

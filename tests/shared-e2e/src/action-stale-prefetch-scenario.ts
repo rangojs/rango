@@ -39,7 +39,8 @@ import { waitForShellHydration } from "./shell-request.js";
  * Fixture: action-stale.tsx in each app. /action-stale/basket reads the cart
  * in its route after 300 ms; the product page renders prefetching links to
  * it and to /action-stale/other with ?prefetch=render (=inflight: a slow
- * basket on hover; =transition: a transition() basket).
+ * basket on hover; =transition: a transition() basket; =item: the item, which
+ * opens over it as a modal).
  * /action-stale/counted is a layout whose loader re-runs on every
  * navigation, and /action-stale/bare/* a basket and a chain of pages under a
  * layout with no revalidate(). The add actions answer at once. Both apps
@@ -132,6 +133,43 @@ export function runActionStalePrefetchTests(
       `useNavigation() stays idle once the page is shown: ${JSON.stringify(seen)}`,
     ).toEqual([]);
     expect(await readState(page)).toBe(written);
+  });
+
+  // The item opens over the product page as a modal (an intercept): its
+  // prefetch is scoped to that page, and the revalidation asks for the item
+  // from it, so the modal stays over the product page rather than turning
+  // into the item's own page.
+  test("a click on a prefetch that opens a modal shows it at once, then the write, over its source page", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    const sent = await openProductPage(page, options, "?prefetch=item");
+    await prefetched(sent, "/action-stale/item");
+
+    await page.getByTestId("as-add-fast").click();
+    await waitForSettled(page);
+    await expect(page.getByTestId("as-cart")).toHaveText("cart:1");
+
+    await recordTexts(page, "as-item");
+    await page.getByTestId("as-to-item-prefetched").click();
+    await waitForShown(page, "as-item");
+    expect(
+      navigations(sent, "/action-stale/item").filter((entry) => !entry.stale),
+      "the click shows the prefetched modal without a request of its own",
+    ).toEqual([]);
+
+    await expect(page.getByTestId("as-item")).toHaveText("item:1");
+    expect(
+      await readTexts(page),
+      "the prefetch's pre-write modal, then the revalidated one",
+    ).toEqual(["item:0", "item:1"]);
+    expect(await sameElement(page), "the modal is updated in place").toBe(true);
+    await expect(page.getByTestId("as-pdp")).toBeVisible();
+    await expect(page.getByTestId("as-item-page")).toHaveCount(0);
+    await page.waitForTimeout(500);
+    const [revalidation, ...more] = navigations(sent, "/action-stale/item");
+    expect(revalidation?.stale, "one stale revalidation").toBe(true);
+    expect(more).toEqual([]);
   });
 
   test("keepClientCache() keeps the prefetch fresh: the click shows it and nothing revalidates", async ({

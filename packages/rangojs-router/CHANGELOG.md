@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: after a server action, a browser that blocks cookies no longer shows data from before it
+
+**Before.** A server action without a directive changed the `X-Rango-State`
+value through its response's `Set-Cookie`. Where the page cannot keep that
+cookie (cookies blocked, or a sandboxed frame), the value never changed. A
+hover after the action was then answered by the browser HTTP cache with what
+it stored before the write (a route's own `Cache-Control: max-age`, or a
+stored prefetch within `prefetchCacheTTL`), and the click showed it as fresh,
+with no revalidation. A tab that heard the action's broadcast did the same.
+
+**Now.** When the jar holds no state value, the client bumps the write part
+of the value it keeps in memory as the action lands, and so does a tab that
+hears its broadcast. The next prefetch or navigation sends a value nothing
+was cached under, so it shows the write. A browser that keeps the cookie is
+unchanged.
+
+Nothing to change in your code.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
@@ -454,8 +474,10 @@ delegated plain anchor.
 - There is no hover delay: every cursor pass over a `"hover"` link with
   nothing cached runs the flagged work. Touch devices have no hover.
 - A hover prefetch that defers nothing is answered like a navigation: no
-  `private, no-cache`, no `Vary: X-Rango-Prefetch`, no source scope (an
-  intercept target stays source-scoped).
+  `private, no-cache`, no `Vary: X-Rango-Prefetch`, and not scoped to its
+  source page for deferral. It is still source-scoped where a navigation's
+  answer would be: an intercept target, or a page whose `revalidate()` read
+  the source page.
 
 No API change. A test that serves a prefetch with `serveShellRequest(router,
 url, { partial: { prefetch: true } })` still gets a speculative one; add

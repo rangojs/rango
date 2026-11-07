@@ -152,6 +152,72 @@ describe("rango-state (cookie)", () => {
     expect(getRangoState()).toBe("v1:900");
   });
 
+  /**
+   * An action's write part reaches the client through its response's
+   * Set-Cookie. A jar that keeps no state value never gets it, so the mirror
+   * takes the bump: the X-Rango-State sent after the write differs from the
+   * one before it, and the browser HTTP cache (Vary) misses.
+   */
+  describe("write bump without a jar value", () => {
+    it("bumps the mirror's write part when the cookie is unreadable, keeping its epoch", async () => {
+      vi.stubGlobal("document", {
+        get cookie(): string {
+          throw new Error("blocked");
+        },
+        set cookie(_v: string) {
+          throw new Error("blocked");
+        },
+      });
+      vi.spyOn(Date, "now").mockReturnValue(700);
+      vi.spyOn(Math, "random").mockReturnValue(0);
+
+      const { bumpRangoStateWriteWhenUnbacked, getRangoState, initRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+      expect(getRangoState()).toBe("v1:700");
+
+      bumpRangoStateWriteWhenUnbacked();
+      expect(getRangoState()).toBe("v1:700:700000");
+      // Two writes in one millisecond still differ.
+      bumpRangoStateWriteWhenUnbacked();
+      expect(getRangoState()).toBe("v1:700:700001");
+    });
+
+    it("bumps the mirror's write part when the jar drops the cookie (cookies blocked)", async () => {
+      vi.stubGlobal("document", {
+        get cookie(): string {
+          return "";
+        },
+        set cookie(_v: string) {},
+      });
+      vi.spyOn(Date, "now").mockReturnValue(700);
+      vi.spyOn(Math, "random").mockReturnValue(0);
+
+      const { bumpRangoStateWriteWhenUnbacked, getRangoState, initRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+      expect(getRangoState()).toBe("v1:700");
+
+      bumpRangoStateWriteWhenUnbacked();
+      expect(getRangoState()).toBe("v1:700:700000");
+    });
+
+    it("leaves a value the jar holds to the next read", async () => {
+      const { jar, set } = makeJar({ [NAME]: "v1:500" });
+      vi.stubGlobal("document", jar);
+
+      const { bumpRangoStateWriteWhenUnbacked, getRangoState, initRangoState } =
+        await import("../browser/rango-state");
+      initRangoState("v1", NAME);
+
+      // The action's response bumped the jar; the bump adds nothing to it.
+      set(NAME, "v1:500:4000");
+      bumpRangoStateWriteWhenUnbacked();
+      expect(getRangoState()).toBe("v1:500:4000");
+      expect(jar.cookie).toBe(`${NAME}=v1:500:4000`);
+    });
+  });
+
   it("deletes legacy localStorage keys on boot (no value porting)", async () => {
     const data = {
       "rango-state": "old",
