@@ -332,6 +332,11 @@ The rule: **prefetch broadly, and flag what is expensive.**
   and sends one fill request for the flagged loaders. Read a flagged loader
   under its own `<Suspense>`: with no boundary, React keeps the page being
   left until the fill answers.
+- A viewport or render prefetch does not download the page's images: the
+  `preload()` hints it carries for anything but styles, fonts and scripts
+  start at the click that uses it. A hover or `useRouter().prefetch()` starts
+  them at once. Styles, fonts, scripts and the route's chunks load with every
+  prefetch, so a prefetched click paints without a flash.
 - On a server route, `loading(fallback, { prefetch: false })` keeps the whole
   entry behind that fallback out of the prefetch (`/route`, "`loading()`
   options"). A group's `loading()` takes no options.

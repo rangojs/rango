@@ -38,6 +38,7 @@ import {
   setSuspenseAuditStreamProbe,
 } from "../suspense-audit.js";
 import {
+  createPrefetchDecoder,
   setPrefetchConcurrency,
   setPrefetchDecoder,
 } from "./prefetch/loader.js";
@@ -413,16 +414,8 @@ export async function initBrowserApp(
   const defaultPrefetch = initialPayload.metadata?.defaultPrefetch;
 
   // Wire the RSC decoder so prefetches decode eagerly and warm the route's
-  // client chunks (same createFromFetch the navigation client uses). Fragment
-  // envelopes (#700) expand BEFORE the decoded payload enters the prefetch
-  // cache, so cached entries only ever resolve to expanded segments; a
-  // fragment-decode failure rejects the entry's payload and rides the cache's
-  // existing eviction path.
-  setPrefetchDecoder(async (response) => {
-    const payload = await deps.createFromFetch<RscPayload>(response);
-    await expandPayloadFragments(payload, deps.createFromReadableStream);
-    return payload;
-  });
+  // client chunks (same createFromFetch the navigation client uses).
+  setPrefetchDecoder(createPrefetchDecoder(deps));
 
   // Create a bound renderSegments that reads rootLayout through the shell ref.
   // The shell is set once at init and not swapped within a session (a cross-app

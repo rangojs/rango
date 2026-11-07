@@ -1,7 +1,33 @@
-import type { RscPayload } from "../types.js";
+import type { RscBrowserDependencies, RscPayload } from "../types.js";
 import type { EventController } from "../event-controller.js";
+import type { PrefetchDecoder } from "./fetch.js";
+import { expandPayloadFragments } from "../../segment-fragments.js";
 
-type PrefetchDecoder = (response: Promise<Response>) => Promise<RscPayload>;
+/**
+ * The prefetch decoder of a browser app: the navigation's createFromFetch,
+ * then every segment fragment envelope expanded before the decoded payload
+ * enters the prefetch cache, so cached entries only ever resolve to expanded
+ * segments; a fragment-decode failure rejects the entry's payload and rides
+ * the cache's eviction path. A speculative prefetch passes its hold's filter,
+ * so a fragment's preloads are held like the response's.
+ */
+export function createPrefetchDecoder(
+  deps: Pick<
+    RscBrowserDependencies,
+    "createFromFetch" | "createFromReadableStream"
+  >,
+): PrefetchDecoder {
+  return async (response, filterFragment) => {
+    const payload = await deps.createFromFetch<RscPayload>(response);
+    await expandPayloadFragments(
+      payload,
+      filterFragment
+        ? (stream) => deps.createFromReadableStream(filterFragment(stream))
+        : deps.createFromReadableStream,
+    );
+    return payload;
+  };
+}
 
 type PrefetchRuntime = typeof import("./runtime.js");
 

@@ -423,6 +423,9 @@ export function createNavigationClient(
       if (adopted) {
         // The click owns the stream from here on (DecodedPrefetch.stallTimer).
         clearTimeout(adopted.stallTimer);
+        // The page is now asked for: start the preloads a speculative
+        // prefetch held back (prefetch/held-preloads.ts).
+        adopted.heldPreloads?.release();
         payloadPromise = adopted.payload;
         streamCompletePromise = adopted.streamComplete;
         // Only an entry whose stream already fully drained is "fully
