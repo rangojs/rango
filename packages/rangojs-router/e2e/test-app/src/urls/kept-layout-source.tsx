@@ -109,10 +109,11 @@ export const keptLayoutSourceOneShapePatterns = urls(
 );
 
 // The template above server pages, /cart and /item/:id prerendered. In
-// production a stored entry asks the template's revalidate() only when the
-// params change (/wishlist -> /cart: both {}), and keeps the route's own
-// segment on a search-only change (/item/1?tab=a -> /item/1?tab=b); either
-// keep is right for its source only. Dev renders them live.
+// production a stored entry asks the template's revalidate() as a live render
+// does (/wishlist -> /cart: both {}, the rule reads the category), and keeps
+// the route's own segment on a search-only change (/item/1?tab=a ->
+// /item/1?tab=b); either keep is right for its source only. Dev renders them
+// live.
 const KeptBakedCart = Prerender(() => <p data-testid="kls-page">cart</p>);
 
 const KeptBakedItem = Prerender<{ id: string }>(

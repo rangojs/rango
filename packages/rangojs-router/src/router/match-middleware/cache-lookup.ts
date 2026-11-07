@@ -323,9 +323,9 @@ function cachedSegmentSends<TEnv>(
  * action re-render re-sends them (revalidation.ts "action:route-segment");
  * the immutable bundled manifest keeps the client's copy. A held segment
  * above the route stays held, as a live walk keeps it ("nav:non-route-skip"),
- * unless its revalidate() rules ask for it when the params changed. A route
- * segment, or one with rules, kept on equal params marks the match
- * source-held: the decision hangs on the source's params.
+ * unless its revalidate() rules ask for it, with the params changed or not. A
+ * route segment kept on equal params marks the match source-held: the
+ * decision hangs on the source's params.
  *
  * Decided once per decoded segment, by object: an intercept variant can hold
  * a layout's parallel and the intercept's slot under one id. decodeStoredEntry
@@ -379,9 +379,10 @@ function storedEntrySends<TEnv>(
     }
     const revalidate = entryRevalidateMap?.get(segment.id)?.revalidate;
     if (!revalidate?.length) return false;
-    // Kept on equal params: from another source the rules run and may send
-    // it.
-    if (!paramsChanged) return heldForSource(prev.params);
+    // Asked whatever the params, as a live walk asks them: each route's bake
+    // holds its own copy of the layout (one that marks the active route, say),
+    // so a rule that asks for it sends this route's copy. A keep is scoped to
+    // what the rules read of the source (evaluateRevalidation).
     return router.evaluateRevalidation({
       segment,
       prevParams: prev.params,

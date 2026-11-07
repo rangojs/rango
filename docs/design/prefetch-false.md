@@ -665,8 +665,8 @@ asked by `serveStoredSegments`) ask it too, so they keep a held segment
 without consulting predicates or the params comparison. Each source keeps its
 own rule for every other request, and the two differ: a prerender entry
 ignores a search change and re-sends the route's own held segments when the
-params changed, and a held layout above the route only when its
-`revalidate()` asks for it then (an on-demand overlay entry also re-sends the
+params changed, and a held layout above the route when its `revalidate()`
+asks for it, whether or not the params changed (an on-demand overlay entry also re-sends the
 route's own segments on an action or a stale request), while a `cache()` record re-sends a route's own segments when the params
 or the search changed and asks `revalidate()` where a segment declares one.
 

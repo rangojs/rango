@@ -340,9 +340,9 @@ export function runKeptLayoutSourceTests(
   });
 
   // Server pages, /cart and /item/:id prerendered ("/kept-layout-source/baked").
-  // In production a stored entry serves them: it keeps the template on equal
-  // params without asking its revalidate(), and the route's own segment on a
-  // search-only change. Dev renders them live.
+  // In production a stored entry serves them: it asks the template's
+  // revalidate() as a live render does, and keeps the route's own segment on
+  // a search-only change. Dev renders them live.
   const baked = "/kept-layout-source/baked";
 
   test("prerendered /cart prefetched on a page with the same params, clicked on a category page, shows no hero", async ({

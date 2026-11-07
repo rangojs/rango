@@ -146,7 +146,7 @@ export const sourceIndependenceRouter: Rango<any, any> = createRouter(
        * Under a prerendered target the deal loader keeps its default rule.
        * Loaders resolve live there, so a predicate reading the source would
        * mark every keep of it source-held, (search, cart) included, and hide
-       * whether storedEntrySends marks the template it keeps on equal params.
+       * whether the template a stored entry keeps is marked by its own rule.
        */
       const templateItems = (deal: "source" | "default") => [
         revalidate(revalidateCategoryTemplate),
