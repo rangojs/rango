@@ -71,6 +71,8 @@ import {
   type CacheExecScope,
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
+import { isRetiredItem, RETIRED_ITEM } from "./retired-entry.js";
+import { isDataNotFoundError } from "../errors.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "./cache-policy.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
@@ -642,7 +644,9 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // be reading data from before the change the warm publishes, and a
     // follower writes nothing of its own.
     const warmReplace = isWarmReplace(requestCtx);
-    const cached = warmReplace ? null : await store.getItem(cacheKey);
+    const stored = warmReplace ? null : await store.getItem(cacheKey);
+    // A notFound() refresh's tombstone (retired-entry.ts) reads as a miss.
+    const cached = stored && isRetiredItem(stored.value) ? null : stored;
 
     // Serve a cached entry on the hit path: deserialize the stored value,
     // replay handle data (gated on tainted args), and surface the entry's tags
@@ -803,8 +807,21 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 );
               } catch (bgError) {
                 bgCapture?.stop();
+                // notFound(): the value is gone (retired-entry.ts).
+                let failure = bgError;
+                if (isDataNotFoundError(bgError)) {
+                  try {
+                    await store.setItem!(cacheKey, RETIRED_ITEM, {
+                      ttl: profile.ttl,
+                      swr: profile.swr,
+                    });
+                    return;
+                  } catch (retireError) {
+                    failure = retireError;
+                  }
+                }
                 reportCacheError(
-                  bgError,
+                  failure,
                   "stale-revalidation",
                   "[use cache] background revalidation failed",
                   requestCtx,

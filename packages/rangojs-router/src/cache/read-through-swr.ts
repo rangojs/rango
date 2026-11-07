@@ -14,6 +14,7 @@
 import type { CacheItemResult, CacheItemOptions } from "./types.js";
 import { runBackground } from "./background-task.js";
 import { reportCacheError } from "./cache-error.js";
+import { isRetiredItem } from "./retired-entry.js";
 import type { CacheErrorReporter } from "./cache-error.js";
 
 // The host carries both the optional waitUntil (for background scheduling) and
@@ -61,6 +62,16 @@ export interface ReadThroughItemConfig<T> {
   onCached?: () => void;
   /** Host with optional waitUntil for background tasks */
   host?: WaitUntilHost | null;
+  /**
+   * Retires the entry when a stale revalidation rejects with an error `when`
+   * accepts (notFound(), retired-entry.ts): `write` replaces it with the
+   * RETIRED_ITEM tombstone, which a lookup reads as a miss. Absent, or for
+   * any other error, a rejecting revalidation keeps the entry.
+   */
+  retire?: {
+    when: (error: unknown) => boolean;
+    write: () => Promise<void>;
+  };
 }
 
 /**
@@ -87,6 +98,7 @@ export async function readThroughItem<T>(
     onCached,
     host,
     wrapBackground,
+    retire,
   } = config;
 
   // Cache lookup. An infra read failure (getItem) is reported by the store
@@ -100,6 +112,7 @@ export async function readThroughItem<T>(
   } catch {
     cached = null;
   }
+  if (cached && isRetiredItem(cached.value)) cached = null;
 
   if (cached) {
     try {
@@ -121,7 +134,14 @@ export async function readThroughItem<T>(
       // marks it `background`; rethrown so the span records the failure.
       const revalidateTask = async () => {
         try {
-          const fresh = await execute();
+          let fresh: T;
+          try {
+            fresh = await execute();
+          } catch (error) {
+            if (!retire?.when(error)) throw error;
+            await retire.write();
+            return;
+          }
           const serialized = await serialize(fresh);
           if (serialized !== null) {
             await setItem(key, serialized, storeOptions);

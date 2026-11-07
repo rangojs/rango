@@ -24,6 +24,7 @@ import {
   runInSegmentTagScope,
 } from "./cache-tag.js";
 import { reportCacheError } from "./cache-error.js";
+import { isDataNotFoundError } from "../errors.js";
 import { isInterceptSegment } from "../browser/intercept-utils.js";
 import {
   predatesInvalidation,
@@ -1028,6 +1029,29 @@ export class CacheScope {
   }
 
   /**
+   * Delete the record cacheRoute() would write for this request: its stale
+   * refresh answered notFound() (retired-entry.ts). Under the same gates as
+   * the write. Never throws: a failed delete leaves the record to expire.
+   */
+  async retireRoute(
+    pathname: string,
+    params: Record<string, string>,
+    intercept?: string,
+  ): Promise<void> {
+    if (!this.enabled || !this.conditionAllows("write")) return;
+    const store = this.getStore();
+    if (!store) return;
+    let key: string;
+    try {
+      key = await this.resolveKey(pathname, params, intercept);
+    } catch (error) {
+      reportCacheError(error, "cache-delete", "[CacheScope] retire");
+      return;
+    }
+    await this.deleteRecord(store, key);
+  }
+
+  /**
    * Cache all segments for a route (non-blocking via waitUntil)
    * Single cache entry per route request.
    * Loaders are excluded - they're always fresh unless they have their own cache() config.
@@ -1041,6 +1065,10 @@ export class CacheScope {
    *   written when one of its tags was invalidated since (#977,
    *   predatesInvalidation). A shell capture's doc record passes none: it
    *   lives only in the shell entry, which putShell gates by its own start.
+   * @param retireOnNotFound - A background re-render's write
+   *   (background-revalidation.ts rerenderAndCacheRoute): a handler streaming
+   *   behind loading() that answered notFound() deletes the record instead
+   *   of leaving it (retired-entry.ts).
    */
   async cacheRoute(
     pathname: string,
@@ -1048,6 +1076,7 @@ export class CacheScope {
     segments: ResolvedSegment[],
     intercept?: string,
     start?: ExecutionStart,
+    retireOnNotFound?: boolean,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
     if (!this.conditionAllows("write")) return;
@@ -1217,6 +1246,10 @@ export class CacheScope {
           );
         }
       } catch (error) {
+        if (retireOnNotFound && isDataNotFoundError(error)) {
+          await this.deleteRecord(store, key);
+          return;
+        }
         reportCacheError(
           error,
           "cache-write",
@@ -1224,6 +1257,19 @@ export class CacheScope {
         );
       }
     });
+  }
+
+  /** Delete a record whose refresh answered notFound(). Never throws. */
+  private async deleteRecord(
+    store: SegmentCacheStore,
+    key: string,
+  ): Promise<void> {
+    try {
+      await store.delete(key);
+      debugCacheLog(`[CacheScope] RETIRED: ${key}`);
+    } catch (error) {
+      reportCacheError(error, "cache-delete", `[CacheScope] retire ${key}`);
+    }
   }
 }
 

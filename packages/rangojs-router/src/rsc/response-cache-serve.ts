@@ -29,6 +29,10 @@ import {
   finalizeResponse,
 } from "./helpers.js";
 import { reportCacheError } from "../cache/cache-error.js";
+import {
+  refreshRetiresEntry,
+  retireStoredResponse,
+} from "../cache/retired-entry.js";
 import { requestKeyBase } from "../cache/cache-key-utils.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
@@ -204,7 +208,19 @@ export async function serveResponseRouteWithCache(
         try {
           const start = executionStart();
           const fresh = finalizeResponse(await executeHandler());
-          if (canStore(fresh)) await putFresh(store, fresh, start);
+          if (canStore(fresh)) {
+            await putFresh(store, fresh, start);
+          } else if (method === "GET" && refreshRetiresEntry(fresh.status)) {
+            // notFound(): the record is gone (cache/retired-entry.ts).
+            await fresh.body?.cancel();
+            await retireStoredResponse(
+              store,
+              cacheKey,
+              cacheScope!.ttl,
+              cacheScope!.swr,
+              responseTags,
+            );
+          }
         } catch (error) {
           // The route now rewrites: nothing to refresh this entry with.
           if (isRewrite(error)) return;

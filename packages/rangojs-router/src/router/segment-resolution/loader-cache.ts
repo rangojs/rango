@@ -89,6 +89,8 @@ import {
   DEFAULT_ROUTE_TTL,
 } from "../../cache/cache-policy.js";
 import { readThroughItem } from "../../cache/read-through-swr.js";
+import { RETIRED_ITEM } from "../../cache/retired-entry.js";
+import { isDataNotFoundError } from "../../errors.js";
 import { isWarmReplace, noteWarmWrite } from "../../prerender/warm-request.js";
 import {
   executionStart,
@@ -855,6 +857,10 @@ function executeLoaderData<TEnv>(
       },
       onCached: () => debugLoaderCacheLog(`[LoaderCache] Cached: ${key}`),
       host: requestCtxForExecute,
+      retire: {
+        when: isDataNotFoundError,
+        write: () => store.setItem!(key, RETIRED_ITEM, { ttl, swr, tags }),
+      },
     });
 
     // An entry without handles (none recorded, or dropped by an encode
