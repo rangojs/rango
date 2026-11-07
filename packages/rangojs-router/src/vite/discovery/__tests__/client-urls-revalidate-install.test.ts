@@ -198,4 +198,116 @@ describe("a clientUrls() projection installs after the registrations of every pr
       new Map([[GROUP, [PAGE]]]),
     );
   });
+
+  it("serves every request while an edit changes the key of a predicate in the group itself", async () => {
+    const state = createDiscoveryState(ENTRY, undefined);
+    state.projectRoot = projectRoot;
+    state.clientUrlSourceByReferenceId = new Map([[REFERENCE_ID, GROUP]]);
+
+    // The key of the group's own predicate, as its current source hashes it.
+    let key = "k-group";
+    // `<group>?rango-revalidate` evaluates: it registers the predicate.
+    const evaluateGroupRegistrations = () => {
+      registerClientUrlRevalidators({ [key]: () => true });
+    };
+
+    const failures: string[] = [];
+    let step: string | undefined;
+    const serverMod = {
+      RouterRegistry,
+      clearClientUrlProjections,
+      setClientUrlProjection(
+        referenceId: string,
+        projection: ClientUrlProjection,
+      ) {
+        setClientUrlProjection(referenceId, projection);
+        if (step === undefined) return;
+        // A request served right after the install. It does not re-run the
+        // group's proxy (see the runner below).
+        try {
+          materialize(referenceId);
+        } catch (error) {
+          failures.push(`${step}: ${(error as Error).message}`);
+        }
+      },
+    };
+    let proxyLoaded = false;
+    const rscEnv = {
+      runner: {
+        import: vi.fn(async (id: string): Promise<unknown> => {
+          if (id === "@rangojs/router/server") return serverMod;
+          if (id === "@rangojs/router/build") return { generateManifestFull };
+          if (id === ENTRY) {
+            RouterRegistry.set("app", {
+              id: "app",
+              urlpatterns: urls(({ include }) => [
+                include("/shop", clientReference(REFERENCE_ID) as never, {
+                  name: "shop",
+                }),
+              ]),
+            } as never);
+            // The realm loads the group's proxy, which imports its
+            // registrations, once: plugin-rsc re-transforms the proxy of an
+            // edited client reference on update, so the runner reports it
+            // cached and keeps the first evaluation.
+            if (!proxyLoaded) {
+              proxyLoaded = true;
+              evaluateGroupRegistrations();
+            }
+            return {};
+          }
+          if (id === `${GROUP}?rango-revalidate`) {
+            // The edit invalidated this module: an import re-evaluates it,
+            // on a later task as a real module import does.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            evaluateGroupRegistrations();
+            return {};
+          }
+          throw new Error(`unexpected rsc import ${id}`);
+        }),
+      },
+    };
+    const ssrEnv = {
+      runner: {
+        async import(): Promise<Record<string, unknown>> {
+          state.clientUrlRevalidate.fileByKey.set(key, GROUP);
+          return {
+            default: clientUrls(({ path, loader, revalidate }) => [
+              path("/:id", Page, { name: "item" }, () => [
+                loader(cartLoader, () => [
+                  revalidate({
+                    $$rangoRevalidate: key,
+                  } as unknown as ShouldRevalidateFn),
+                ]),
+              ]),
+            ]),
+          };
+        },
+      },
+    };
+    const save = async (label: string) => {
+      step = `${label}, watcher pre-refresh`;
+      await refreshRecordedClientUrlProjections(
+        state,
+        ssrEnv,
+        serverMod,
+        rscEnv,
+      );
+      step = `${label}, re-discovery`;
+      try {
+        await discoverRouters(state, rscEnv, ssrEnv);
+      } catch (error) {
+        failures.push(`${step}: ${(error as Error).message}`);
+      }
+    };
+
+    await discoverRouters(state, rscEnv, ssrEnv);
+
+    key = "k-group-edited";
+    await save("edited");
+    key = "k-group-edited-again";
+    await save("edited again");
+
+    expect(failures).toEqual([]);
+  });
 });

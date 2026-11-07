@@ -511,11 +511,11 @@ describe("assignClientUrlRevalidateFiles", () => {
     return { state, rscEnv, nodes, assign };
   }
 
-  it("assigns each group the other files of its projection's keys and loads their registrations once", async () => {
+  it("assigns each group the other files of its projection's keys and loads every registration once", async () => {
     const { state, rscEnv, assign } = setup();
     await assign();
-    // k3 is group A's own: its proxy loads it. k-unrecorded has no file:
-    // materialization names it.
+    // k3 is group A's own: it is not assigned, and loads with group A's
+    // module. k-unrecorded has no file: materialization names it.
     expect(state.clientUrlRevalidate.filesByGroup).toEqual(
       new Map([
         [groupA, [fileA, fileB]],
@@ -523,9 +523,11 @@ describe("assignClientUrlRevalidateFiles", () => {
         [groupC, []],
       ]),
     );
+    // Each group's own module too: a realm whose runner keeps the group's
+    // proxy from before an edit registers its new keys only here.
     expect(
       rscEnv.runner.import.mock.calls.map(([moduleId]) => moduleId),
-    ).toEqual([id(fileA), id(fileB)]);
+    ).toEqual([id(groupA), id(groupB), id(groupC), id(fileA), id(fileB)]);
   });
 
   it("invalidates a group's module when its files change, and only then", async () => {

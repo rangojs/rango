@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: in dev, editing a `clientUrls()` `revalidate()` predicate no longer answers requests with 500 "has no server registration"
+
+**Before.** On the Node dev server, saving a change to a `revalidate()`
+predicate in a `clientUrls()` group (or in a component's `.use`) gave the
+predicate a new key, and route discovery installed it before the server had
+registered it. In about one save in six, requests during the re-discovery
+answered 500 `clientUrls() revalidate() … has no server registration`, the
+terminal printed `[rango] Runtime re-discovery failed`, and the error lasted
+until the next RSC program reload. A reload landing just after a save (another
+file's update, the dep optimizer) replayed the projection from before the
+edit, with the same error.
+
+**Now.** Discovery loads each group's own predicate registrations before it
+installs the group's projection, and a group or `.use` save holds the
+routes-manifest module until re-discovery commits, so a request in that window
+waits for it and then runs the edited predicate. What a production build
+serves is unchanged.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -333,6 +333,41 @@ describe("Node dev server: an edit of a clientUrls() component's .use", () => {
   });
 });
 
+const GROUP_SOURCE = `"use client";
+import { clientUrls } from "@rangojs/router/client";
+export default clientUrls(({ path }) => [path("/", () => null)]);
+`;
+
+describe("Node dev server: an edit of a clientUrls() group", () => {
+  it.each([
+    ["a group", "src/shop.urls.tsx", GROUP_SOURCE],
+    ["a component's .use", "src/dash/Dashboard.tsx", COMPONENT_USE_SOURCE],
+  ])(
+    "of %s holds the routes-manifest module from the save until re-discovery commits",
+    async (_label, rel, source) => {
+      const dev = createDevServer({ runner: true });
+      discoverRouters.mockImplementation(async (state: DiscoveryState) => {
+        commitManifest(state);
+        return dev.serverMod;
+      });
+      const plugin = startPlugin(dev);
+      await plugin.loadManifestModule();
+      const { invalidateModule } = dev.rsc.moduleGraph;
+      invalidateModule.mockClear();
+
+      save(dev, rel, source);
+      // At once, before the watcher's debounce: a runner full reload in
+      // this window re-runs the module, and its cached transform would
+      // replay the projection of before the edit.
+      expect(invalidateModule).toHaveBeenCalledWith(dev.manifestModule);
+      expect(discoverRouters).toHaveBeenCalledTimes(1);
+
+      await plugin.loadManifestModule();
+      expect(discoverRouters).toHaveBeenCalledTimes(2);
+    },
+  );
+});
+
 /** The Cloudflare discovery temp server (a Node Vite server with an RSC runner). */
 function createTempServer({ entryError }: { entryError?: Error } = {}) {
   const serverMod = {

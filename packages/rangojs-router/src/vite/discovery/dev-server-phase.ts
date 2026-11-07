@@ -1716,6 +1716,15 @@ export function devServerPhase(s: DiscoveryState, server: ViteDevServer): void {
               routerSourceFiles.size,
             );
           }
+          // A runner full reload before the debounced pre-refresh (another
+          // edit's update, the optimizer) re-runs the routes-manifest module.
+          // From its cached transform it replays the projection of before
+          // the edit, while the fresh realm registers only the edited
+          // group's new revalidate() keys, so requests answer "has no server
+          // registration" until discovery installs the new projection. Once
+          // invalidated, its load waits on the gate armed below and emits
+          // the refreshed projection.
+          invalidateRoutesManifestModule(mainRscEnv);
         }
         // Invalidate cache when a router file changes (new router added/removed)
         if (hasCreateRouter) {
