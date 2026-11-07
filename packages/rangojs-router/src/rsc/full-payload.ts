@@ -8,12 +8,14 @@
  * makes that hold. Keep this byte-identical to the normal full-render path.
  */
 
-import type { MatchResult } from "../types.js";
+import type { MatchResult, ResolvedSegment, SlotState } from "../types.js";
 import type { RscPayload } from "./types.js";
 import type { HandlerContext } from "./handler-context.js";
 import type { RequestContext } from "../server/request-context.js";
 import type { HandleStore } from "../server/handle-store.js";
 import type { Theme } from "../theme/types.js";
+import type { RenderNotFound } from "../router/router-interfaces.js";
+import { segmentEntryShortCode } from "../router/error-handling.js";
 import {
   pathKey,
   rendersForSharedAudience,
@@ -59,10 +61,7 @@ export function buildFullPayload(
       // the first sync useHandle read see resolved values. Partial payloads
       // (rsc-rendering.ts) keep streaming (handleStore.stream()). A shell
       // capture renders from what its record keeps (resolvedHandleStream).
-      handles: resolvedHandleStream(
-        handleStore,
-        reqCtx._shellCaptureState?.run === true,
-      ),
+      handles: documentHandles(handleStore, reqCtx),
       // Post-handler-barrier pushes (streaming loader ctx.handle() writes)
       // stream here; the client applies them after hydration. Instantly
       // complete when the loader lane is idle — including PPR shell capture,
@@ -87,6 +86,137 @@ export function buildFullPayload(
       initialTheme: payloadInitialTheme(reqCtx),
     },
   };
+}
+
+/** A document payload's `handles` (buildFullPayload). */
+function documentHandles(
+  handleStore: HandleStore,
+  reqCtx: RequestContext<any>,
+): NonNullable<RscPayload["metadata"]>["handles"] {
+  return resolvedHandleStream(
+    handleStore,
+    reqCtx._shellCaptureState?.run === true,
+  );
+}
+
+/**
+ * The same payload, ready to render a second time with what
+ * `router.resolveRenderNotFound` answered for the components that threw
+ * notFound() (rsc-rendering.ts):
+ *
+ * - an entry's answer takes the place of every segment that entry owns
+ *   (segmentEntryShortCode) but an intercept's slot, in `segments`,
+ *   `matched`, `diff` and `resolvedIds`, at the first one's position: the
+ *   result catchSegmentError gives a handler's notFound(). The `.notFound` id
+ *   matters on a navigation: a held layout keeps the content the client has
+ *   under its id, so the fallback must not be stored under the layout's own.
+ *   A partial's `resolvedIds` lists only what ran (match-result.ts), and a
+ *   boundary segment did not.
+ * - an intercept slot's answer replaces that slot's component.
+ *
+ * A render consumes the handle streams it serialized, so the copy gets fresh
+ * ones from the same store, built as the first were (buildFullPayload for a
+ * document, handleStore.stream() for a navigation). Undefined when no answer
+ * names a segment the payload renders.
+ */
+export function payloadWithNotFound(
+  payload: RscPayload,
+  answers: readonly RenderNotFound[],
+  handleStore: HandleStore,
+  reqCtx: RequestContext<any>,
+): RscPayload | undefined {
+  const metadata = payload.metadata;
+  if (!metadata) return undefined;
+  let { segments, matched, diff, resolvedIds, slots } = metadata;
+  // An intercept's slot is resolved apart from its declaring entry's walk
+  // (match-middleware/intercept-resolution.ts) and outlives that entry's
+  // boundary, as it does for the entry handler's notFound().
+  const intercepts = new Set(
+    segments.filter(isInterceptSegment).map((s) => s.id),
+  );
+  let changed = false;
+  for (const answer of answers) {
+    if ("slotId" in answer) {
+      const swap = (segment: ResolvedSegment): ResolvedSegment =>
+        segment.id === answer.slotId
+          ? { ...segment, component: answer.component }
+          : segment;
+      changed ||= segments.some((segment) => segment.id === answer.slotId);
+      segments = segments.map(swap);
+      slots = slots && mapSlotSegments(slots, (list) => list.map(swap));
+      continue;
+    }
+    const owned = (id: string) =>
+      !intercepts.has(id) && answer.entries.includes(segmentEntryShortCode(id));
+    const { segment } = answer;
+    changed ||= segments.some((candidate) => owned(candidate.id));
+    segments = replaceOwned(segments, (s) => owned(s.id), segment);
+    matched = matched && replaceOwned(matched, owned, segment.id);
+    diff = diff && replaceOwned(diff, owned, segment.id);
+    resolvedIds =
+      resolvedIds &&
+      (metadata.isPartial
+        ? resolvedIds.filter((id) => !owned(id))
+        : replaceOwned(resolvedIds, owned, segment.id));
+  }
+  if (!changed) return undefined;
+  return {
+    ...payload,
+    metadata: {
+      ...metadata,
+      segments,
+      matched,
+      diff,
+      resolvedIds,
+      slots,
+      ...(metadata.handles !== undefined && {
+        handles: metadata.isPartial
+          ? handleStore.stream()
+          : documentHandles(handleStore, reqCtx),
+      }),
+      ...(metadata.handlesLate !== undefined && {
+        handlesLate: handleStore.streamLate(),
+      }),
+    },
+  };
+}
+
+/** `list` with every `owned` item gone and `replacement` at the first one's place. */
+function replaceOwned<T>(
+  list: readonly T[],
+  owned: (item: T) => boolean,
+  replacement: T,
+): T[] {
+  const out: T[] = [];
+  let placed = false;
+  for (const item of list) {
+    if (!owned(item)) out.push(item);
+    else if (!placed) {
+      out.push(replacement);
+      placed = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * An intercept's slot segment: intercept-resolution.ts (and prerender-match.ts)
+ * namespace it `intercept:<route>`.
+ */
+export function isInterceptSegment(segment: ResolvedSegment): boolean {
+  return segment.namespace.startsWith("intercept:");
+}
+
+function mapSlotSegments(
+  slots: Record<string, SlotState>,
+  map: (segments: ResolvedSegment[]) => ResolvedSegment[],
+): Record<string, SlotState> {
+  return Object.fromEntries(
+    Object.entries(slots).map(([name, slot]) => [
+      name,
+      slot.segments ? { ...slot, segments: map(slot.segments) } : slot,
+    ]),
+  );
 }
 
 /**

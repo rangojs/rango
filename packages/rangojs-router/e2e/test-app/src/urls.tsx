@@ -86,6 +86,8 @@ import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { prerenderLoadingPatterns } from "./urls/prerender-loading.js";
 import { loadingRedirectPatterns } from "./urls/loading-redirect.js";
+import { componentRedirectPatterns } from "./urls/component-redirect.js";
+import { componentNotFoundPatterns } from "./urls/component-not-found.js";
 import { prefetchFalsePatterns } from "./urls/prefetch-false.js";
 import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
@@ -1515,6 +1517,20 @@ export const urlpatterns = urls(
       // a real HTTP redirect before the streamed loading() boundary takes over.
       include("/loading-redirect", loadingRedirectPatterns, {
         name: "loadingRedirect",
+      }),
+
+      // A component that throws redirect() while React renders it: answered as
+      // a redirect on a document request and on a client navigation, not as the
+      // nearest errorBoundary()'s page.
+      include("/component-redirect", componentRedirectPatterns, {
+        name: "componentRedirect",
+      }),
+
+      // A component that throws notFound() while React renders it: the route
+      // renders its notFoundBoundary() with a 404 on a document request and on a
+      // client navigation, not the router's error page.
+      include("/component-not-found", componentNotFoundPatterns, {
+        name: "componentNotFound",
       }),
 
       // prefetch: false on loader() and loading(): one page per case, with

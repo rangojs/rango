@@ -31,6 +31,7 @@ import type { RequestContext } from "../server/request-context.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import type { PprReplayBypassReason } from "./shell-capture-constants.js";
 import {
+  answerRenderRedirect,
   createResponseWithMergedHeaders,
   createSimpleRedirectResponse,
   attachLocationStateIfPresent,
@@ -40,6 +41,7 @@ import {
   createRenderStageTraceBridge,
   renderRscFlightStage,
   renderRscResponse,
+  type NotFoundThrower,
 } from "./render-pipeline.js";
 import { markPrefetchOnRenderError } from "./prefetch-render-error.js";
 import {
@@ -53,7 +55,12 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
 import { publicRouteName } from "../route-name.js";
-import { buildFullPayload, payloadLocation } from "./full-payload.js";
+import {
+  buildFullPayload,
+  isInterceptSegment,
+  payloadLocation,
+  payloadWithNotFound,
+} from "./full-payload.js";
 import {
   capShellWindow,
   lastStoredCaptureSeq,
@@ -1184,19 +1191,72 @@ function renderPreparedRscResponse<TEnv>(
       init: { headers: rscHeaders },
       tracking: stageTracking,
     },
-    isFlightResponse
-      ? undefined
-      : {
-          html: createSsrHtmlStage({
-            ctx,
-            request,
-            env,
-            url,
-            metricsStore,
-            render: { nonce },
-            init: { headers: { "content-type": "text/html;charset=utf-8" } },
+    {
+      // A redirect or notFound() thrown while React renders is not a handler
+      // result: the boundary renders it as an error page unless the render
+      // answers it. Only the channels a client parses as Flight (a navigation,
+      // an action) convert a redirect; a document follows a 3xx. A notFound()
+      // renders the page again with what a notFound() from the throwing
+      // segment's handler would render, and the 404. An explicit Accept: text/x-component
+      // document keeps the error row it had (a handler's redirect answers a raw
+      // 3xx there), so nothing is held back for it.
+      ...((!isFlightResponse ||
+        isPartial ||
+        url.searchParams.has(WIRE.action)) && {
+        redirect: (thrown: Response) =>
+          answerRenderRedirect(thrown, {
+            flight: isFlightResponse,
+            requestOrigin: url.origin,
+            basename: ctx.router.basename,
+            createRedirectFlightResponse: ctx.createRedirectFlightResponse,
           }),
+        notFound: async (throwers: readonly NotFoundThrower[]) => {
+          // A boundary's own fallback that throws is left as rendered.
+          const answers = await ctx.router.resolveRenderNotFound(
+            url.pathname,
+            throwers.flatMap(({ segment, error }) =>
+              segment.type === "layout" ||
+              segment.type === "route" ||
+              segment.type === "parallel"
+                ? [
+                    {
+                      segmentId: segment.id,
+                      segmentType: segment.type,
+                      intercept: isInterceptSegment(segment),
+                      error,
+                    },
+                  ]
+                : [],
+            ),
+          );
+          const again = payloadWithNotFound(
+            payload,
+            answers,
+            input.handleStore,
+            reqCtx,
+          );
+          // The 404 catchSegmentError writes for a handler's notFound(), only
+          // once the payload renders a fallback.
+          if (again) reqCtx._setStatus(404);
+          return again;
         },
+      }),
+      ...(isFlightResponse
+        ? undefined
+        : {
+            html: createSsrHtmlStage({
+              ctx,
+              request,
+              env,
+              url,
+              metricsStore,
+              render: { nonce },
+              init: {
+                headers: { "content-type": "text/html;charset=utf-8" },
+              },
+            }),
+          }),
+    },
   );
   // A prefetch whose render reported an error is not kept (#1170).
   if (!isPrefetchKind(reqCtx._requestKind) || !isPartial) return rendered;

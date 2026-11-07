@@ -341,6 +341,38 @@ export function interceptRedirectForPartial(
 }
 
 /**
+ * Answer a redirect a render threw (a component's `throw redirect()`, not a
+ * handler's return: see render-pipeline.ts answerRenderControl), in the shape
+ * the request's channel can carry.
+ *
+ * A document follows a real 3xx. A Flight response (a client navigation, an
+ * action's revalidation, an explicit `Accept: text/x-component`) converts it
+ * exactly as a handler-thrown redirect is converted, because fetch would
+ * auto-follow a 3xx to a URL that renders HTML the client cannot parse.
+ */
+export function answerRenderRedirect(
+  thrown: Response,
+  opts: SoftRedirectResolveOpts & {
+    /** The response is a Flight payload, not an HTML document. */
+    flight: boolean;
+    createRedirectFlightResponse: (
+      redirectUrl: string,
+      locationState?: Record<string, unknown>,
+      external?: boolean,
+    ) => Response;
+  },
+): Response {
+  if (!opts.flight) return thrown;
+  return (
+    interceptRedirectForPartial(
+      thrown,
+      opts.createRedirectFlightResponse,
+      opts,
+    ) ?? thrown
+  );
+}
+
+/**
  * Attach location state set during a request to a payload's metadata.
  * No-op if no location state was set. Callers must ensure payload.metadata
  * is populated. A `document` payload (a page load's or a no-JS form post's

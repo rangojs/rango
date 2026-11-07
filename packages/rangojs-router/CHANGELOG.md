@@ -1,5 +1,113 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a component that throws `redirect()` redirects instead of rendering an error page
+
+**Before.** A server component that threw `redirect()` inside its render was
+caught by React and rendered by the nearest `errorBoundary()` (or the client's
+root boundary): a document request answered `200` with the error page, and a
+client navigation rendered the boundary. Only a redirect a _handler_ returned
+or threw was answered.
+
+**Now.** The render answers it. A document request answers the redirect's own
+status with its `Location` (and `redirect(url, { state })` still carries its
+state in the one-shot cookie), and a client navigation answers the 204 +
+`X-RSC-Redirect` (or the Flight payload when it carries state or is external)
+that a handler's redirect already gets. A redirect thrown after the body has
+started streaming is unchanged, because the status line has already been sent:
+a route that declares `loading()`, a streamed handler, and — on a client
+navigation only — an **async** component, whose error row arrives after the
+response's opening chunk.
+
+```tsx
+// This now redirects, on a page load and on a client navigation.
+function Checkout() {
+  if (!hasSession()) throw redirect("/login", 302);
+  return <Cart />;
+}
+
+path("/checkout", () => <Checkout />);
+```
+
+### Fixed: a component that throws `notFound()` renders its `notFoundBoundary()` with a 404
+
+**Before.** A server component that threw `notFound()` inside its render was
+caught by React like any render error: a document request answered the
+router's recovery document (`500` in production, where the error reaches the
+document masked; `404` in development), whose client render showed the root
+error boundary, and a client navigation rendered that boundary too. The route's `notFoundBoundary()` never rendered; only a
+`notFound()` thrown by a handler or a loader reached it.
+
+**Now.** The render answers it the way a `notFound()` from the route's
+handler is answered: the route renders again with the nearest
+`notFoundBoundary()` (else the router's `notFound` option) in place of the
+route's content, inside its layouts, and the response answers `404`. That
+holds on a document request and on a client navigation. The same limits as a
+component's `redirect()` apply: a `notFound()` thrown after the body started
+streaming (a route with `loading()`, a streamed handler, and on a client
+navigation an **async** component) keeps the error page.
+
+```tsx
+async function Product({ id }: { id: string }) {
+  const product = await db.products.find(id);
+  if (!product) notFound("No such product");
+  return <ProductPage product={product} />;
+}
+
+// A page load of /product/missing now answers 404 with this boundary.
+layout(<ShopLayout />, () => [
+  notFoundBoundary(({ notFound }) => <p>{notFound.message}</p>),
+  path("/product/:id", (ctx) => <Product id={ctx.params.id} />, {
+    name: "product",
+  }),
+]);
+```
+
+### Fixed: a layout's, a parallel slot's or an intercept's component that throws `notFound()` renders that segment's `notFoundBoundary()`
+
+**Before.** Only a route's own component was answered. A `notFound()` thrown
+by a component that a layout, a parallel slot, a routeless layout or an
+intercept renders still threw when the page rendered again for the route: the
+response answered `404` with the error page in the layout's place (a document
+and a client navigation alike), and an intercept's answered `200` with the
+error page in its slot.
+
+**Now.** Each is answered the way a `notFound()` from that segment's own
+handler is: a layout's, a parallel slot's or a routeless layout's renders the
+nearest `notFoundBoundary()` of the layout (or route) that declares it in that
+layout's place, and an intercept's renders it inside the intercept's slot,
+with a `404`. `notFound.segmentType` and `notFound.segmentId` name the segment
+that threw, and a navigation from there to a sibling route renders the layout
+again. The same limits apply: after the body started streaming, the error
+page stays.
+
+```tsx
+async function AccountGate({ id }: { id: string }) {
+  if (!(await db.accounts.exists(id))) notFound("No such account");
+  return null;
+}
+
+layout(<Shell />, () => [
+  notFoundBoundary(({ notFound }) => <p>{notFound.message}</p>),
+  // A page load or a client navigation to /accounts/missing/settings now
+  // answers 404 with the boundary above in this layout's place.
+  layout(
+    (ctx) => (
+      <AccountLayout>
+        <AccountGate id={ctx.params.id} />
+        <Outlet />
+      </AccountLayout>
+    ),
+    () => [path("/accounts/:id/settings", SettingsPage, { name: "settings" })],
+  ),
+]);
+```
+
+To find which segment threw, the router renders each segment's component on
+its own once more (the error React reports carries no position), only when a
+render reported a `notFound()`.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

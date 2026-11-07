@@ -184,7 +184,7 @@ function makeCtx(ssrModule: SSRModule, streamMode: string) {
     callOnError: vi.fn(),
     renderToReadableStream: (payload: RscPayload) => {
       void payload;
-      return new ReadableStream();
+      return streamOf("0:{}\n");
     },
     loadSSRModule: vi.fn(async () => ssrModule),
     resolveStreamMode: vi.fn(async () => streamMode),
@@ -1227,7 +1227,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
     const seen: any[] = [];
     (ctx as any).renderToReadableStream = (payload: unknown) => {
       seen.push(payload);
-      return new ReadableStream();
+      return streamOf("0:{}\n");
     };
 
     const request = new Request("http://localhost/p", {
@@ -1347,7 +1347,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
           .then((r) =>
             seen.push((r as { data?: CachedEntryData } | null)?.data?.handles),
           );
-        return new ReadableStream();
+        return streamOf("0:{}\n");
       };
       const request = new Request("http://localhost/p", {
         headers: { accept: "text/html" },
@@ -1945,7 +1945,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
         seen.push(r?.value),
       );
       reads.push(p);
-      return new ReadableStream();
+      return streamOf("0:{}\n");
     };
 
     const request = new Request("http://localhost/p", {
@@ -1998,7 +1998,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
         seen.push(r?.value),
       );
       reads.push(p);
-      return new ReadableStream();
+      return streamOf("0:{}\n");
     };
 
     const request = new Request("http://localhost/p", {
@@ -2059,7 +2059,7 @@ describe("handleRscRendering — integrated PPR serve: HIT", () => {
       let tailFlag: boolean | undefined;
       (ctx as any).renderToReadableStream = () => {
         tailFlag = getRequestContext()._shellFragmentPayload;
-        return new ReadableStream();
+        return streamOf("0:{}\n");
       };
 
       const request = new Request("http://localhost/p", {
