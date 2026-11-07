@@ -150,6 +150,25 @@ assertion through the public primitive
 params is answered with a `loaderError`; a body or non-GET load is passed
 through to the test's own `fetch`.
 
+A loader that threw is seeded with `loaderFailure()` from
+`@rangojs/router/testing/dom`: `loaderFailure({ notFound: true, fallback })`,
+`loaderFailure({ redirect: url, state })` or
+`loaderFailure({ error, fallback })` (`src/testing/loader-failure.ts`). It is
+the result the server sends for such a loader (the envelope
+`wrapLoaderWithErrorHandling` in `src/router/loader-resolution.ts` builds), so
+it goes wherever loader data goes (render seeds, `navigate()`, `refresh()`,
+`prefetch()`, `action()`, `respondToLoads()`, or the value a pending seed
+resolves to), and the segment system places it as it places a real one: the
+not-found UI or the `errorBoundary()` fallback inside the route's loader error
+boundary, a redirect as a replace-navigation, an error without a fallback
+thrown at its read. So "the not-found UI keeps its instance when an action
+re-runs the loader and it still calls `notFound()`" is a unit assertion
+through the public primitive
+(`src/testing/__tests__/render-route-loader-failure.test.tsx`). A `load()`
+answered with a failure rejects; an error's rejection carries its message, as
+the real endpoint's `loaderError` does, while the real endpoint's 404 for a
+`notFound()` and 3xx for a redirect fail the decode with another message.
+
 The rango **cache-invalidation directives** are an exception worth calling out,
 because they used to look like a trap and no longer are. A handler/action/loader
 that calls `invalidateClientCache()` or `keepClientCache()` now produces its REAL

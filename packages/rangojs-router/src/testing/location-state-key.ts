@@ -53,3 +53,16 @@ export function withLocationStateKey<
   }
   return definition;
 }
+
+/** `[def, value]` seeds as `history.state` slots, each def keyed. */
+export function locationStateSlots(
+  seeds:
+    | ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>
+    | undefined,
+): Record<string, unknown> {
+  const slots: Record<string, unknown> = {};
+  for (const [def, value] of seeds ?? []) {
+    slots[withLocationStateKey(def).__rsc_ls_key] = value;
+  }
+  return slots;
+}

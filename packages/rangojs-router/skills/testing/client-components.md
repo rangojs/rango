@@ -13,7 +13,7 @@
 | `request`               | `Request \| string`                                                    | Initial location. Only the URL is read (client render — headers/method ignored). Defaults to the leaf spec's static prefix or `"/"`.                                                                                                                                                                         |
 | `loaderData`            | `Record<string, unknown>`                                              | Loader data keyed by loader `$$id`. `useLoader(L)` reads `loaderData[L.$$id]`.                                                                                                                                                                                                                               |
 | `outletPending`         | `boolean`                                                              | Seed `useOutlet().pending` through each synthetic segment's production `OutletProvider`. Defaults to `false`; this is context seeding, not a simulated navigation/Suspense/action lifecycle.                                                                                                                 |
-| `loaders`               | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`.                                                                                                                                                          |
+| `loaders`               | `ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>`             | Seed by REFERENCE: `[loader, data]` pairs. Robust for real `createLoader()` handles whose `$$id` is empty in a bare test. Prefer over `loaderData`. `data` may be a `loaderFailure()`: see [Loader failures](#loader-failures).                                                                              |
 | `params`                | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                                                                                       |
 | `locationState`         | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes `value` to `history.state` under `def.__rsc_ls_key`. See [Location state](#location-state).                                                                             |
 | `documentLocationState` | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | The location state the document response carried (a handler, middleware or no-JS form action set it, or a document redirect's cookie brought it), as `[def, value]` pairs. Merged at start-up after `locationState` and the `clearOnReload` pass. See [State a document carried](#state-a-document-carried). |
@@ -461,6 +461,44 @@ it("dims the held price while the next product streams", async () => {
 - Per-navigation seeds merge over the render-time `loaders`/`loaderData` for THAT navigation only; a later `navigate()` without `loaders` falls back to the render-time data.
 - Pass settled data as a plain value, not `Promise.resolve(value)`: React has not observed a plain promise yet, so it counts as pending and renders one `stale` frame. (A Flight chunk that has already settled carries its status and is skipped, which a plain value mirrors.)
 - `loading()` is not a spec field: a `<Suspense>` in your layout component stands in for it.
+
+## Loader failures
+
+`loaderFailure(init)` (from `@rangojs/router/testing/dom`) is the result of a loader that threw, as the server sends it. Seed it where loader data goes: the render-time `loaders`, the `loaders` of `navigate()`, `refresh()`, `prefetch()`, `action()` and `respondToLoads()`, or as the value a pending seed Promise resolves to (a loader that fails while it streams). The router places it as it places a real one, so a test reaches your not-found and error UI on the document, a navigation, an action's re-run and Back.
+
+```tsx
+import { act, fireEvent } from "@testing-library/react";
+import { loaderFailure, renderRoute } from "@rangojs/router/testing/dom";
+import { ItemLoader } from "../src/loaders";
+import { ItemGone, ItemPage } from "../src/item";
+
+it("keeps the not-found UI when an action re-runs the loader and it is still gone", async () => {
+  const gone = () => loaderFailure({ notFound: true, fallback: <ItemGone /> });
+  const { getByTestId, router } = await renderRoute(
+    [{ path: "/items/:id", Component: ItemPage }],
+    { request: "/items/1", loaders: [[ItemLoader, { name: "one" }]] },
+  );
+  await router.navigate("/items/2", { loaders: [[ItemLoader, gone()]] });
+  fireEvent.change(getByTestId("note"), { target: { value: "draft" } });
+
+  await router.action({ loaders: [[ItemLoader, gone()]] });
+
+  // the same <ItemGone> instance: its local state stays
+  expect((getByTestId("note") as HTMLInputElement).value).toBe("draft");
+});
+```
+
+| `init`                                    | The loader                       | What renders                                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{ notFound: true, fallback?, message? }` | called `notFound(message)`       | `fallback` (what the nearest `notFoundBoundary()`, else `createRouter({ notFound })`, rendered) in place of the route's content, inside its loader error boundary. Without `fallback`, the router's default `<h1>Not Found</h1>`; `fallback: null` renders nothing.                                                  |
+| `{ redirect: url, state? }`               | threw `redirect(url, { state })` | A replace-navigation to `url` (as its `Location` holds it), carrying `state` (`[def, value]` pairs). A cross-origin `url` lands on `"/"`, as the server's guard sends a redirect without `{ external: true }`.                                                                                                       |
+| `{ error, fallback? }`                    | threw `error`                    | `fallback` (what the nearest `errorBoundary()` rendered) in place of the content. Without it, the `useLoader()` read throws the error (its `name`, `message`, `code`, `stack`) to the nearest error boundary of your app. A `DataNotFoundError` is a `notFound()` and a 3xx `Response` a redirect, as on the server. |
+
+- The fallback is the rendered node, as the server sends it, not the boundary's handler: write `fallback: <ItemGone />`, or call your handler with the props you want it to see.
+- An `action()`'s seeds are the data every later response carries, a failure included: after `action({ loaders: [[L, loaderFailure({ redirect: "/items/9" })]] })` the target `/items/9` carries the redirect too, so its segment stays empty. Assert `router.pathname()`. A `navigate()` seed is that navigation's only, so its redirect target renders with the render-time seeds.
+- An error boundary of your app between the read and the route catches a `notFound()` or a redirect too, as in production: the nearest boundary to the read wins.
+- A `load()` the endpoint answers with a failure rejects. An error rejects with its message, as the real endpoint's `loaderError` does. The real endpoint answers a `notFound()` with a 404 and a redirect with a 3xx, which `load()` fails to decode, so for those assert that it rejects, not the message.
+- With `hydrate: true`, a read that throws outside any `<Suspense>` fails the server pass: `shellError` holds the error and the tree renders as the recovery document, with the not-found or error UI in place.
 
 ## `load()` and refresh groups
 

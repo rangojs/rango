@@ -18,7 +18,7 @@ import { ActionFailureItemLoader } from "./action-failure.item-loader.js";
 
 // urls() twin of action-failure.client-urls.tsx (e2e/action-failure.test.ts).
 export const actionFailurePatterns = urls(
-  ({ path, layout, loader, loading }) => [
+  ({ path, layout, loader, loading, notFoundBoundary }) => [
     path(
       "/throw",
       () => <ActionFailureThrowPage />,
@@ -52,7 +52,12 @@ export const actionFailurePatterns = urls(
         "/items/:id",
         () => <ActionFailureItemPage />,
         { name: "item" },
-        () => [loader(ActionFailureItemLoader)],
+        () => [
+          loader(ActionFailureItemLoader),
+          notFoundBoundary(() => (
+            <p data-testid="af-item-gone">The item is archived</p>
+          )),
+        ],
       ),
     ]),
   ],

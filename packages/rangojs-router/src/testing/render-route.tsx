@@ -22,7 +22,10 @@
  *   - Loader data, location state, handle output, and outlet pending state are
  *     SEEDED directly into client context (see the `loaders` / `locationState` /
  *     `handles` / `outletPending` options) — nothing is executed on the server.
- *     This exercises the context read path, not the run path.
+ *     This exercises the context read path, not the run path. A loader seed
+ *     can be a loader that threw (loaderFailure(), loader-failure.ts): the
+ *     segment system places its not-found UI, redirect or error as it places
+ *     a real one.
  *   - navigate() drives the navigation lifecycle as a click does:
  *     useNavigation() reads loading from the call and idle with the commit,
  *     and useLinkStatus().pending is true for a link to the destination until
@@ -121,10 +124,11 @@ import {
   buildParamsFromMatch,
 } from "../router/pattern-matching.js";
 import { normalizeBasename } from "../router/basename.js";
-import type {
-  LoaderDefinition,
-  TransitionConfig,
-  TransitionWhenKind,
+import {
+  isLoaderDataResult,
+  type LoaderDefinition,
+  type TransitionConfig,
+  type TransitionWhenKind,
 } from "../types.js";
 import {
   setCurrentHistoryStateListener,
@@ -140,7 +144,7 @@ import {
   resolveNavigationState,
   shownLocationState,
 } from "../browser/history-state.js";
-import { withLocationStateKey } from "./location-state-key.js";
+import { locationStateSlots } from "./location-state-key.js";
 import type { Handle } from "../handle.js";
 import type { ThemeConfig } from "../theme/types.js";
 import { resolveThemeConfig } from "../theme/constants.js";
@@ -276,6 +280,9 @@ export interface RenderRouteOptions {
    * renderRoute([{ path: "/cart", Component: CartBadge }], {
    *   loaders: [[CartLoader, { itemCount: 3, total: 89.97 }]],
    * });
+   *
+   * A loader that threw is seeded with `loaderFailure()`:
+   * `[[ItemLoader, loaderFailure({ notFound: true, fallback: <ItemGone /> })]]`.
    */
   loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
   /**
@@ -592,7 +599,8 @@ export interface TestRouterHandle {
    * Set what the loader endpoint answers from now on: a later
    * `useLoader().load()` or refreshGroup refresh of each loader resolves to
    * its value (a pending Promise holds the answer, a rejection is the
-   * loader's error). Renders nothing; the page on screen keeps its data.
+   * loader's error, and a `loaderFailure()` rejects).
+   * Renders nothing; the page on screen keeps its data.
    *
    * @example
    * router.respondToLoads({ loaders: [[CartLoader, { count: 3 }]] });
@@ -623,19 +631,6 @@ export interface TestRouterHandle {
 
 /** Result of renderRoute: RTL's render result plus the router handle. */
 export type RenderRouteResult = RenderResult & { router: TestRouterHandle };
-
-/** `[def, value]` seeds as `history.state` slots, each def keyed. */
-function locationStateSlots(
-  seeds:
-    | ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>
-    | undefined,
-): Record<string, unknown> {
-  const slots: Record<string, unknown> = {};
-  for (const [def, value] of seeds ?? []) {
-    slots[withLocationStateKey(def).__rsc_ls_key] = value;
-  }
-  return slots;
-}
 
 /** Result of renderRoute with `hydrate: true`. */
 export type RenderRouteHydrateResult = RenderRouteResult & {
@@ -924,7 +919,15 @@ export async function renderRoute(
       );
     } else {
       try {
-        payload = { loaderResult: await loadAnswers[loaderId] };
+        const answer = await loadAnswers[loaderId];
+        // A loaderFailure() seed is a page payload's loader result. The
+        // endpoint answers a loader that throws with no result: an error as
+        // its loaderError, a notFound() as a 404 and a redirect() as a 3xx
+        // (rsc/loader-fetch.ts), each of which load() rejects.
+        payload =
+          isLoaderDataResult(answer) && !answer.ok
+            ? failure(answer.error.name, answer.error.message)
+            : { loaderResult: answer };
       } catch (error) {
         payload = failure(
           error instanceof Error ? error.name : "Error",

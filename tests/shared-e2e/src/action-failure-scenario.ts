@@ -292,16 +292,6 @@ export function runActionFailureTests(
   test("urls() route: a loader that throws redirect() on its rerun after a delete action navigates to its target, and the layout keeps its instance", async ({
     page,
   }) => {
-    // Known drift, as on main: the action lane plants LoaderRedirect as the
-    // outlet's children in place of the StreamedLoaderErrorBoundary-wrapped
-    // content (packages/rangojs-router/src/segment-system.tsx, the
-    // `!isAction && isLoaderRedirectNode` sites), so the route's wrapper chain
-    // loses a link while it redirects. The layout above is untouched.
-    expectConsole(page, {
-      allow: [
-        /I5 drift at outlet:\S+: wrapper chain link \d+ changed from StreamedLoaderErrorBoundary to nothing/,
-      ],
-    });
     const run = randomUUID();
     await page.goto(options.url(`${options.serverPath}/items/7?run=${run}`));
     await expect(page.getByTestId("af-item-name")).toHaveText("item 7");
@@ -320,6 +310,35 @@ export function runActionFailureTests(
     );
     await expect(page.getByTestId("af-items")).toBeVisible();
     await expect(page.getByTestId("af-item")).toHaveCount(0);
+    await expectKept(page, "af-items-layout");
+  });
+
+  // An archive action whose item loader then throws notFound(): the route's
+  // notFoundBoundary() takes the route's content in place, under the route's
+  // loader error boundary, and the layout above keeps its instance. In dev
+  // the console guard fails the test on a wrapper-chain drift (I5).
+  test("urls() route: a loader that throws notFound() on its rerun after an archive action renders its notFoundBoundary() in place, and the layout keeps its instance", async ({
+    page,
+  }) => {
+    const run = randomUUID();
+    const itemUrl = `${options.serverPath}/items/8?run=${run}`;
+    await page.goto(options.url(itemUrl));
+    await expect(page.getByTestId("af-item-name")).toHaveText("item 8");
+    await page.waitForFunction(() =>
+      document.documentElement.hasAttribute("data-hydrated"),
+    );
+    await mark(page, "af-items-layout");
+
+    await page.getByTestId("af-item-archive").click();
+    await expect(page.locator("html")).toHaveAttribute(
+      "data-af-outcome",
+      "resolved:8",
+    );
+    await expect(page.getByTestId("af-item-gone")).toHaveText(
+      "The item is archived",
+    );
+    await expect(page.getByTestId("af-item")).toHaveCount(0);
+    await expect(page).toHaveURL(new RegExp(`/items/8\\?run=${run}$`));
     await expectKept(page, "af-items-layout");
   });
 
