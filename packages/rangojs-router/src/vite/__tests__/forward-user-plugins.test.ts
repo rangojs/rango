@@ -78,6 +78,18 @@ describe("selectForwardableResolvePlugins", () => {
     ]);
   });
 
+  it("forwards @mdx-js/rollup with its transform and without its config hook", () => {
+    // The transform reads processors that config built on the main server; the
+    // temp server must not run config a second time.
+    const transform = async () => undefined;
+    const plugins: Plugin[] = [
+      { name: "@mdx-js/rollup", enforce: "pre", config: () => {}, transform },
+    ];
+    expect(selectForwardableResolvePlugins(plugins)).toEqual([
+      { name: "@mdx-js/rollup", enforce: "pre", transform },
+    ]);
+  });
+
   it("forwards plugins that only expose load", () => {
     const plugins: Plugin[] = [{ name: "virtual-modules", load }];
     const out = selectForwardableResolvePlugins(plugins);

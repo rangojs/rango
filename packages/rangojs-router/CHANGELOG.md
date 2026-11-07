@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `@mdx-js/rollup` reaches route discovery, so a route that imports an `.mdx` page builds
+
+**Before.** Rango's discovery server forwarded only user plugins with
+`resolveId` or `load`, plus `@rolldown/plugin-transform-imports`.
+`@mdx-js/rollup` compiles `.mdx` in a `transform` hook, so it never ran there.
+When a route module imported an `.mdx` file, discovery evaluated the raw
+markdown, and `vite build` failed with `[rango] Build-time router discovery
+failed: Failed to parse source for import analysis`. In Cloudflare-preset dev,
+every request answered 500. A `Prerender` handler that loaded an `.mdx` page
+with `import()` failed the build the same way. The workaround was to wrap the
+plugin in a `load` hook.
+
+**Now.** Discovery and prerender run `@mdx-js/rollup`'s transform too, with
+the options you passed. The plugin as MDX documents it is enough:
+
+```ts
+import mdx from "@mdx-js/rollup";
+
+export default defineConfig({
+  plugins: [{ enforce: "pre", ...mdx() }, react(), rango()],
+});
+```
+
+A `load`-hook wrapper still works and can be removed. Other transform-only
+plugins are still not forwarded.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -17,6 +17,7 @@
     "types": [
       "node",
       "@cloudflare/workers-types",
+      "mdx",
       "vite/client",
       "@rangojs/router/types"
     ]

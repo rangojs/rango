@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rango } from "@rangojs/router/vite";
 import transformImports from "@rolldown/plugin-transform-imports";
+import mdx from "@mdx-js/rollup";
 import { analyze } from "../../tools/bundle-analyze";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -156,6 +157,10 @@ export default defineConfig(({ isPreview }) => ({
         skipDefaultConversion: true,
       },
     }),
+    // Compiles .mdx for /mdx-page (e2e/mdx-imports.test.ts). Limited to .mdx:
+    // by default it also compiles .md, ignoring the `?raw` query that
+    // src/docs-content.ts and src/pages/articles-handler.tsx glob them with.
+    { enforce: "pre", ...mdx({ include: /\.mdx$/ }) },
     parityAliasPlugin(),
     rscReloadProbe(),
     // React Compiler via plugin-react's native option; compiles client components only.

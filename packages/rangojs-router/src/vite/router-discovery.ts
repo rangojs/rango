@@ -97,9 +97,9 @@ export function createRouterDiscoveryPlugin(
       // Capture user's resolve aliases for the temp server
       s.userResolveAlias = config.resolve.alias;
       // Capture the data-only resolution config (resolve.*, define, oxc) and
-      // the user's resolution plugins (resolveId/load, plus import rewriters'
-      // transform) so the discovery temp server resolves modules the same way
-      // the real environment does.
+      // the user's resolution plugins (resolveId/load, plus the transform of
+      // listed plugins: import rewriters, MDX) so the discovery temp server
+      // resolves and compiles modules the same way the real environment does.
       // Without this, both flavors of user resolution are absent during
       // discovery/prerender/static rendering even though they apply at request
       // time: third-party resolvers (e.g. vite-tsconfig-paths, forwarded as

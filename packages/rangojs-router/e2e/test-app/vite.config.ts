@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import path from "path";
 import react from "@vitejs/plugin-react";
 import transformImports from "@rolldown/plugin-transform-imports";
+import mdx from "@mdx-js/rollup";
 import { rango, poke } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 import { analyze } from "../../../../tools/bundle-analyze";
@@ -50,6 +51,8 @@ export default defineConfig(({ command }) => ({
         skipDefaultConversion: true,
       },
     }),
+    // Compiles .mdx for /mdx-page (e2e/mdx-imports.test.ts).
+    { enforce: "pre", ...mdx() },
     parityAliasPlugin(),
     react(),
     rango(headScripts ? { headScripts } : undefined),

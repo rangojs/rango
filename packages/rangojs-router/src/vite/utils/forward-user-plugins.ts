@@ -48,32 +48,38 @@ export function isFrameworkPlugin(name: string): boolean {
  * by name: forwarding every transform would let e.g. @tailwindcss/vite cache
  * per-environment state built from the temp server's config.
  *
- * `rolldown-plugin-transform-imports` (@rolldown/plugin-transform-imports)
- * rewrites barrel imports to subpaths (vitejs/vite-plugin-react#1519). Dropped,
- * discovery loads the whole barrel and fails on a leaf importing `client-only`.
+ * - `rolldown-plugin-transform-imports` (@rolldown/plugin-transform-imports)
+ *   rewrites barrel imports to subpaths (vitejs/vite-plugin-react#1519).
+ *   Dropped, discovery loads the whole barrel and fails on a leaf importing
+ *   `client-only`.
+ * - `@mdx-js/rollup` compiles `.mdx` to JS. Its transform reads only the
+ *   processors its `config` hook builds (falling back to building them on first
+ *   call). Dropped, discovery and prerender evaluate raw markdown and fail in
+ *   `vite:import-analysis`.
  */
-const IMPORT_REWRITE_PLUGINS: ReadonlySet<string> = new Set([
+const FORWARDED_TRANSFORM_PLUGINS: ReadonlySet<string> = new Set([
   "rolldown-plugin-transform-imports",
+  "@mdx-js/rollup",
 ]);
 
 /**
  * A plugin participates in resolution if it exposes `resolveId` or `load`, or
- * rewrites imports (IMPORT_REWRITE_PLUGINS). Other plugins that only transform,
- * configure the server, or hook into the build lifecycle are skipped to keep
- * the forwarded surface minimal.
+ * is a listed transform (FORWARDED_TRANSFORM_PLUGINS). Other plugins that only
+ * transform, configure the server, or hook into the build lifecycle are skipped
+ * to keep the forwarded surface minimal.
  */
 function isForwardable(p: Plugin): boolean {
   return Boolean(
     (p as any).resolveId ||
     (p as any).load ||
-    IMPORT_REWRITE_PLUGINS.has(p.name),
+    FORWARDED_TRANSFORM_PLUGINS.has(p.name),
   );
 }
 
 /**
- * Strip a resolved plugin instance down to its resolution hooks (and an import
- * rewriter's `transform`) plus the gating fields that decide whether/where it
- * runs.
+ * Strip a resolved plugin instance down to its resolution hooks (and a listed
+ * transform plugin's `transform`) plus the gating fields that decide
+ * whether/where it runs.
  *
  * We reuse the SAME instance objects captured from `config.plugins`. By the
  * time `configResolved` fires on the discovery plugin, every plugin's own
@@ -107,7 +113,7 @@ function stripToResolutionHooks(p: Plugin): Plugin {
     (stripped as any).applyToEnvironment = (p as any).applyToEnvironment;
   if ((p as any).resolveId) (stripped as any).resolveId = (p as any).resolveId;
   if ((p as any).load) (stripped as any).load = (p as any).load;
-  if (IMPORT_REWRITE_PLUGINS.has(p.name))
+  if (FORWARDED_TRANSFORM_PLUGINS.has(p.name))
     (stripped as any).transform = (p as any).transform;
   return stripped;
 }

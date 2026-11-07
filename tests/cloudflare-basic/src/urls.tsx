@@ -72,6 +72,8 @@ import { CACHE_LAB_TAGS } from "./cache-lab-contract.js";
 import { CacheLabPulseLoader } from "./cache-lab-data.js";
 import { AboutPage } from "./pages/about.js";
 import { BarrelImportsPage } from "./pages/barrel-imports.js";
+import MdxPage from "./pages/mdx-page.mdx";
+import { MdxPrerenderPage } from "./pages/mdx-prerender.js";
 import { LinkExternalOriginPage } from "./pages/link-external-origin.js";
 import { ScriptsDemoPage } from "./pages/scripts-demo.js";
 import { CounterPage } from "./pages/counter.js";
@@ -1219,6 +1221,13 @@ export const urlpatterns = urls(
         path("/app-root/hero", () => <SplitHero />),
         path("/app-root/gallery", () => <SplitGallery />),
         path("/barrel-imports", BarrelImportsPage),
+        // Compiled by @mdx-js/rollup (e2e/mdx-imports.test.ts).
+        path("/mdx-page", () => (
+          <article data-testid="mdx-page">
+            <MdxPage />
+          </article>
+        )),
+        path("/mdx-prerender", MdxPrerenderPage),
         layout(ClientPackageResolutionLayout, () => [
           path("/client-package-resolution", ClientPackageResolutionPage, {
             name: "clientPackageResolution",
