@@ -34,9 +34,9 @@ path("/checkout", () => <Checkout />);
 
 **Before.** A server component that threw `notFound()` inside its render was
 caught by React like any render error: a document request answered the
-router's error page (a `500` recovery document in production, `200` under
-some hosts), and a client navigation rendered the client's root error
-boundary. The route's `notFoundBoundary()` never rendered; only a
+router's recovery document (`500` in production, where the error reaches the
+document masked; `404` in development), whose client render showed the root
+error boundary, and a client navigation rendered that boundary too. The route's `notFoundBoundary()` never rendered; only a
 `notFound()` thrown by a handler or a loader reached it.
 
 **Now.** The render answers it the way a `notFound()` from the route's

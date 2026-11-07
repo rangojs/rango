@@ -354,11 +354,12 @@ async function answerRenderControl(
   flight: RscFlightStage,
   options: RscRenderOptions,
 ): Promise<{ response: Response } | { payload: RscPayload } | undefined> {
-  const redirect = options.redirect && renderRedirectOf(flight.reported);
-  if (redirect) return { response: options.redirect!(redirect) };
-  const notFound = options.notFound && renderNotFoundOf(flight.reported);
+  const { redirect: answerRedirect, notFound: renderInstead } = options;
+  const redirect = answerRedirect && renderRedirectOf(flight.reported);
+  if (redirect) return { response: answerRedirect(redirect) };
+  const notFound = renderInstead && renderNotFoundOf(flight.reported);
   if (!notFound) return undefined;
-  const payload = await options.notFound!(notFound);
+  const payload = await renderInstead(notFound);
   return payload ? { payload } : undefined;
 }
 

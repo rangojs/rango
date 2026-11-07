@@ -60,10 +60,7 @@ export function buildFullPayload(
       // the first sync useHandle read see resolved values. Partial payloads
       // (rsc-rendering.ts) keep streaming (handleStore.stream()). A shell
       // capture renders from what its record keeps (resolvedHandleStream).
-      handles: resolvedHandleStream(
-        handleStore,
-        reqCtx._shellCaptureState?.run === true,
-      ),
+      handles: documentHandles(handleStore, reqCtx),
       // Post-handler-barrier pushes (streaming loader ctx.handle() writes)
       // stream here; the client applies them after hydration. Instantly
       // complete when the loader lane is idle — including PPR shell capture,
@@ -88,6 +85,17 @@ export function buildFullPayload(
       initialTheme: payloadInitialTheme(reqCtx),
     },
   };
+}
+
+/** A document payload's `handles` (buildFullPayload). */
+function documentHandles(
+  handleStore: HandleStore,
+  reqCtx: RequestContext<any>,
+): NonNullable<RscPayload["metadata"]>["handles"] {
+  return resolvedHandleStream(
+    handleStore,
+    reqCtx._shellCaptureState?.run === true,
+  );
 }
 
 /**
@@ -124,10 +132,7 @@ export function payloadWithSegmentContent(
       ...(metadata.handles !== undefined && {
         handles: metadata.isPartial
           ? handleStore.stream()
-          : resolvedHandleStream(
-              handleStore,
-              reqCtx._shellCaptureState?.run === true,
-            ),
+          : documentHandles(handleStore, reqCtx),
       }),
       ...(metadata.handlesLate !== undefined && {
         handlesLate: handleStore.streamLate(),
