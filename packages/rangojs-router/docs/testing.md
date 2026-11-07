@@ -288,7 +288,8 @@ a process-stable runtime fallback `$$id` **only under a test runner**
 `$$id`" throw. Outside a test runner (a real build) a missing id still throws, so
 an unsupported handler shape the plugin skipped (e.g. `export let X = Static(...)`)
 fails loud rather than getting a silent synthetic id — the plugin always injects
-for supported `export const` shapes, and the static manifest keys on that id.
+for supported `export const` shapes, and the static manifest keys on that id
+(plus the scope of each place the `Static()` is mounted).
 
 **The remaining caveat is the whole router _file_.** Importing your real
 `router.tsx` can still fail on app-specific page-module imports (a page pulling
@@ -1489,10 +1490,21 @@ What the stub cannot reproduce stays e2e:
   still refuses the capture.
 - Fizz resume of the holes and browser resume.
 
+Build-time artifacts are served as a build serves them. A `Prerender` route
+serves the artifact baked for its URL on its first request. A `Static()`
+layout, parallel slot or route serves the artifact baked for its mount, one
+per place it is mounted, so a `Static()` included in two modules links in each
+module; its handler runs once per mount (the bake), not per request. A
+`Static()` must be an `export const` (a module-level const in a test), as a
+build requires: an inline `Static()` inside `urls()` is a new definition on
+every evaluation of the route tree, so no request reads what was baked for it.
+`Static(handler, { passthrough: true })` renders live, as in production.
+
 The test process keeps the PPR state a worker keeps across requests: the
 capture's stampede guard and backoff (a refused capture backs its URL off for
 later tests too), the capture's and the serve path's once-per-key warnings,
-the build-shell manifest memo, and `CFCacheStore`'s isolate
+the build-shell manifest memo, the `Prerender` and `Static()` artifacts baked
+so far, and `CFCacheStore`'s isolate
 memos, which every `CFCacheStore` shares by namespace and URL, so one test's
 shell can be the next test's first HIT. `resetShellTestState()` clears it;
 call it in `beforeEach`, never while a request is in flight.

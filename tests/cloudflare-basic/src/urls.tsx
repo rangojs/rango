@@ -320,6 +320,7 @@ import { GuidePlainLoader } from "./loaders/guide-plain.js";
 import { suspenseDemoPatterns } from "./pages/suspense-demo.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
+import { staticMountsPatterns } from "./pages/static-mounts-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
@@ -3172,6 +3173,11 @@ export const urlpatterns = urls(
         // Static content (Static: layout + index rendered once at build time)
         include("/static-content", staticContentPatterns, {
           name: "staticContent",
+        }),
+
+        // One Static() layout and slot mounted in several include scopes
+        include("/static-mounts", staticMountsPatterns, {
+          name: "staticMounts",
         }),
 
         // Composable docs package (demonstrates include + factory pattern)

@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` mounted in several includes links in each one's own module in a build
+
+**Before.** A `Static()` layout, parallel slot or route exported once and
+mounted in two `include(..., { name })` scopes was baked once, in the scope
+of the last mount. In a build every mount served that one artifact, so
+`ctx.reverse(".settings")` in the `a` mount linked `/b/settings`. A mount in a
+nested include (`outer.inner`) resolved `.settings` one include too high and
+could fail the build with `Unknown route`. Dev was right: each mount ran the
+handler in its own scope.
+
+**Now.** The build bakes one artifact per mount and each mount serves its
+own, so a `Static()` links in its own module at any include depth, exactly as
+in dev. A layout or slot resolves `.name` in the include that declares it, a
+`path()` from its own route name. A named include under a transparent
+`{ name: "" }` include keeps the root scope it has at runtime during build
+discovery too, so its routes reach bare root names from `.name` there as
+they do live. A `Static()` that no route mounts is now reported by the build
+(`not mounted by any router: nothing baked`) instead of being baked for
+nothing.
+
+```tsx
+export const SettingsNav = Static((ctx) => (
+  <a href={ctx.reverse(".settings")}>Settings</a>
+));
+
+const account = urls(({ path, layout }) => [
+  layout(SettingsNav, () => [
+    path("/settings", SettingsPage, { name: "settings" }),
+  ]),
+]);
+
+urls(({ include }) => [
+  include("/a", account, { name: "a" }), // Before: /b/settings. Now: /a/settings
+  include("/b", account, { name: "b" }), // /b/settings
+]);
+```
+
+`serveShellRequest` (`@rangojs/router/testing/flight`) now serves `Static()`
+segments from the artifacts a build bakes, one per mount, as it already
+served `Prerender` routes: a `Static()` handler runs once per mount, at the
+bake, and not on each request. Declare a `Static()` used in such a test as a
+module-level const; an inline `Static()` inside `urls()` is a new definition
+each time the route tree is evaluated, so no request reads its bake.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -57,11 +57,20 @@ async function ensureStaticDeps(): Promise<void> {
 }
 
 /**
+ * Drop the latched store, so the next lookup reads the manifest globals
+ * again. serveShellRequest installs and removes a static manifest around
+ * each request it serves.
+ */
+export function resetStaticStoreForTests(): void {
+  _staticStore = undefined;
+}
+
+/**
  * Try to load a pre-rendered Static component from the build-time store.
  * Returns the deserialized React element, or undefined if not available.
  * Also replays any handle data captured at build time into the request's HandleStore.
  *
- * @param handlerId - The handler's $$id used to look up the static store entry.
+ * @param handlerId - The mount's static manifest key (recordStaticMount).
  * @param segmentId - The runtime segment shortCode. Handle data is replayed under
  *   this key so that useHandle's segmentOrder matching works correctly.
  */

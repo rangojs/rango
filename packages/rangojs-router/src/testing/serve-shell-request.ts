@@ -35,6 +35,10 @@
  * build-time shell is in production; build-time shells are e2e-only. An
  * on-demand route (`Prerender(..., { onDemand })`) bakes nothing here: it
  * serves from its prerender store, as a refresh-only page does in production.
+ * A `Static()` layout, parallel slot or route serves from the artifact the
+ * build bakes for its mount (one per mount scope; baked on the first request
+ * that reaches the mount, kept until resetShellTestState), so its handler
+ * does not run per request; a `passthrough` one renders live.
  *
  * Must run under the `react-server` condition (the rsc Vitest project), with
  * `rangoTestAliases()` resolving `@vitejs/plugin-rsc/rsc/server` to the stub
@@ -42,7 +46,11 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { toInternal, type Rango } from "../router/router-interfaces.js";
+import {
+  toInternal,
+  type Rango,
+  type RangoInternal,
+} from "../router/router-interfaces.js";
 import { ensureRouterManifest } from "../route-map-builder.js";
 import type { SegmentCacheStore, ShellCacheEntry } from "../cache/types.js";
 import {
@@ -56,7 +64,14 @@ import { setDefaultSSRModuleLoaderForTests } from "../rsc/ssr-module-loader.js";
 import {
   createPrerenderStore,
   prerenderManifestEntries,
+  type StaticEntry,
 } from "../prerender/store.js";
+import { captureStaticMounts } from "../server/context.js";
+import {
+  getStaticMounts,
+  isStaticHandler,
+  renderStaticMount,
+} from "../static-handler.js";
 import {
   POST_QUIESCE_TASK_HOPS,
   SHELL_CAPTURE_MAX_WAIT_MS,
@@ -528,6 +543,81 @@ async function servePrerenderArtifacts(
 }
 
 /**
+ * Each router's Static() artifacts by manifest key, as `vite build` bakes
+ * them, baked on the router's first request.
+ */
+let staticArtifacts = new WeakMap<object, Map<string, StaticEntry>>();
+
+/**
+ * Bake the router's Static() artifacts as `vite build` does: evaluate every
+ * urlpatterns mount and include() body as discovery does
+ * (generateManifestFull), and render each Static() mount that evaluation
+ * records with renderStaticMount, as the collector renders it. Only this
+ * router's tree counts: mounts other route trees recorded on a shared
+ * definition are not baked. A `passthrough` Static() bakes nothing.
+ */
+async function bakeStaticArtifacts(
+  internal: RangoInternal<any, any>,
+  env: unknown,
+): Promise<Map<string, StaticEntry>> {
+  const { generateManifestFull } =
+    await import("../build/generate-manifest.js");
+  const captured = await captureStaticMounts(async () => {
+    for (const mount of internal.__urlpatternMounts) {
+      await generateManifestFull(mount.patterns, mount.mountIndex, {
+        routerId: internal.id,
+        ...(internal.__basename ? { urlPrefix: internal.__basename } : {}),
+      });
+    }
+  });
+  const entries = new Map<string, StaticEntry>();
+  for (const { def, key } of captured) {
+    if (entries.has(key)) continue;
+    if (!isStaticHandler(def) || def.options?.passthrough) continue;
+    const mount = getStaticMounts(def).find((m) => m.key === key)!;
+    const result = await renderStaticMount(internal, def, mount, env);
+    if (result) entries.set(key, result);
+  }
+  return entries;
+}
+
+/**
+ * Serve every Static() segment of the router from its build-time artifact, as
+ * production does: through the store the built worker reads (static-store.ts
+ * over globalThis.__STATIC_MANIFEST). The router's trie is installed first,
+ * as the handler does on its first request, so a bake's reverse() reads the
+ * route map a live request reads. `env` stands in for the build's
+ * `buildEnv`. A bake that throws rejects the request and is tried again on
+ * the next one, as a failed build is. Returns the undo, or undefined when
+ * nothing is baked for the router.
+ */
+async function serveStaticArtifacts(
+  router: Rango<any, any>,
+  env: unknown,
+): Promise<(() => void) | undefined> {
+  const internal = toInternal(router);
+  const { ensureRouterTrie } = await import("../rsc/manifest-init.js");
+  await ensureRouterTrie(internal);
+  let entries = staticArtifacts.get(router);
+  if (!entries) {
+    entries = await bakeStaticArtifacts(internal, env);
+    staticArtifacts.set(router, entries);
+  }
+  if (entries.size === 0) return undefined;
+  const { resetStaticStoreForTests } =
+    await import("../router/segment-resolution/static-store.js");
+  const previous = globalThis.__STATIC_MANIFEST;
+  globalThis.__STATIC_MANIFEST = Object.fromEntries(
+    [...entries].map(([key, entry]) => [key, async () => ({ default: entry })]),
+  );
+  resetStaticStoreForTests();
+  return () => {
+    globalThis.__STATIC_MANIFEST = previous;
+    resetStaticStoreForTests();
+  };
+}
+
+/**
  * Handlers per router, keyed by the `cacheStore` override or the router. A
  * handler binds its router's document version when it is created, so an entry
  * is reused only while the router would still resolve that version: a
@@ -687,13 +777,14 @@ async function buildRequest(
  * once-per-key warnings, the build-shell manifest memo, the "use cache"
  * in-flight leaders and warnings, CFCacheStore's isolate memos (shells,
  * tag markers, tag hints) and warnings, which every CFCacheStore in the
- * process shares by namespace and URL, and the Prerender artifacts baked so
- * far. Call it in `beforeEach`, never while a request is in flight.
+ * process shares by namespace and URL, and the Prerender and Static artifacts
+ * baked so far. Call it in `beforeEach`, never while a request is in flight.
  * VercelCacheStore's memos live on the `cache` handle it is given: a new
  * handle starts empty.
  */
 export async function resetShellTestState(): Promise<void> {
   prerenderArtifacts = new WeakMap();
+  staticArtifacts = new WeakMap();
   const [capture, serve, buildShells, cf, cacheRuntime, cacheLookup] =
     await Promise.all([
       import("../rsc/shell-capture.js"),
@@ -758,6 +849,13 @@ export async function serveShellRequest<TEnv = any>(
     target.pathname,
     options.env,
   );
+  let unserveStatic: (() => void) | undefined;
+  try {
+    unserveStatic = await serveStaticArtifacts(router, options.env);
+  } catch (error) {
+    unservePrerender?.();
+    throw error;
+  }
   await awaitLaterMillisecond(called);
 
   const { response, body } = await recorders.run(recorder, async () => {
@@ -770,6 +868,7 @@ export async function serveShellRequest<TEnv = any>(
     } finally {
       await settle(tasks);
       unservePrerender?.();
+      unserveStatic?.();
     }
   });
 

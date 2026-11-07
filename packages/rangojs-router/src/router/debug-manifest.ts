@@ -28,6 +28,10 @@ export async function buildDebugManifest<TEnv = any>(
       parent: null as EntryData | null,
       counters: {} as Record<string, number>,
       mountIndex: entry.mountIndex,
+      // The owning router, as every other evaluation of the tree carries it
+      // (loadManifest, generateManifestFull): a Static() mount recorded here
+      // keys like the build's.
+      routerId: entry.routerId,
       patterns: new Map<string, string>(),
       trailingSlash: new Map<string, TrailingSlashMode>(),
     };

@@ -183,7 +183,7 @@ async function buildPrefixTreeNode(
   routeSearchSchemas?: Record<string, Record<string, string>>,
   routerId?: string,
   validateTransitionWhen?: boolean,
-  position?: IncludeScopePosition,
+  position?: IncludeScopePosition & { rootScoped?: boolean },
 ): Promise<PrefixTreeNode> {
   // Resolve an async include provider (`() => import("./routes")`) so its routes
   // are walked into the build-time manifest/types/href. Runtime matching still
@@ -231,6 +231,9 @@ async function buildPrefixTreeNode(
         // (lazy-includes.ts), so nested hidden names agree across realms.
         scopePath: position?.scopePath,
         hiddenScopePath: position?.hiddenScopePath,
+        // And the root scope it restores (lazyContext.rootScoped), which
+        // runWithPrefixes below inherits.
+        rootScoped: position?.rootScoped,
       },
       () => {
         const helpers = createRouteHelpers();

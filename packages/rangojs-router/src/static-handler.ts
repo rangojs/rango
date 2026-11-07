@@ -37,6 +37,8 @@ import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { StaticBuildContext } from "./prerender.js";
 import type { UseItems, HandlerUseItem } from "./route-types.js";
+import type { ReverseScope } from "./server/context.js";
+import type { RangoInternal } from "./router/router-interfaces.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { isUnderTestRunner } from "./runtime-env.js";
 
@@ -128,6 +130,52 @@ export function Static<TParams extends Record<string, any>>(
     handler: handler as Handler<TParams>,
     ...(options ? { options } : {}),
   } as StaticHandlerDefinition<TParams>;
+}
+
+/**
+ * One DSL position mounting a Static() definition, recorded by
+ * recordStaticMount (server/context.ts): what the build-time render of that
+ * mount needs to render what the mount renders live.
+ */
+export interface StaticMount {
+  /** The static manifest key of this mount's artifact. */
+  readonly key: string;
+  readonly routerId: string | undefined;
+  /** path() mounts: the route's full name. */
+  readonly routeName: string | undefined;
+  /** layout() and parallel() mounts: the segment's include scope. */
+  readonly reverseScope: ReverseScope | undefined;
+  readonly rootScoped: boolean;
+}
+
+/** The mounts recorded on a Static() definition, one per distinct key. */
+export function getStaticMounts(def: object): StaticMount[] {
+  const mounts = (def as { $$mounts?: Record<string, StaticMount> }).$$mounts;
+  return mounts ? Object.values(mounts) : [];
+}
+
+/**
+ * Render one mount of a Static() definition on its owning router, as the
+ * build bakes it (prerender-collection.ts) and serveShellRequest bakes it.
+ * A layout or slot mount passes its include prefix as the route name, so
+ * ctx.routeName reads the prefix; its `.name` lookups go through the scope.
+ */
+export function renderStaticMount(
+  router: Pick<RangoInternal, "renderStaticSegment">,
+  def: StaticHandlerDefinition,
+  mount: StaticMount,
+  buildEnv?: unknown,
+  devMode?: boolean,
+): Promise<{ encoded: string; handles: string } | null> {
+  return router.renderStaticSegment(
+    def.handler,
+    mount.key,
+    mount.routeName ?? mount.reverseScope?.prefix,
+    buildEnv,
+    devMode,
+    mount.rootScoped,
+    mount.reverseScope,
+  );
 }
 
 export function isStaticHandler(

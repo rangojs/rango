@@ -93,6 +93,11 @@ const ModalLoader = counted("modal-loader");
 const HeldLoader = counted("held-loader");
 const UnderCacheLoader = counted("under-cache-loader");
 const StaticLoader = counted("static-loader");
+/**
+ * Hoisted, as a build requires: an inline Static() gets a new id on every
+ * evaluation of the route tree, so no request would look up what was baked.
+ */
+const StaticPage = Static(page("static"));
 const GalleryLoader = counted("gallery-loader");
 const DeepLayoutLoader = counted("deep-layout-loader");
 const DeepPageLoader = counted("deep-page-loader");
@@ -522,7 +527,7 @@ function makeRouter() {
                 ]),
               ]),
             ]),
-            path("/static", Static(page("static")), { name: "static" }, () => [
+            path("/static", StaticPage, { name: "static" }, () => [
               loader(StaticLoader),
               loading(<p>static-loading</p>, { prefetch: false }),
             ]),
@@ -1060,6 +1065,7 @@ describe("R2: a flagged loading() entry in a prefetch", () => {
     const route = prefetched.segments.find((s) => s.type === "route")!;
     expect(route.deferred).toBeUndefined();
     expect(present(route.component)).toBe(true);
+    // The one run is the build-time render; requests serve its artifact.
     expect(count("static")).toBe(1);
     expect(count("static-loader")).toBe(0);
     expect(prefetched.deferred).toEqual([

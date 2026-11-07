@@ -555,6 +555,7 @@ export interface RangoInternal<
   /**
    * Render a single Static handler at build time.
    * Returns the RSC-serialized component string and handle data, or null on failure.
+   * `reverseScope` is a layout or parallel slot mount's include scope.
    */
   renderStaticSegment(
     handler: Function,
@@ -563,6 +564,7 @@ export interface RangoInternal<
     buildEnv?: any,
     devMode?: boolean,
     rootScoped?: boolean,
+    reverseScope?: import("../server/context.js").ReverseScope,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**

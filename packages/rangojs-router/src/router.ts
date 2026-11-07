@@ -39,6 +39,7 @@ import {
   getContext,
   RangoContext,
   type MetricsStore,
+  type ReverseScope,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import {
@@ -763,16 +764,20 @@ export function createRouter<TEnv = any>(
     buildEnv?: TEnv,
     devMode?: boolean,
     rootScoped?: boolean,
+    reverseScope?: ReverseScope,
   ) {
     return _renderStaticSegment<TEnv>(
       handler,
       handlerId,
-      mergedRouteMap,
+      // The map a live handler's reverse() reads (getRouteMap above), so a
+      // bake resolves what the live render resolves.
+      getRouterManifest(routerId) ?? mergedRouteMap,
       routeName,
       buildEnv,
       devMode,
       routerId,
       rootScoped,
+      reverseScope,
     );
   }
 
