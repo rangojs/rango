@@ -9,3 +9,15 @@ export function deleteActionFailureItem(run: string, id: string): void {
 export function isActionFailureItemDeleted(run: string, id: string): boolean {
   return deletedItems.has(`${run}:${id}`);
 }
+
+// Items an archive action took out of view, per run: the item loader then
+// throws notFound().
+const archivedItems = new Set<string>();
+
+export function archiveActionFailureItem(run: string, id: string): void {
+  archivedItems.add(`${run}:${id}`);
+}
+
+export function isActionFailureItemArchived(run: string, id: string): boolean {
+  return archivedItems.has(`${run}:${id}`);
+}

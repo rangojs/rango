@@ -308,8 +308,10 @@ function wrapDefaultOutletContent(
  * throw has no boundary on the document lane — flagged content renders
  * without Suspense and a layout reader sits above every boundary, so the
  * throw is a Fizz shell error (500). `settledFallback` is that node; the
- * caller plants it and, for a redirect, replaces the whole page (an ancestor
- * reading the loader would still throw).
+ * caller hands it to the segment's StreamedLoaderErrorBoundary, which renders
+ * it where it renders a fallback the read throws, and on the document lane a
+ * redirect replaces the whole page instead (an ancestor reading the loader
+ * would still throw).
  *
  * `settle` is every client lane that commits whole (forceAwait: back/forward,
  * a cached or fully-prefetched click, stale revalidation, leaving an
@@ -686,9 +688,12 @@ export async function renderSegments(
     // fallback (LOADER_ERROR_FALLBACK marker on the thrown error) instead of
     // escaping to app boundaries. Wrapped UNCONDITIONALLY on loader presence
     // — streams and forceAwait lanes must produce the same tree shape or
-    // lane changes remount the subtree (docs/tree-structure.md).
-    if (loaderEntries.length > 0 || clientGroup) {
-      nodeContent = createElement(StreamedLoaderErrorBoundary, {
+    // lane changes remount the subtree (docs/tree-structure.md). A fallback
+    // buildLoaderStreams settles below is handed to this boundary
+    // (`settledFallback`), never put in its place.
+    const wrappedContent = nodeContent;
+    const withLoaderErrorBoundary = (settledFallback?: ReactNode): ReactNode =>
+      createElement(StreamedLoaderErrorBoundary, {
         // Leaf first: tree.slice(i) is this segment and its ancestors. A
         // read walks up the chain, so this boundary can catch an ancestor
         // loader's marker and resets when that loader's data changes too.
@@ -696,8 +701,11 @@ export async function renderSegments(
           idParamsKey,
           ...tree.slice(i).flatMap((n) => n.loaders.map((l) => l.loaderData)),
         ],
-        children: nodeContent,
+        settledFallback,
+        children: wrappedContent,
       });
+    if (loaderEntries.length > 0 || clientGroup) {
+      nodeContent = withLoaderErrorBoundary();
     }
 
     if (!clientGroup && loading !== undefined && loading !== null) {
@@ -726,7 +734,7 @@ export async function renderSegments(
             content = settledFallback;
             break;
           }
-          nodeContent = settledFallback;
+          nodeContent = withLoaderErrorBoundary(settledFallback);
         }
         if (segDebug) {
           segDebugLog(
@@ -783,7 +791,6 @@ export async function renderSegments(
       // revalidation, fully-prefetched) and the action lane await each loader
       // in buildLoaderStreams so those commits stay whole with no fallback
       // flash, and still hand each entry to its read.
-      let errorFallback: ReactNode = null;
       let loaderStreams: Record<string, unknown> | undefined;
       let awaitedLoaderIds: string[] | undefined;
       if (layoutLoaders.length > 0) {
@@ -800,7 +807,7 @@ export async function renderSegments(
             content = settledFallback;
             break;
           }
-          errorFallback = settledFallback;
+          nodeContent = withLoaderErrorBoundary(settledFallback);
         }
         if (segDebug) {
           segDebugLog(
@@ -893,7 +900,7 @@ export async function renderSegments(
           loaderStreams,
           awaitedLoaderIds,
           pending: outletPending,
-          children: errorFallback ?? nodeContent,
+          children: nodeContent,
         },
       );
     }

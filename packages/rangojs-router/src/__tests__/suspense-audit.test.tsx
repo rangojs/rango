@@ -16,7 +16,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Outlet } from "../client.js";
+import { Outlet, ParallelOutlet } from "../client.js";
 import {
   AuditedLoaderBoundary,
   AuditedRouteContent,
@@ -36,7 +36,8 @@ import {
   type TreeUpdateCause,
 } from "../suspense-audit.js";
 import { renderRoute } from "../testing/render-route.js";
-import type { ResolvedSegment } from "../types.js";
+import type { LoaderDefinition, ResolvedSegment } from "../types.js";
+import { useLoader } from "../use-loader.js";
 import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
 
 // Provokes every invariant on purpose and asserts the reports itself.
@@ -760,6 +761,196 @@ for (const strict of [false, true]) {
       expect(counters().remounts).toBe(0);
       expect(audit().mounts["outlet:L0"]).toBe(1);
       expect(audit().mounts["outlet:R0"]).toBe(1);
+    });
+
+    // A loader result the tree build settles (a notFound() on an action or
+    // forceAwait lane, an `ssr: "await"` loader's error on the document
+    // lane) puts its fallback where the segment's loader error boundary puts
+    // a fallback its read throws: the boundary renders it, and the wrapper
+    // chain is the content's on every lane.
+    const notFoundEntry = (marker: string) => ({
+      __loaderResult: true,
+      ok: false,
+      notFound: true,
+      error: { message: "Not found", name: "DataNotFoundError" },
+      fallback: <p data-testid="not-found">{marker}</p>,
+    });
+    const errorEntry = {
+      __loaderResult: true,
+      ok: false,
+      error: { message: "Failed", name: "Error" },
+      fallback: <p data-testid="not-found">failed</p>,
+    };
+    it.each([
+      {
+        lane: "action, loading()",
+        options: { isAction: true },
+        loading: true,
+        entry: notFoundEntry("a"),
+      },
+      {
+        lane: "action, no loading()",
+        options: { isAction: true },
+        entry: notFoundEntry("a"),
+      },
+      {
+        lane: "forceAwait, loading()",
+        options: { forceAwait: true },
+        loading: true,
+        entry: notFoundEntry("a"),
+      },
+      {
+        lane: 'plain ssr: "await", loading()',
+        flagged: true,
+        loading: true,
+        entry: errorEntry,
+      },
+      {
+        lane: 'plain ssr: "await", no loading()',
+        flagged: true,
+        entry: errorEntry,
+      },
+    ])(
+      "a fallback the tree build settles keeps the segment's wrapper chain ($lane)",
+      async ({ options, flagged, loading, entry }) => {
+        const segments = (result: unknown): ResolvedSegment[] => [
+          seg({ id: "L0", type: "layout", component: <Layout /> }),
+          seg({
+            id: "R0",
+            type: "route",
+            component: <p data-testid="content">a</p>,
+            loading: loading ? <Fallback /> : undefined,
+          }),
+          seg({
+            id: "R0D0.data",
+            type: "loader",
+            loaderId: "data",
+            awaitBeforeFlush: flagged ? true : undefined,
+            loaderData: read(result),
+          }),
+        ];
+        const ok = { __loaderResult: true, ok: true, data: 1 };
+        const view = await mount(await renderSegments(segments(ok), options));
+        expect(view.getByTestId("content").textContent).toBe("a");
+
+        const failed = await renderSegments(segments(entry), options);
+        await act(async () => startTransition(() => setTree(failed)));
+        await settle();
+        expect(view.getByTestId("not-found")).toBeTruthy();
+        expect(view.queryByTestId("content")).toBeNull();
+
+        const recovered = await renderSegments(segments(ok), options);
+        await act(async () => startTransition(() => setTree(recovered)));
+        await settle();
+        expect(view.getByTestId("content").textContent).toBe("a");
+        expect(view.queryByTestId("not-found")).toBeNull();
+        expect(audited()).toEqual([]);
+        expect(counters()).toEqual(ZERO);
+        expect(audit().mounts["outlet:R0"]).toBe(1);
+      },
+    );
+
+    // The instance marker sees what the audit cannot: a fallback the read
+    // threw on a navigation, then settled by the tree build on an action,
+    // is the same element at the same place, so it is not mounted again.
+    it.each([{ loading: true }, { loading: false }])(
+      "a notFound() fallback a read threw keeps its instance when an action settles it (loading(): $loading)",
+      async ({ loading }) => {
+        const Data = { $$id: "data" } as unknown as LoaderDefinition<number>;
+        function Reader(): ReactNode {
+          return <p data-testid="content">{useLoader(Data).data}</p>;
+        }
+        const segments = (result: unknown): ResolvedSegment[] => [
+          seg({ id: "L0", type: "layout", component: <Layout /> }),
+          seg({
+            id: "R0",
+            type: "route",
+            component: <Reader />,
+            loading: loading ? <Fallback /> : undefined,
+          }),
+          seg({
+            id: "R0D0.data",
+            type: "loader",
+            loaderId: "data",
+            loaderData: read(result),
+          }),
+        ];
+        const view = await mount(
+          await renderSegments(segments(notFoundEntry("a"))),
+        );
+        const shown = view.getByTestId("not-found");
+        expect(shown.textContent).toBe("a");
+
+        const settled = await renderSegments(segments(notFoundEntry("b")), {
+          isAction: true,
+        });
+        await act(async () => startTransition(() => setTree(settled)));
+        await settle();
+        expect(view.getByTestId("not-found")).toBe(shown);
+        expect(shown.textContent).toBe("b");
+        expect(audited()).toEqual([]);
+        expect(counters()).toEqual(ZERO);
+      },
+    );
+
+    // A parallel slot's loaders are decoded by its LoaderResolver on every
+    // lane (a slot takes no loader streams), so its errorBoundary() fallback
+    // takes the content's place under the resolver's OutletProvider on the
+    // plain lane and on the action lane alike.
+    it("a slot's errorBoundary() fallback keeps its instance from the plain lane to the action lane", async () => {
+      function SlotLayout(): ReactNode {
+        return (
+          <div data-testid="layout">
+            <ParallelOutlet name="@side" />
+            <Outlet />
+          </div>
+        );
+      }
+      const failed = (marker: string) => ({
+        __loaderResult: true,
+        ok: false,
+        error: { message: "Failed", name: "Error" },
+        fallback: <p data-testid="slot-error">{marker}</p>,
+      });
+      const segments = (result: unknown): ResolvedSegment[] => [
+        seg({ id: "L0", type: "layout", component: <SlotLayout /> }),
+        seg({
+          id: "L0.@side",
+          namespace: "parallel.side",
+          type: "parallel",
+          slot: "@side",
+          loading: <Fallback />,
+          component: <p data-testid="slot">slot</p>,
+        }),
+        seg({
+          id: "L0D0.side",
+          namespace: "parallel.side",
+          type: "loader",
+          loaderId: "side",
+          loaderData: read(result),
+        }),
+        seg({ id: "L0R0", type: "route" }),
+      ];
+      const view = await mount(await renderSegments(segments(failed("a"))));
+      const shown = view.getByTestId("slot-error");
+      expect(view.queryByTestId("slot")).toBeNull();
+
+      const action = await renderSegments(segments(failed("b")), {
+        isAction: true,
+      });
+      await act(async () => startTransition(() => setTree(action)));
+      await settle();
+      expect(view.getByTestId("slot-error")).toBe(shown);
+      expect(shown.textContent).toBe("b");
+
+      const ok = { __loaderResult: true, ok: true, data: 1 };
+      const recovered = await renderSegments(segments(ok), { isAction: true });
+      await act(async () => startTransition(() => setTree(recovered)));
+      await settle();
+      expect(view.getByTestId("slot").textContent).toBe("slot");
+      expect(view.queryByTestId("slot-error")).toBeNull();
+      expect(audited()).toEqual([]);
+      expect(counters()).toEqual(ZERO);
     });
 
     // The plain lane hands the boundaries their settled values

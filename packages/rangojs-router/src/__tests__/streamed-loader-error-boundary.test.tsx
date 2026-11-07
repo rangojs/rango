@@ -103,4 +103,72 @@ describe("StreamedLoaderErrorBoundary", () => {
     expect(child.textContent).toBe("2");
     expect(mounted).toHaveBeenCalledTimes(1);
   });
+
+  // A fallback the tree build settled renders where a caught marker does,
+  // in the same instance, so the content's wrappers stay in the element tree.
+  it("renders a settled fallback in place of its children, and the children again once it is gone", () => {
+    const result = render(
+      <StreamedLoaderErrorBoundary reset={["R0", {}]}>
+        <p>content</p>
+      </StreamedLoaderErrorBoundary>,
+    );
+    result.rerender(
+      <StreamedLoaderErrorBoundary
+        reset={["R0", {}]}
+        settledFallback={<p>settled fallback</p>}
+      >
+        <p>content</p>
+      </StreamedLoaderErrorBoundary>,
+    );
+    expect(result.getByText("settled fallback")).toBeDefined();
+    expect(result.queryByText("content")).toBeNull();
+    result.rerender(
+      <StreamedLoaderErrorBoundary reset={["R0", {}]}>
+        <p>content</p>
+      </StreamedLoaderErrorBoundary>,
+    );
+    expect(result.getByText("content")).toBeDefined();
+  });
+
+  it("renders a falsy settled fallback, not its children", () => {
+    const result = render(
+      <StreamedLoaderErrorBoundary reset={["R0"]} settledFallback={0}>
+        <p>content</p>
+      </StreamedLoaderErrorBoundary>,
+    );
+    expect(result.container.textContent).toBe("0");
+  });
+
+  it("puts a settled fallback in the place of the marker it caught, after its loader data changed", () => {
+    const result = render(
+      <StreamedLoaderErrorBoundary reset={["R0", {}]}>
+        <Throwing />
+      </StreamedLoaderErrorBoundary>,
+    );
+    const caught = result.getByText("fallback for route one");
+    result.rerender(
+      <StreamedLoaderErrorBoundary
+        reset={["R0", {}]}
+        settledFallback={<p>settled fallback</p>}
+      >
+        <Throwing />
+      </StreamedLoaderErrorBoundary>,
+    );
+    expect(result.getByText("settled fallback")).toBe(caught);
+  });
+
+  // A marker thrown by the settled fallback itself is caught here, as one
+  // thrown by a fallback this boundary rendered for a read. Rendering the
+  // settled fallback again would throw again.
+  it("keeps a marker the settled fallback threw over the settled fallback", () => {
+    const result = render(
+      <StreamedLoaderErrorBoundary
+        reset={["R0"]}
+        settledFallback={<Throwing />}
+      >
+        <p>content</p>
+      </StreamedLoaderErrorBoundary>,
+    );
+    expect(result.getByText("fallback for route one")).toBeDefined();
+  });
 });

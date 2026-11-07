@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a loader's `notFound()` or `redirect()` after an action renders where the route's loader error boundary renders it on a navigation
+
+**Before.** When a loader called `notFound()` or `redirect()` while it re-ran
+after a server action, or on a back/forward, a fully prefetched click or a
+stale revalidation, the router put the not-found UI (or the redirect) in
+place of the route's loader error boundary, one level above where a
+navigation renders it (inside that boundary, as a fallback a `useLoader` read
+throws). The same happened on a document request for a
+`loader(Def, { ssr: "await" })` that failed, called `notFound()` or
+redirected. So a not-found page a navigation showed was mounted again when an
+action re-ran the loader and it still called `notFound()`: local state in the
+not-found UI was lost and its effects ran again.
+
+**Now.** The route's loader error boundary renders the fallback on every
+lane, in the place a navigation renders it. The boundary stays mounted, and a
+not-found page shown by a navigation keeps its instance when an action's
+rerun calls `notFound()` again. A plain loader error after an action is
+unchanged: it already throws at its read. A parallel slot's loader fallback
+is unchanged: it already takes the slot content's place on every lane.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
