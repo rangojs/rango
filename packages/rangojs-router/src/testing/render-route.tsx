@@ -1597,8 +1597,10 @@ export async function renderRoute(
   // renderRoute mounted is gone (a test unmounts its root, production never
   // does). A no-op unless this repo's tests run the audit.
   forgetSuspenseAudit();
+  // The first tree builds as production's does (rsc-router.tsx).
   const initialTree = await renderSegments(initialSegments, {
     outletPending: options.outletPending,
+    commitRenderRedirect: true,
   });
 
   // The marker sits after the provider so its effect runs after the tree's,

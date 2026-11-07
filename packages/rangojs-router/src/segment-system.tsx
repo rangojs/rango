@@ -13,7 +13,7 @@ import { isRenderableLoading } from "./types/boundaries.js";
 import { isPlaceholder } from "./types/segments.js";
 import { decodeLoaderResults, isLoaderError } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
-import { invariant } from "./errors.js";
+import { invariant, decodedRedirectOf, ServerRedirect } from "./errors.js";
 import {
   AuditedLoaderBoundary,
   AuditedRouteContent,
@@ -178,6 +178,16 @@ export interface RenderSegmentsOptions {
 
   /** Seeded descendant client-route pending state for testing. */
   outletPending?: boolean;
+
+  /**
+   * Build the tree even when a segment component threw redirect(), instead
+   * of throwing the ServerRedirect a navigation follows before it commits
+   * (followRenderRedirect): RootErrorBoundary follows it once React renders
+   * it. For a caller that hands the build's promise to NavigationProvider,
+   * whose use() of it runs above every boundary, so a rejection there is an
+   * uncaught error: the first tree and an HMR refetch (rsc-router.tsx).
+   */
+  commitRenderRedirect?: boolean;
 
   /**
    * This commit's transition({ when }) decision was false
@@ -427,11 +437,15 @@ export async function renderSegments(
     outletPending = false,
     rootLayout: RootLayout,
     transitionGatedOff,
+    commitRenderRedirect,
   } = options || {};
   // forceAwait and action lanes settle loader data before the commit, except
   // a deferred loader (settlesLoaders), and hand each settled entry to its
   // read (buildLoaderStreams). Only the document lane decodes in the build.
   const settleLoaders = !!(forceAwait || isAction);
+  // Whether a segment component that threw redirect() is followed before the
+  // commit (followRenderRedirect) or left to RootErrorBoundary.
+  const followsRenderRedirect = !isAction && !commitRenderRedirect;
 
   const segDebug = INTERNAL_RANGO_DEBUG;
   const segDebugStart = segDebug ? performance.now() : 0;
@@ -576,7 +590,13 @@ export async function renderSegments(
     let resolvedComponent = component;
     if (isAction && component instanceof Promise) {
       const componentAwaitStart = segDebug ? performance.now() : 0;
-      resolvedComponent = await component;
+      try {
+        resolvedComponent = await component;
+      } catch (error) {
+        // A redirect stays the rejected promise: RootErrorBoundary follows it
+        // when React reads it, instead of the action failing with it.
+        if (!decodedRedirectOf(error)) throw error;
+      }
       if (segDebug) {
         segDebugLog(`segment ${id}: component awaited (action)`, {
           ms: Math.round(performance.now() - componentAwaitStart),
@@ -595,7 +615,15 @@ export async function renderSegments(
       let loadingContent: ReactNode = getBoundaryContent(resolvedComponent);
       if (forceAwait) {
         const contentAwaitStart = segDebug ? performance.now() : 0;
-        loadingContent = await loadingContent;
+        try {
+          loadingContent = await loadingContent;
+        } catch (error) {
+          // A streamed handler's redirect: followed before the commit like a
+          // component's (followRenderRedirect), or left as the rejected
+          // promise for RootErrorBoundary where this lane cannot follow it.
+          if (!decodedRedirectOf(error)) throw error;
+          if (followsRenderRedirect) followRenderRedirect(error);
+        }
         if (segDebug) {
           segDebugLog(`segment ${id}: content awaited (forceAwait)`, {
             ms: Math.round(performance.now() - contentAwaitStart),
@@ -951,12 +979,17 @@ export async function renderSegments(
         count: temporalLazyRefs.length,
       });
     }
-    await Promise.allSettled(temporalLazyRefs);
+    const settled = await Promise.allSettled(temporalLazyRefs);
     if (vtDebug) {
       console.log("[VT-DIAG] renderSegments temporalLazyRefs settled", {
         count: temporalLazyRefs.length,
         ms: Math.round(performance.now() - vtDebugStart),
       });
+    }
+    if (followsRenderRedirect) {
+      for (const result of settled) {
+        if (result.status === "rejected") followRenderRedirect(result.reason);
+      }
     }
   }
 
@@ -977,6 +1010,32 @@ export async function renderSegments(
   if (process.env.NODE_ENV !== "production") finishTreeAudit(treeAudit, result);
 
   return result;
+}
+
+/**
+ * A segment component whose Flight row is a component's `throw redirect()`
+ * (the digest createFlightStage gives it, render-pipeline.ts): the
+ * navigation follows the redirect instead of committing a page that would
+ * render the error. Thrown as the ServerRedirect a 204 + X-RSC-Redirect
+ * answer becomes, so every lane that follows that one (a navigation, a
+ * back/forward that refetches, a `prefetch: false` fill) follows this one
+ * before its tree commits.
+ *
+ * The server cannot answer it itself when the component is async: its row
+ * lands after the response's status line committed. The settled wait for the
+ * segment components (and a forceAwait lane's await of a `loading()`
+ * segment's) is the client's one look before the commit; a redirect React
+ * meets only while it renders (nested inside the segment's element, or behind
+ * `loading()` on a streaming lane) reaches RootErrorBoundary instead. So does
+ * an `{ external: true }` target (the bridge only follows a same-origin one),
+ * the action lane, whose caller would fail the action with the throw, and a
+ * build with `commitRenderRedirect`.
+ */
+function followRenderRedirect(reason: unknown): void {
+  const redirect = decodedRedirectOf(reason);
+  if (redirect && !redirect.external) {
+    throw new ServerRedirect(redirect.to, redirect.state);
+  }
 }
 
 /**

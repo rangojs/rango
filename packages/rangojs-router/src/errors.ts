@@ -100,6 +100,72 @@ export function isFlightDecodedError(error: unknown): boolean {
 }
 
 /**
+ * Where a `redirect()` thrown while React rendered a component sends the
+ * client. `to` is already resolved by the soft-redirect rules
+ * (redirect-origin.ts `resolveThrownRedirect`); `state` is the resolved
+ * `redirect(url, { state })` record; `external` marks an
+ * `{ external: true }` opt-in.
+ */
+export interface RenderRedirect {
+  to: string;
+  state?: Record<string, unknown>;
+  external?: true;
+}
+
+const RENDER_REDIRECT_DIGEST_PREFIX = "RANGO_REDIRECT;";
+
+/**
+ * The digest the Flight render gives a component's thrown redirect
+ * (render-pipeline.ts createFlightStage `onError`). React's Flight client puts
+ * the digest on the error it decodes from the row, in dev and production
+ * alike (production drops the message, never the digest), so this is the one
+ * field that carries the target to the browser.
+ *
+ * The digest is a string, so `state` travels as JSON, as it does in the
+ * document lane's cookie (server/document-location-state.ts). A state JSON
+ * cannot encode (a BigInt, a cycle) is dropped rather than thrown: this runs
+ * inside React's onError, where a throw fails the whole response.
+ */
+export function renderRedirectDigest(redirect: RenderRedirect): string {
+  let json: string;
+  try {
+    json = JSON.stringify(redirect);
+  } catch {
+    const { state: _dropped, ...withoutState } = redirect;
+    json = JSON.stringify(withoutState);
+  }
+  return RENDER_REDIRECT_DIGEST_PREFIX + json;
+}
+
+/**
+ * The redirect a decoded Flight error stands for, or undefined for any other
+ * error. Read by renderSegments (a navigation follows it before it commits)
+ * and by RootErrorBoundary (a redirect that surfaced only while React
+ * rendered).
+ */
+export function decodedRedirectOf(error: unknown): RenderRedirect | undefined {
+  if (!isFlightDecodedError(error)) return undefined;
+  const digest = (error as { digest: unknown }).digest;
+  if (
+    typeof digest !== "string" ||
+    !digest.startsWith(RENDER_REDIRECT_DIGEST_PREFIX)
+  ) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(digest.slice(RENDER_REDIRECT_DIGEST_PREFIX.length));
+  } catch {
+    return undefined;
+  }
+  return typeof parsed === "object" &&
+    parsed !== null &&
+    typeof (parsed as RenderRedirect).to === "string"
+    ? (parsed as RenderRedirect)
+    : undefined;
+}
+
+/**
  * A render's own cancellation, not a failure: the error React's Flight and
  * Fizz report for each pending task when a stream is aborted with no reason
  * (a client disconnect), or an AbortError while the request itself is

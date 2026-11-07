@@ -11,6 +11,8 @@
  * no-JS (PE), full-page document, and soft SPA channels.
  */
 
+import type { RenderRedirect } from "./errors.js";
+
 /**
  * Resolve a redirect target against the current origin.
  *
@@ -161,6 +163,32 @@ export function getRedirectState(
   response: Response,
 ): Record<string, unknown> | undefined {
   return redirectStates.get(response);
+}
+
+/**
+ * Where a thrown redirect Response (`isRedirectResponse`: a loader's or a
+ * component's `throw redirect()`) sends the client, resolved before it leaves
+ * the server: the soft-redirect rules above (same origin unless
+ * `{ external: true }`), the resolved `{ state }` record off the Response, and
+ * the external opt-in. No request origin (outside a request) keeps the
+ * Location as it is.
+ */
+export function resolveThrownRedirect(
+  response: Response,
+  requestOrigin: string | undefined,
+  basename: string | undefined,
+): RenderRedirect {
+  const location = response.headers.get("Location")!;
+  const external = isExternalRedirect(response);
+  const to = requestOrigin
+    ? resolveSoftRedirectUrl(location, requestOrigin, basename, external)
+    : location;
+  const state = getRedirectState(response);
+  return {
+    to,
+    ...(state && { state }),
+    ...(external && { external: true as const }),
+  };
 }
 
 /**

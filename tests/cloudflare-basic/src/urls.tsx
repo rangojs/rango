@@ -389,6 +389,7 @@ import { interceptActionSelectPatterns } from "./pages/intercept-action-select.j
 import { interceptHeldPatterns } from "./pages/intercept-held.js";
 import { authRedirectPatterns } from "./pages/auth-redirect.js";
 import { redirectLoopPatterns } from "./pages/redirect-loop.js";
+import { componentRedirectNavPatterns } from "./pages/component-redirect-nav.js";
 import { negotiationPatterns } from "./pages/negotiation.js";
 import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
@@ -3338,6 +3339,12 @@ export const urlpatterns = urls(
         // Two pages that redirect to each other (client hop limit).
         include("/redirect-loop", redirectLoopPatterns, {
           name: "redirectLoop",
+        }),
+
+        // A component that throws redirect() on a client navigation: the
+        // browser follows the target its Flight error row names.
+        include("/component-redirect-nav", componentRedirectNavPatterns, {
+          name: "componentRedirectNav",
         }),
 
         // Deferred-handle navigation contract + history-cache fixes
