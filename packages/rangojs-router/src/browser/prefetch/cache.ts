@@ -451,9 +451,12 @@ export function consumePrefetch(
  *
  * A fetch that started before the latest `markPrefetchesStale()` is adopted
  * only by a caller that passes `acceptStale` (a click), as `consumePrefetch`
- * serves a stale stored entry. For any other caller it is a miss at once, so
- * the caller fetches without first waiting for headers it would drop. It is
- * left in flight, unadopted: it lands stored stale and a click may take it.
+ * serves a stale stored entry. Any other caller gets null at once, so it
+ * fetches without first waiting for headers it would drop, and the fetch is
+ * discarded as an adoption would take it: consumed under every alias, never
+ * stored, its entry disposed when it lands (never aborted). The caller is
+ * fetching the same page fresh; storing the stale one would let a later click
+ * show data older than what that fetch showed.
  */
 export function consumeInflightPrefetch(
   key: string,
@@ -461,7 +464,7 @@ export function consumeInflightPrefetch(
 ): Promise<DecodedPrefetch | null> | null {
   const inflightPrefetch = inflightPromises.get(key);
   if (!inflightPrefetch) return null;
-  if (isPrefetchStale(inflightPrefetch) && !options?.acceptStale) return null;
+  const discard = isPrefetchStale(inflightPrefetch) && !options?.acceptStale;
   // Remove the promise under every alias so a second consumer cannot
   // adopt the same stream and race on the body, and mark every alias as
   // adopted so the pending `storePrefetch` (which resolves later, after this
@@ -473,6 +476,13 @@ export function consumeInflightPrefetch(
     inflightPromises.delete(k);
     adoptedKeys.add(k);
   });
+  if (discard) {
+    void inflightPrefetch.promise.then(
+      (entry) => entry?.dispose?.(),
+      () => {},
+    );
+    return null;
+  }
   return inflightPrefetch.promise;
 }
 

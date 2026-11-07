@@ -11,9 +11,9 @@ dropped the response, and only then fetched the page: one extra round trip
 before the page showed.
 
 **Now.** Back fetches the page at once. The in-flight prefetch is not waited
-on: it finishes on its own, is kept stale, and a link click may still take it
-once and revalidate after it, as before. A click on a link whose prefetch is
-in flight still adopts it, stale or not.
+on and not aborted: it finishes on its own and is dropped, as before, so a
+later click on its link fetches fresh. A click on a link whose prefetch is in
+flight still adopts it, stale or not, and revalidates after a stale one.
 
 ## 0.35.0 (2026-11-04)
 

@@ -2343,8 +2343,10 @@ change (see Contract Change Process).
   entry is a miss, and so is an in-flight one that started before the
   action: `consumeInflightPrefetch` reads the epoch its fetch started under,
   so they fetch at once instead of waiting for headers they would drop. The
-  prefetch lands stale for a later click. One an action made stale while
-  they awaited its headers is dropped and fetched again. A
+  prefetch is discarded as an adoption takes it (never stored, disposed when
+  it lands, never aborted), so a later click cannot show data older than
+  theirs. One an action made stale while they awaited its headers is dropped
+  and fetched again. A
   stale entry is served once: its slot is not re-armed, so a second click on
   the same link fetches fresh, and a fill's fresh start-over after a stale
   adoption leaves nothing to revalidate. An action in flight does not hold it back, as
