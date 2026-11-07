@@ -42,7 +42,7 @@ vi.mock("@vitejs/plugin-rsc/rsc/client", async () => {
   };
 });
 
-import type { HandlerContext } from "../../types.js";
+import type { StaticBuildContext } from "../../prerender.js";
 import { urls } from "../../urls/urls-function.js";
 import { Static } from "../../static-handler.js";
 import { createRouter } from "../../router.js";
@@ -50,7 +50,7 @@ import type { RangoInternal } from "../../router/router-interfaces.js";
 import { generateManifestFull } from "../../build/generate-manifest.js";
 
 /** A server component the layout hands its ctx to; renders after the handler. */
-async function ChildLink({ ctx }: { ctx: HandlerContext }) {
+async function ChildLink({ ctx }: { ctx: StaticBuildContext }) {
   await Promise.resolve();
   return <p>{`child:${ctx.reverse(".settings")}`}</p>;
 }
