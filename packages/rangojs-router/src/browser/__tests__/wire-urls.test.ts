@@ -183,18 +183,29 @@ describe("navigation URL, as the source-independence tests build it", () => {
   // helpers/fetch-url.ts fetchUrlOf derives the prefetch cache keys
   // the tests store and adopt under; it must stay the URL the client sends.
   it.each([
-    ["/products", []],
-    ["/products?page=2", ["M0L0", "M0L0L0R0"]],
-    ["/p1.html?ref=x&b=1", ["M0L0L0D0.__rango_runtime_loader_0", "M0L0"]],
-  ] as const)("matches the request for %s holding %j", async (to, ids) => {
-    await navigationClient().fetchPartial({
-      targetUrl: to,
-      previousUrl: `${ORIGIN}/current`,
-      segmentIds: [...ids],
-    });
+    ["/products", [], undefined],
+    ["/products?page=2", ["M0L0", "M0L0L0R0"], undefined],
+    [
+      "/p1.html?ref=x&b=1",
+      ["M0L0L0D0.__rango_runtime_loader_0", "M0L0"],
+      undefined,
+    ],
+    ["/products?page=2", ["M0L0", "M0L0L0R0"], "/item/1?sort=a"],
+  ] as const)(
+    "matches the request for %s holding %j, rewrite target %s",
+    async (to, ids, rewriteTarget) => {
+      await navigationClient().fetchPartial({
+        targetUrl: to,
+        previousUrl: `${ORIGIN}/current`,
+        segmentIds: [...ids],
+        rewriteTarget,
+      });
 
-    expect(sentUrls()).toEqual([fetchUrlOf(to, `${ORIGIN}/current`, ids).href]);
-  });
+      expect(sentUrls()).toEqual([
+        fetchUrlOf(to, `${ORIGIN}/current`, ids, rewriteTarget).href,
+      ]);
+    },
+  );
 });
 
 describe("prefetch URL (prefetch/fetch.ts)", () => {

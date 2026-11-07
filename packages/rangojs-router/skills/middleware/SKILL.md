@@ -703,7 +703,8 @@ the browser sends it back with the next request from that page. A
 `nextParams.id` holds a loader on a sort change), and a navigation to the
 page already shown re-renders nothing. A move to another visitor URL with
 the same target (`/promo/a` to `/promo/b`, both rewritten to
-`/promo/landing`) re-runs the route and its loaders, which may read
+`/promo/landing`), or between a page and a URL rewritten to it (`/items/1` to
+`/public/1`), re-runs the route and its loaders, which may read
 `ctx.rewrittenFrom`. The browser only names the page being left: what
 renders still comes from the request's URL and your middleware.
 

@@ -54,7 +54,7 @@ import {
   type RouteSnapshot,
 } from "./route-snapshot.js";
 import { resolveNavigation } from "./navigation-snapshot.js";
-import { pathKey, visitorUrl } from "../server/rewrite-trail.js";
+import { pathKey, rewriteTrail, visitorUrl } from "../server/rewrite-trail.js";
 import { withLayoutLoaderCopies } from "../client-urls/layout-loader-copies.js";
 import {
   partialDeferralMode,
@@ -378,11 +378,17 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   setRequestContextPrevRouteKey(nav.effectiveFromMatch?.routeKey);
-  // Two visitor URLs can share a rewrite target, and the render may read
-  // ctx.rewrittenFrom: a move of the visitor's URL counts as a change.
-  if (reqCtx && nav.prevVisitorUrl) {
+  // A rewrite gives two visitor URLs one route and one set of params: two
+  // URLs rewritten to one target, or a page and a URL rewritten to it. The
+  // render may read ctx.rewrittenFrom, so a move of the visitor's URL counts
+  // as a change, whichever side was rewritten. Without it, a route kept by
+  // default would hang on the source's params with no read marking it
+  // source-held (source-reads.ts), and a prefetch or the document cache
+  // would serve that keep to a page with other params.
+  if (reqCtx && (nav.prevVisitorUrl || rewriteTrail(reqCtx))) {
     reqCtx._visitorMoved =
-      pathKey(visitorUrl(reqCtx, cleanUrl)) !== pathKey(nav.prevVisitorUrl);
+      pathKey(visitorUrl(reqCtx, cleanUrl)) !==
+      pathKey(nav.prevVisitorUrl ?? nav.prevUrl);
   }
 
   const interceptSelectorContext: InterceptSelectorContext = {

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a link to a URL middleware rewrites, from the page it renders, shows that page for the visitor's URL, and never another page's copy
+
+**Before.** With `/deal` rewritten to `/products/hat`, a navigation from
+`/products/hat` to `/deal` kept the hat's route segment: the target's params
+and search equal the source's, so the route's default held it, and
+`ctx.rewrittenFrom` read on the page still showed `undefined` at `/deal`.
+Nothing marked that keep as decided against the source page, so the answer
+was shared: a prefetch of `/deal` made on the hat and clicked from
+`/products/cap` kept the cap at `/deal`, and with
+`createDocumentCacheMiddleware()` the stored answer did the same for every
+page with the same segment ids.
+
+**Now.** A move of the visitor's URL counts as a change whichever side of the
+navigation was rewritten, as it already did leaving a rewritten page. The
+route and its loaders re-run for `/deal` (`ctx.rewrittenFrom` names it),
+layouts stay held, and a prefetch or a document-cache entry of it shows the
+hat from any page. A navigation to the URL already shown still re-renders
+nothing, and a `Prerender()` route still keeps its segment on equal params.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

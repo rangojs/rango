@@ -21,12 +21,13 @@
  * with T in the tab's history (the click sends the entry's ids and commits
  * over it), and with B reached by a client navigation from any page of its
  * family (B may then hold copies a document load of its URL does not, and
- * may sit at A's URL, where it adopts A's source-scoped prefetch). One
- * difference is
- * allowed and counted: a segment A's answer sends that B's request keeps,
- * when it renders what T's own document renders for that id. B then shows
- * T's fresh render where its own request keeps B's copy, which a held
- * layout's contract leaves open.
+ * may sit at A's URL, where it adopts A's source-scoped prefetch). A page a
+ * rewrite renders sends its rewrite target with every request, and both
+ * prefetch keys carry it: B adopts A's prefetch only when both show the same
+ * rewrite target, or neither does. One difference is allowed and counted: a
+ * segment A's answer sends that B's request keeps, when it renders what T's
+ * own document renders for that id. B then shows T's fresh render where its
+ * own request keeps B's copy, which a held layout's contract leaves open.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -154,6 +155,55 @@ describe("the #1331 report, as it showed on the live app", () => {
 });
 
 /**
+ * The tab sends a rewritten page's `rewriteTarget` as `_rsc_rt`, and keys
+ * its prefetches by it, as the browser does. Seen through the rewrite
+ * family's via layout, held on an equal locale: matched at the visitor's
+ * URL, the page left holds no locale, and the layout would re-render.
+ */
+describe("requests from a page middleware rewrote", () => {
+  beforeEach(warm);
+
+  const viaOf = async (segments: ResolvedSegment[]): Promise<string[]> =>
+    (await renderedTree(segments))
+      .map((line) => /via:[^<]+/.exec(line)?.[0])
+      .filter((via): via is string => via !== undefined);
+
+  it("a click from /rw/deals to the product it renders keeps the via layout: the request names the rewrite target", async () => {
+    const tab = createPrefetchBrowser(serve);
+    const deals = await tab.load("/rw/deals");
+    const product = await tab.click("/rw/en/p/1");
+    expect({
+      deals: deals.rewriteTarget,
+      product: product.screen.rewriteTarget,
+      adoption: product.adoption,
+      via: await viaOf(product.screen.segments),
+    }).toEqual({
+      deals: "/rw/en/p/1",
+      product: undefined,
+      adoption: "fetched",
+      via: ["via:/rw/deals"],
+    });
+  });
+
+  it("a prefetch made on /rw/deals is adopted on /rw/offer, which shows the same rewrite target, and not on the page it renders", async () => {
+    const tab = createPrefetchBrowser(serve);
+    await tab.load("/rw/deals");
+    await tab.prefetch("/rw/en/p/2");
+
+    await tab.click("/rw/offer");
+    const fromOffer = await tab.click("/rw/en/p/2");
+    await tab.load("/rw/deals");
+    await tab.prefetch("/rw/en/p/2");
+    await tab.click("/rw/en/p/1");
+    const fromProduct = await tab.click("/rw/en/p/2");
+    expect({
+      fromOffer: fromOffer.adoption,
+      fromProduct: fromProduct.adoption,
+    }).toEqual({ fromOffer: "prefetch", fromProduct: "fetched" });
+  });
+});
+
+/**
  * What the adopted prefetch built against what B's own request built: each
  * differing segment, or both trees when their shapes differ.
  */
@@ -227,6 +277,8 @@ describe("a shared prefetch renders the same on every source page", () => {
     const counts = {
       triples: 0,
       sourceScoped: 0,
+      rewriteMissed: 0,
+      rewriteShared: 0,
       refetched: 0,
       sourceAdopted: 0,
       paramsShared: 0,
@@ -266,11 +318,15 @@ describe("a shared prefetch renders the same on every source page", () => {
           storePrefetchOf(screenA, target, prefetched);
           const adopted = await adoptPrefetch(screenB, target, ids);
           const label = paramsScopeLabel(prefetched.scope);
+          // Every key carries the request URL, `_rsc_rt` included: a page
+          // showing another rewrite target sends another request.
+          const sameRewrite = screenB.rewriteTarget === screenA.rewriteTarget;
           if (prefetched.scope === "source") {
             // A source-scoped answer is keyed by the source URL and the ids
             // its request sent: only a page at A's URL holding A's ids adopts
             // it, and that request is what B's own would send.
             const adoptable =
+              sameRewrite &&
               screenB.href === screenA.href &&
               ids.join() === screenA.matched.join();
             expect(adopted === null, triple).toBe(!adoptable);
@@ -283,16 +339,23 @@ describe("a shared prefetch renders the same on every source page", () => {
             // A params-scoped answer is keyed by what the kept rules read of
             // A: every page with equal values adopts it, and the property
             // must then hold for it as for a shared one.
-            const adoptable = pageMatchesParamsLabel(label, screenB.page!);
+            const adoptable =
+              sameRewrite && pageMatchesParamsLabel(label, screenB.page!);
             expect(adopted === null, `${triple} [${label}]`).toBe(!adoptable);
             if (!adopted) {
-              counts.paramsMissed++;
+              if (sameRewrite) counts.paramsMissed++;
+              else counts.rewriteMissed++;
               continue;
             }
             counts.paramsShared++;
           } else {
-            expect(adopted, triple).not.toBeNull();
+            expect(adopted === null, triple).toBe(!sameRewrite);
+            if (!adopted) {
+              counts.rewriteMissed++;
+              continue;
+            }
           }
+          if (screenA.rewriteTarget !== undefined) counts.rewriteShared++;
           const base = entry ? historyBase(entry, screenB.segments) : undefined;
           const fromPrefetch = commitAnswer(adopted!, screenB, base);
           if (fromPrefetch === "missing") {
@@ -303,7 +366,7 @@ describe("a shared prefetch renders the same on every source page", () => {
             directs,
             `${b.label}\0${target}\0${fromHistory}`,
             async () =>
-              (await request(serve, screenB.href, ids, target, "navigation"))!,
+              (await request(serve, screenB, ids, target, "navigation"))!,
           );
           const fromDirect = commitAnswer(direct.answer, screenB, base);
           expect(fromDirect, `${triple}: B's own answer`).not.toBe("missing");
@@ -362,6 +425,10 @@ describe("a shared prefetch renders the same on every source page", () => {
     // pages outside its group: the property runs over both.
     expect(counts.paramsShared).toBeGreaterThan(0);
     expect(counts.paramsMissed).toBeGreaterThan(0);
+    // A prefetch made on a rewritten page is shared by the pages showing its
+    // rewrite target, and refused by the others: the property runs over both.
+    expect(counts.rewriteShared).toBeGreaterThan(0);
+    expect(counts.rewriteMissed).toBeGreaterThan(0);
     if (sameSourceUrl) expect(counts.sourceAdopted).toBeGreaterThan(0);
     // Refetched triples are skipped, not compared: a fixture change that
     // turns many keeps into missing ids would empty the property silently.
@@ -370,10 +437,11 @@ describe("a shared prefetch renders the same on every source page", () => {
 
   /**
    * What the property compares carries each feature the fixture declares:
-   * loading() fallbacks, slots, loader data (renderedOf `data=`) and the
-   * values middleware sets, in every family.
+   * loading() fallbacks, slots, loader data (renderedOf `data=`), the
+   * values middleware sets and the visitor's URL a rewrite renders for, in
+   * every family.
    */
-  it("the fixture's pages render loading(), parallel slots, loader data and middleware vars in every family", async () => {
+  it("the fixture's pages render loading(), parallel slots, loader data, middleware vars and rewrites in every family", async () => {
     const template = [
       "loading=<p>template-loading</p>",
       "parallel(@filters)",
@@ -394,6 +462,17 @@ describe("a shared prefetch renders the same on every source page", () => {
         "<article>url:2:x:visit:2</article>",
       ],
       locale: ["<section>locale:en</section>", "<section>locale:fr</section>"],
+      rewrite: [
+        "<section>offers</section>",
+        "<section>via:-</section>",
+        "<section>via:/rw/deals</section>",
+        "<section>via:/rw/offer</section>",
+        "rw:1:en from:-",
+        "rw:2:en from:-",
+        "rw:1:fr from:-",
+        "rw:1:en from:/rw/deals",
+        "rw:1:en from:/rw/offer",
+      ],
     };
     for (const [family, urls] of Object.entries(SOURCE_INDEPENDENCE_URLS)) {
       const lines = (

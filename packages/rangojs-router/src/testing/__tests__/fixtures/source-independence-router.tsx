@@ -34,6 +34,14 @@
  * - locale: the documented locale rule above two routes, so a prefetch the
  *   rule keeps the layout for is shared by the pages of one locale
  *   (`x-rsc-prefetch-scope: params`).
+ * - rewrite: two URLs middleware rewrites to one product page, beside that
+ *   page and others of its route, under a layout that re-renders on every
+ *   navigation so each answer sends a segment. The route and a layout held
+ *   on an equal locale render the visitor's URL (`ctx.rewrittenFrom`); both
+ *   hold by rules reading the locale of currentParams, the route's falling
+ *   back to its default. A page a rewrite renders carries `rewriteTarget`,
+ *   which its requests send as `_rsc_rt`, so the server diffs against the
+ *   route that rendered it, and both prefetch keys carry it.
  */
 import React from "react";
 import {
@@ -43,6 +51,7 @@ import {
   Prerender,
   type Middleware,
   type Rango,
+  rewrite,
   urls,
   type HandlerContext,
 } from "../../../index.rsc.js";
@@ -108,6 +117,28 @@ const sectionMiddleware: Middleware = async (ctx, next) => {
 const visitMiddleware: Middleware = async (ctx, next) => {
   ctx.set(Visit, `visit:${ctx.params.id}`);
   await next();
+};
+
+/** The URL a rewritten page was entered at, `-` for one not rewritten. */
+const visitorPathOf = (ctx: HandlerContext<any>): string =>
+  ctx.rewrittenFrom?.pathname ?? "-";
+
+/**
+ * Held on an equal locale (its rule reads currentParams), so a page reached
+ * from a URL rewritten to a product of that locale keeps the copy that names
+ * the URL it came from: a B the document load of its URL does not build.
+ * Leaving a rewritten page, currentParams are the rewrite target's only when
+ * the request sends `_rsc_rt`; matched at the visitor's URL they hold no
+ * locale, and the layout re-renders. The rule reads the locale alone, as the
+ * route's does, so pages of one locale share a prefetch whose route keep
+ * hangs on the source's id unless something marks it.
+ */
+function viaLayout(ctx: HandlerContext<any>): React.ReactNode {
+  return <section>{`via:${visitorPathOf(ctx)}`}</section>;
+}
+
+const rewriteToProduct: Middleware = () => {
+  throw rewrite("/rw/en/p/1");
 };
 
 const BandLoader = createLoader(async (ctx) => ({
@@ -335,6 +366,44 @@ export const sourceIndependenceRouter: Rango<any, any> = createRouter(
               ],
             ),
             layout(
+              () => <section>offers</section>,
+              () => [
+                revalidate(() => true),
+                layout(viaLayout, () => [
+                  revalidate(
+                    ({ currentParams, nextParams }) =>
+                      currentParams.locale !== nextParams.locale,
+                  ),
+                  path(
+                    "/rw/:locale/p/:id",
+                    (ctx) => (
+                      <article>{`rw:${ctx.params.id}:${ctx.params.locale} from:${visitorPathOf(ctx)}`}</article>
+                    ),
+                    { name: "rwProduct" },
+                    () => [
+                      revalidate(({ currentParams, nextParams }) =>
+                        currentParams.locale !== nextParams.locale
+                          ? true
+                          : undefined,
+                      ),
+                    ],
+                  ),
+                  path(
+                    "/rw/deals",
+                    () => <article>deals</article>,
+                    { name: "rwDeals" },
+                    () => [middleware(rewriteToProduct)],
+                  ),
+                  path(
+                    "/rw/offer",
+                    () => <article>offer</article>,
+                    { name: "rwOffer" },
+                    () => [middleware(rewriteToProduct)],
+                  ),
+                ]),
+              ],
+            ),
+            layout(
               () => <section>boxes</section>,
               () => [
                 path("/f/ix/list", () => <ul>list</ul>, { name: "ixList" }),
@@ -417,4 +486,5 @@ export const SOURCE_INDEPENDENCE_URLS: Record<string, readonly string[]> = {
     "/l/en/about",
     "/l/fr/products?page=1",
   ],
+  rewrite: ["/rw/en/p/1", "/rw/en/p/2", "/rw/fr/p/1", "/rw/deals", "/rw/offer"],
 };

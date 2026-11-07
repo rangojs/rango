@@ -29,6 +29,8 @@ export interface Answer {
   params?: Record<string, string>;
   /** The page's public route name. */
   routeName?: string;
+  /** The path middleware rewrote the page to (full-payload.ts payloadLocation). */
+  rewriteTarget?: string;
 }
 
 /** What a tab shows: the URL and the segments its tree is built from. */
@@ -43,6 +45,12 @@ export interface Screen {
    * prefetch is looked up for. None: no params-scoped lookup.
    */
   page?: SourcePage;
+  /**
+   * The answer's `rewriteTarget` the history entry keeps
+   * (navigation-store.ts rememberDisplayedEntry): every request from the
+   * page sends it as `_rsc_rt`, and both prefetch keys carry it.
+   */
+  rewriteTarget?: string;
 }
 
 /**

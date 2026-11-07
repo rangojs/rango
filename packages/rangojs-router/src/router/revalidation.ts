@@ -187,10 +187,8 @@ export async function evaluateRevalidation<TEnv>(
       // The navigation default of a route segment, and of a segment the route
       // owns, compares the target's params and search with the source's, and
       // no read records that: a page grouped by the rules' reads but with
-      // other params would adopt the keep. Seen from a page whose params
-      // equal a rewritten target's (/en/p/1 prefetching /deals, which renders
-      // /en/p/1): grouped by locale, /en/p/2 adopted the answer and kept
-      // product 2 at /deals.
+      // other params would adopt the keep and show its own copy at the
+      // target.
       if (usedDefault && defaultComparesSource) reads.url = true;
       markSourceHeld(context as InternalHandlerContext<any, TEnv>, reads, {
         params: currentParams,
