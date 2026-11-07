@@ -229,6 +229,25 @@ whenever it emits a theme other than the default, and `shouldCacheResponse`
 refuses to store a response carrying the mark. A late opt-in therefore stores
 only a default-theme render; it fills more slowly, but never leaks a theme.
 
+The visitor's URL is the other value a request can carry into the stored
+bytes. A request middleware rewrote (`throw rewrite()`) renders the target
+route while the browser hydrates `usePathname()` from the address bar. The
+tier used to key that pass by the target's URL, so a direct visit's stored
+document (the target's pathname) answered the visitor's URL and mismatched
+on hydration, and a rewritten MISS rendered the target's pathname so it
+could be stored there. It now follows the rule PPR shells follow (#1146): a
+URL's stored document is read and written only by requests on that URL.
+A rewritten pass skips the tier unless its rewrite picked an entry with
+`.shell()`: `"visitor"` keys one by the visitor's URL and the target
+(`rewriteTargetKeyPart` in `src/cache/document-cache.ts`), rendered at the
+visitor's location (`rendersForVisitorKey` in `src/server/rewrite-trail.ts`),
+and `"target"` shares the target's entry, rendered as a direct visit. The
+target is in the visitor key because the visitor's own pass runs before the
+rewrite is known: a conditional rewrite (an A/B arm) must not answer with
+another arm's document. Rewrite-heavy apps that relied on the old sharing
+opt back in with `.shell("visitor")`, at the cost of one entry per public
+URL and target.
+
 The same tier refuses a render that reported an error (#915): after draining
 its copy it reads `RequestContext._renderErrors` and stores nothing when the
 list is not empty. Flight and Fizz fill it from `onError`, and a streamed

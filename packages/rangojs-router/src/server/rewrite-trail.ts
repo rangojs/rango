@@ -105,6 +105,26 @@ export function rendersForSharedAudience(reqCtx: AudienceContext): boolean {
 }
 
 /**
+ * A render other visitors may be served whose key covers the visitor's URL,
+ * so it shows that URL and `ctx.rewrittenFrom`: a visitor-keyed shell
+ * capture, or a render of a `.shell("visitor")` rewrite the document cache
+ * runs (cache/document-cache.ts keys its entry by the visitor's URL and the
+ * target).
+ */
+export function rendersForVisitorKey(
+  reqCtx: Pick<
+    RequestContext<any>,
+    "_variables" | "_shellCaptureState" | "_documentCacheRender"
+  >,
+): boolean {
+  return (
+    reqCtx._shellCaptureState?.forVisitor === true ||
+    (reqCtx._documentCacheRender === true &&
+      rewriteShellAudience(reqCtx) === "visitor")
+  );
+}
+
+/**
  * The URL the visitor is on: the first URL of a rewritten request, else
  * `url` with the internal `_rsc*` params stripped. A reload the router asks
  * the browser for points here.
@@ -142,17 +162,17 @@ export type RewrittenFromReader = "render" | "middleware";
  * The read behind every `ctx.rewrittenFrom`. Guarded like cookies(): inside
  * a `cache()` boundary or a `"use cache"` function it throws, and a loader's
  * own `cache()` fill records it. A render other visitors may be served sees
- * `undefined`, as on a direct visit, except a visitor-keyed shell capture,
- * whose key covers the URL; any other render that sees the visitor's URL
- * marks `_payloadVisitorLocation`, so the document cache does not store it.
+ * `undefined`, as on a direct visit, except one whose key covers the URL
+ * (rendersForVisitorKey). A render outside a shell capture that sees the
+ * visitor's URL marks `_payloadVisitorLocation`, so a cache keyed by the
+ * target does not store it.
  */
 function readRewrittenFrom(
   reqCtx: RequestContext<any> | undefined,
   reader: RewrittenFromReader,
 ): string | undefined {
   if (!reqCtx) return undefined;
-  if (reader === "render" && rendersForSharedAudience(reqCtx)) {
-    if (!reqCtx._shellCaptureState?.forVisitor) return undefined;
+  if (reader === "render" && reqCtx._shellCaptureState?.forVisitor) {
     // guardIdentityRead minus the capture guard: a cache() boundary, a "use
     // cache" body or a loader's own cache() inside the capture is keyed
     // without the URL.
@@ -161,6 +181,13 @@ function readRewrittenFrom(
       recordLoaderIdentityRead("ctx.rewrittenFrom", REWRITTEN_FROM_READ.verb);
     }
     return rewriteTrail(reqCtx)?.[0];
+  }
+  if (
+    reader === "render" &&
+    rendersForSharedAudience(reqCtx) &&
+    !rendersForVisitorKey(reqCtx)
+  ) {
+    return undefined;
   }
   guardIdentityRead(reqCtx, "ctx.rewrittenFrom", REWRITTEN_FROM_READ);
   const href = rewriteTrail(reqCtx)?.[0];

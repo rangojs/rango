@@ -27,7 +27,14 @@ import {
 } from "../server/request-context.js";
 import { deriveRenderPass } from "../server/render-pass.js";
 import { mayNeedSSR } from "../rsc/ssr-setup.js";
+import { shellSearchSeed } from "../rsc/shell-capture-constants.js";
 import { requestKeyBase } from "./cache-key-utils.js";
+import type { SearchParamsFilter } from "./search-params-filter.js";
+import {
+  rewriteShellAudience,
+  rewriteTrail,
+  visitorUrl,
+} from "../server/rewrite-trail.js";
 import { runBackground } from "./background-task.js";
 import {
   isWarmReplace,
@@ -68,6 +75,21 @@ function hashSegmentIds(segmentIds: string): string {
     hash = ((hash << 5) - hash + char) | 0;
   }
   return Math.abs(hash).toString(36);
+}
+
+/**
+ * The key part after a `rewrite(...).shell("visitor")` entry's visitor URL:
+ * the target's path and search (filtered and sorted, as visitorShellKey
+ * partitions a visitor-keyed shell), so a conditional rewrite (an A/B arm,
+ * a lock) keeps its own entry. `#` never occurs in a default key: a
+ * pathname cannot hold it and the search part is URI-encoded, so no request
+ * URL spells this key.
+ */
+function rewriteTargetKeyPart(
+  target: URL,
+  filter: SearchParamsFilter | undefined,
+): string {
+  return `#rw:${encodeURIComponent(target.pathname + shellSearchSeed(target, filter))}`;
 }
 
 /**
@@ -283,6 +305,25 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       return next();
     }
 
+    // A rewritten pass (`throw rewrite()`) reads and stores the entry its
+    // `.shell()` chose, as a PPR shell does (rsc-rendering.ts
+    // requestShellBase): none, so a URL's stored document is read and
+    // written only by requests on that URL and the render shows the
+    // visitor's URL (full-payload.ts renderedLocation); "visitor", an entry
+    // keyed by the visitor's URL and the target, rendered at the visitor's
+    // URL; "target", the target's entry, rendered as a direct visit.
+    const audience = rewriteTrail(requestCtx)
+      ? (rewriteShellAudience(requestCtx) ?? "none")
+      : undefined;
+    if (audience === "none") return next();
+    // The render then marks `_payloadVisitorLocation`, which a cache keyed by
+    // the target (a response route's cache()) refuses; this key covers it.
+    const keyCoversVisitorUrl = audience === "visitor";
+    const keyUrl = keyCoversVisitorUrl ? visitorUrl(requestCtx, url) : url;
+    const rewriteKeyPart = keyCoversVisitorUrl
+      ? rewriteTargetKeyPart(url, requestCtx._searchParamsFilter)
+      : "";
+
     // The write gate's start (#977) and the entry's stamp (#1068): the
     // request's, not this middleware's, also for a stale refresh. A
     // middleware ahead of this one can read tagged data the document bakes,
@@ -327,19 +368,21 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       // The keyGenerator branch is left untouched: a consumer-supplied generator
       // owns its own namespacing (auto-prefixing host would silently change their
       // existing keys and double any host they already include).
-      const cacheKey = keyGenerator
-        ? keyGenerator(url) + segmentHash + fragmentSuffix + typeSuffix
-        : requestKeyBase(
-            requestCtx,
-            url.host,
-            url.pathname,
-            url.searchParams,
-            undefined,
-            requestCtx?._searchParamsFilter,
-          ) +
-          segmentHash +
-          fragmentSuffix +
-          typeSuffix;
+      const cacheKey =
+        (keyGenerator
+          ? keyGenerator(keyUrl)
+          : requestKeyBase(
+              requestCtx,
+              keyUrl.host,
+              keyUrl.pathname,
+              keyUrl.searchParams,
+              undefined,
+              requestCtx?._searchParamsFilter,
+            )) +
+        rewriteKeyPart +
+        segmentHash +
+        fragmentSuffix +
+        typeSuffix;
       // 1. Check cache
       // Recovery must reach CacheScope's server decoder so it can evict the bad
       // segment. Treat it as a miss, then let the ordinary write path replace
@@ -412,7 +455,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
-                  const directives = shouldCacheResponse(fresh, rerunCtx);
+                  const directives = shouldCacheResponse(
+                    fresh,
+                    rerunCtx,
+                    keyCoversVisitorUrl,
+                  );
 
                   if (!directives || !fresh.body) return;
 
@@ -464,7 +511,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const originalResponse = await next();
 
       // 3. Cache if response has appropriate headers
-      const directives = shouldCacheResponse(originalResponse, requestCtx);
+      const directives = shouldCacheResponse(
+        originalResponse,
+        requestCtx,
+        keyCoversVisitorUrl,
+      );
 
       if (directives) {
         log(

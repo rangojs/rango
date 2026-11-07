@@ -366,6 +366,9 @@ export const router = createRouter<AppEnv>({
   .use("/doc-cache-source/*", createDocumentCacheMiddleware())
   // And for a prefetch it answers (e2e/prefetch-stored.test.ts).
   .use("/prefetch-stored/doc/*", createDocumentCacheMiddleware())
+  // And for a rewrite to a stored page (e2e/rewrite.test.ts), ahead of the
+  // /rw/* middleware that rewrites, as the cache is in cloudflare-basic.
+  .use("/rw/doc/*", createDocumentCacheMiddleware())
   // Middleware chain integration test: global layer sets var, header, cookie
   .use("/mw-chain/*", async (ctx, next) => {
     ctx.set("chainGlobal", "from-global");

@@ -372,6 +372,7 @@ export const NamedRoutes = {
   "rss.account.project.settings": "/rss/:accountId/:projectId/settings",
   "rss.account.settings": "/rss/:accountId/settings",
   "rss.index": "/rss",
+  "rw.docItem": "/rw/doc/item/:id",
   "rw.guarded": "/rw/guarded/page",
   "rw.index": "/rw",
   "rw.inlineAdmin": "/rw/inline-admin",

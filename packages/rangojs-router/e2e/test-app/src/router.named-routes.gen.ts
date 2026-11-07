@@ -617,6 +617,7 @@ export const NamedRoutes = {
   "reverseScope.account.project.settings": "/reverse-scope/:accountId/:projectId/settings",
   "reverseScope.account.settings": "/reverse-scope/:accountId/settings",
   "reverseScope.index": "/reverse-scope",
+  "rw.docItem": "/rw/doc/item/:id",
   "rw.guarded": "/rw/guarded/page",
   "rw.index": "/rw",
   "rw.inlineAdmin": "/rw/inline-admin",

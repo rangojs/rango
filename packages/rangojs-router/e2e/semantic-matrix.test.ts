@@ -1808,6 +1808,44 @@ const matrixRows: SemanticMatrixRow[] = [
       expect(rerendered).toContain('data-testid="rw-item-guard">target<');
     },
   },
+  // RW6-RW8 for the document cache (mounted on /rw/doc/* in the test-app):
+  // /rw/doc/promo/:id rewrites to the stored /rw/doc/item/:id with no
+  // .shell(); /rw/doc/summer/:id with .shell("visitor").
+  {
+    id: "RW12",
+    contract:
+      "a rewritten request never reads or stores a document-cache entry keyed by another URL: without .shell() it renders live at the visitor's location; .shell(\"visitor\") keys its own entry, rendered at the visitor's location",
+    transport: "request",
+    execution: "full-render",
+    scope: "n/a",
+    assert: async ({ baseUrl, request }) => {
+      const html = { headers: { Accept: "text/html" } };
+      const warmToHit = async (path: string) => {
+        await expect(async () => {
+          const res = await request.get(baseUrl(path), html);
+          expect(res.headers()["x-document-cache-status"]).toBe("HIT");
+        }).toPass({ timeout: 15_000 });
+      };
+      const id = `rw12-${crypto.randomUUID().slice(0, 8)}`;
+      await warmToHit(`/rw/doc/item/${id}`);
+      const rewritten = await request.get(baseUrl(`/rw/doc/promo/${id}`), html);
+      expect(rewritten.headers()["x-rango-rewrite"]).toBe(`/rw/doc/item/${id}`);
+      expect(rewritten.headers()["x-document-cache-status"]).toBeUndefined();
+      expect(await rewritten.text()).toContain(
+        `data-testid="rw-client-location">/rw/doc/promo/${id}<`,
+      );
+
+      await warmToHit(`/rw/doc/summer/${id}`);
+      const hit = await request.get(baseUrl(`/rw/doc/summer/${id}`), html);
+      const visitorHtml = await hit.text();
+      expect(visitorHtml).toContain(
+        `data-testid="rw-client-location">/rw/doc/summer/${id}<`,
+      );
+      expect(visitorHtml).toContain(
+        `data-testid="rw-doc-from">/rw/doc/summer/${id}<`,
+      );
+    },
+  },
 ];
 
 function registerSemanticMatrixSuite(build: BuildAxis): void {
