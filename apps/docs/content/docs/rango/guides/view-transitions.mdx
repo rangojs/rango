@@ -4,7 +4,7 @@ description: Animate navigations across layouts, routes, and parallel slots with
 type: guide
 ---
 
-You want navigations to animate instead of flashing loading skeletons. `transition()` opts a route — or a whole group of routes — into transition-driven navigation, and you choose how far to take it. This page covers the two layers `transition()` controls, where the animation lands in the rendered tree, direction-aware classes, conditional transitions, how intercepted modals interact with layout transitions, and a situation where a view transition runs and changes nothing.
+You want navigations to animate instead of flashing loading skeletons. `transition()` opts a route — or a whole group of routes — into transition-driven navigation, and you choose how far to take it. This page covers the two layers `transition()` controls, where the animation lands in the rendered tree, direction-aware classes, conditional transitions, how intercepted modals interact with layout transitions, animating a Suspense reveal on its own, and a situation where a view transition runs and changes nothing.
 
 ## The two layers
 
@@ -13,7 +13,7 @@ You want navigations to animate instead of flashing loading skeletons. `transiti
 1. **`startTransition` (the foundation).** The navigation commit is driven through React's `startTransition`. That holds the previous content across a same-route navigation (stale-while-revalidate — no loading-skeleton flash) and is the precondition for any view-transition animation. Works on **all** React versions.
 2. **`<ViewTransition>` (the animation).** On React 19.3+ (or an experimental build), Rango also wraps the segment content in React's `<ViewTransition>` so the swap cross-fades or morphs. This is the only part that needs 19.3+; Rango feature-detects it, and on React 19.2 it's a no-op while the `startTransition` driving still applies.
 
-A view transition cannot exist outside a `startTransition` — React never activates `<ViewTransition>` otherwise. So once you reach for `transition()`, the only real choice is:
+A navigation cannot run a view transition outside a `startTransition` — React never activates `<ViewTransition>` for it otherwise. (A Suspense reveal that commits on its own after the page is animated without one; see [Animating Suspense reveals](#animating-suspense-reveals).) So once you reach for `transition()`, the only real choice is:
 
 | What you want                          | Config                                              | Effect                                                                                                        |
 | -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -113,7 +113,7 @@ layout(<ShopShell />, () => [
 /* .slide-right mirrors it; define the @keyframes as usual */
 ```
 
-`"action"` is only tagged on partial-update action/refetch paths today; ordinary `useAction` / `useActionState` revalidations are not tagged. Don't rely on an `action`-keyed class firing on every form action.
+A server action's revalidation is tagged `"action"`, a form action or `useActionState` call included, unless `transition({ when })` gated it off: a gated-off commit is urgent and carries no type.
 
 ## Grouping without a layout component
 
@@ -181,6 +181,65 @@ function ProductPage() {
 ```
 
 On a route with `loading()` and slow loaders, `viewTransition: false` is also what removes the view transition that changes nothing; see [When a view transition changes nothing](#when-a-view-transition-changes-nothing). Flip the default app-wide with `createRouter<AppEnv>({ viewTransition: false })`; re-enable one route with `transition({ viewTransition: "auto" })`. A bare `transition({})` inherits the router default; an explicit per-route value always wins. The flag only toggles the boundary — `startTransition` driving and content-hold are on whenever `transition()` is present.
+
+## Animating Suspense reveals
+
+A `useLoader` read under its own `<Suspense>` shows a fallback, then swaps in the content when the loader's data streams in. You can animate that swap with React's `<ViewTransition>`, and the route needs no `transition()`: the swap commits on its own, in a Suspense retry, and React animates retry commits too (React 19.3+ or an experimental build, as for every `<ViewTransition>`). Wrap the whole `<Suspense>` in one `<ViewTransition>` for a cross-fade (an `update`), or put one inside the fallback and one around the content to give the fallback an `exit` and the content an `enter`.
+
+You usually want the reveal to animate and nothing else. The router's kinds make that possible: every commit the router runs in a transition carries its kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`), and a reveal that commits on its own carries none. Set every kind to `"none"` and put the animation on `default`:
+
+```tsx
+"use client";
+import { Suspense, ViewTransition } from "react";
+import type { TransitionWhenKind } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
+
+const ON_REVEAL: Record<TransitionWhenKind, "none"> & { default: string } = {
+  push: "none",
+  replace: "none",
+  pop: "none",
+  action: "none",
+  revalidate: "none",
+  default: "reveal",
+};
+
+function Stats() {
+  const { data } = useLoader(StatsLoader);
+  return <StatsView stats={data} />;
+}
+
+export function StatsSection() {
+  return (
+    <Suspense
+      fallback={
+        <ViewTransition exit={ON_REVEAL} default="none">
+          <StatsSkeleton />
+        </ViewTransition>
+      }
+    >
+      <ViewTransition enter={ON_REVEAL} default="none">
+        <Stats />
+      </ViewTransition>
+    </Suspense>
+  );
+}
+```
+
+Typing the map with `TransitionWhenKind` makes the compiler point at a kind you missed, and `default="none"` keeps the content still when an action or a refresh brings new data. Measured in Chromium on React 19.3.0, in dev and in a production build:
+
+| How you reach the page                                | What animates                                                                                                     |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| A click with nothing prefetched                       | The reveal, once the data streams in. Under `transition()`, the navigation animates first and the reveal after it |
+| A prefetched click                                    | Nothing: the data arrives with the page, so no fallback shows                                                     |
+| Same route, new params, under `transition()`          | Nothing: the content is held, so no fallback shows                                                                |
+| A server action, `router.refresh()`, Back and Forward | Nothing for the section                                                                                           |
+
+Two things can still get in the way:
+
+- **A context provider fed by `useHandle`.** A loader that pushes handle data usually delivers it after the page commits, and that late value is set in an urgent update. A provider whose `value` is the handle re-renders the suspended sections that read its context in that urgent render, they reveal there, and no view transition runs. Read the handle with `useHandle` in the component that shows it.
+- **Another transition's types.** React keeps one queue of transition types and hands all of it to the next commit it can animate. A reveal that commits while React holds a router transition takes that transition's kind and shows without animating. Use the map to pick an animation, never for correctness.
+
+Keep the animation short and the boundaries few: React runs one view transition at a time, so a reveal waits for a running navigation animation and a navigation that commits in a transition waits for a running reveal, and every animated boundary is one more part the browser captures.
 
 ## Conditional transitions with `when`
 

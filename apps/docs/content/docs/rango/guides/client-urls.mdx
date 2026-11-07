@@ -218,6 +218,8 @@ export default clientUrls(({ path, loader, transition }) => [
 
 `when` is a browser predicate, written inline: the definition is already a client module. A cross-route navigation decides at its optimistic swap, before the server responds; a same-route navigation decides when it commits, and `false` also opts it out of the group's default hold. See [Conditional transitions](/docs/rango/guides/view-transitions#conditional-transitions-with-when). See [View Transitions](/docs/rango/guides/view-transitions) for the classes and React version support.
 
+To animate only the fallback-to-content swap of the inline `<Suspense>` above a `useLoader` read, no `transition()` is needed: see [Animating Suspense reveals](/docs/rango/guides/view-transitions#animating-suspense-reveals). In a group, a click from another route with nothing prefetched presents the destination with its fallback and animates the reveal when the data streams in; a prefetched or same-route click shows no fallback and animates nothing.
+
 ### Intercepts
 
 ```tsx

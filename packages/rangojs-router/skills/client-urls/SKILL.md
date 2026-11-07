@@ -694,6 +694,78 @@ every field must be JSON-projectable. Scoping is module-local: only
 navigations originating inside this `clientUrls()` group render the intercept;
 a hard load of the target URL renders the full route.
 
+## Animating Suspense reveals
+
+The inline `<Suspense>` above a `useLoader` read can animate its
+fallback-to-content swap with React's `<ViewTransition>`. Put one boundary
+inside the fallback (`exit`) and one around the content (`enter`), and key
+the router's transition kinds to `"none"`: every commit the router runs in a
+transition carries its kind, and a reveal that commits on its own carries
+none, so only the reveal reaches `default`:
+
+```tsx
+"use client";
+import { Suspense, ViewTransition } from "react";
+import type { TransitionWhenKind } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
+import { ProductLoader } from "@/loaders/products.js";
+
+const ON_REVEAL: Record<TransitionWhenKind, "none"> & { default: string } = {
+  push: "none",
+  replace: "none",
+  pop: "none",
+  action: "none",
+  revalidate: "none",
+  default: "reveal",
+};
+
+function Details() {
+  const { data } = useLoader(ProductLoader);
+  return <ProductDetails product={data} />;
+}
+
+function ProductPage() {
+  return (
+    <Suspense
+      fallback={
+        <ViewTransition exit={ON_REVEAL} default="none">
+          <DetailsSkeleton />
+        </ViewTransition>
+      }
+    >
+      <ViewTransition enter={ON_REVEAL} default="none">
+        <Details />
+      </ViewTransition>
+    </Suspense>
+  );
+}
+```
+
+The route needs no `transition()`: React animates a Suspense retry without
+one. Measured in a group in the router's e2e test-app (React 19.3.0, dev and
+production alike):
+
+- **A click from another group route with nothing prefetched** presents the
+  destination at once with the fallback (the optimistic frame starts no view
+  transition: the fallback's `enter` is `"none"`), and the reveal animates
+  when the loader's data streams in.
+- **A prefetched click, and a same-route click** (`/product/a` to
+  `/product/b`, held by default) show no fallback and animate nothing for the
+  section.
+- **A server action's revalidation, `router.refresh()`, Back and Forward**
+  animate nothing for the section: `default="none"` keeps its `update` still.
+
+Don't pass a `useHandle` value as a context provider's value around the
+sections. A loader's handle push (see "Handle writes" above) usually lands
+after the page commits, and `useHandle` sets that late value in an urgent
+update; a provider fed by it re-renders the suspended sections that read its
+context in that urgent render, they reveal there, and the `<ViewTransition>`
+does not run. Read the handle with `useHandle` where it is shown.
+
+The kind list, the type queue React shares between commits, and the costs
+(one view transition at a time, one captured part per animated boundary) are
+in `/view-transitions`, "Animating Suspense reveals".
+
 ## Pitfalls
 
 - **Duplicate patterns or names throw** at definition time, per definition.

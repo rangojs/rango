@@ -293,7 +293,7 @@
     },
     {
       "name": "view-transitions",
-      "description": "Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router. Use when navigation should animate smoothly between pages, or wiring up React View Transitions on a route or layout.",
+      "description": "Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router, and animate Suspense reveals with the router's transition types. Use when navigation should animate smoothly between pages, when wiring up React View Transitions on a route or layout, or when animating a Suspense fallback-to-content swap.",
       "argumentHint": "[layout|route|parallel|intercept]",
       "path": "skills/view-transitions/SKILL.md"
     }

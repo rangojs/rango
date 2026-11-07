@@ -362,7 +362,7 @@ Grouped by concern — read when you need to…
 | `/css`              | Import CSS in the Document `<head>` (`?url` + managed `precedence` links)                                                          |
 | `/scripts`          | Inject third-party scripts (GTM/analytics) into head/body via the `Script` handle; nonce auto-applied to document-rendered scripts |
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                                                                         |
-| `/view-transitions` | React View Transitions on layouts, routes, and parallel slots                                                                      |
+| `/view-transitions` | React View Transitions on layouts, routes, and parallel slots; animating Suspense reveals                                          |
 | `/defer-hydration`  | Full body HTML in the PPR shell + hydration off the critical path (gated Suspense boundary, content-as-fallback)                   |
 | `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                                                                              |
 | `/react-compiler`   | Enable React Compiler (opt-in) via plugin-react's native `compiler` option; client-only scope                                      |

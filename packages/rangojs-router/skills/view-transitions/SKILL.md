@@ -1,6 +1,6 @@
 ---
 name: view-transitions
-description: Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router. Use when navigation should animate smoothly between pages, or wiring up React View Transitions on a route or layout.
+description: Configure React View Transitions on layouts, routes, and parallel slots in @rangojs/router, and animate Suspense reveals with the router's transition types. Use when navigation should animate smoothly between pages, when wiring up React View Transitions on a route or layout, or when animating a Suspense fallback-to-content swap.
 argument-hint: [layout|route|parallel|intercept]
 ---
 
@@ -22,7 +22,7 @@ These are two **independent** mechanisms. `startTransition` controls _fallbacks_
 | **`<ViewTransition>` OFF** | plain nav — remount on param change, skeleton flash, no animation              | **hold** content (no skeleton flash); a consumer-placed `<ViewTransition>` still morphs; no router cross-fade |
 | **`<ViewTransition>` ON**  | **impossible** — React never activates `<ViewTransition>` outside a Transition | hold + router cross-fade                                                                                      |
 
-The bottom-left cell is the key constraint: a view transition cannot exist without a `startTransition`. So once you reach for `transition()`, the only real choice is _startTransition_ vs _startTransition + ViewTransition_:
+The bottom-left cell is the key constraint: a navigation cannot run a view transition without a `startTransition`. (React also animates a Suspense reveal that commits on its own after the page, with no transition; see [Animating Suspense reveals](#animating-suspense-reveals).) So once you reach for `transition()`, the only real choice is _startTransition_ vs _startTransition + ViewTransition_:
 
 | What you want                          | Config                                              | Effect                                                                                                        |
 | -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -166,6 +166,88 @@ A back/forward the router restores from its history cache animates like a link u
 - A second Back or Forward before the first one's restore commits wins; the first restore is dropped.
 - Without `transition()` the restore commits inside the event, with no view transition and no type.
 - So does an entry whose scroll the browser restores itself (`history.scrollRestoration` is `"auto"`: the document renders no `<Html.ScrollRestoration>`, which Rango's default document does, or the entry predates it). The browser restores that scroll right after the event, on whatever page is then on screen.
+
+## Animating Suspense reveals
+
+A `useLoader` read under its own `<Suspense>` shows the fallback first and swaps in the content when the loader's data streams in. React's `<ViewTransition>` can animate that swap, and it needs no `transition()`: the swap commits on its own, in a Suspense retry, and React starts view transitions for retry commits as well as for transitions. Like every `<ViewTransition>`, it needs React 19.3+ or an experimental build. React offers two shapes:
+
+- **One `<ViewTransition>` around the `<Suspense>`.** The swap is that boundary's `update`: one cross-fade of the whole section.
+- **One inside the fallback and one around the content.** The fallback runs `exit` and the content runs `enter`, so each side gets its own animation.
+
+The router's kinds are what make a reveal-only animation possible. Every commit the router runs in a transition carries its kind (`"push"`, `"replace"`, `"pop"`, `"action"`, `"revalidate"`, see [Transition kinds](#transition-kinds)). A reveal that commits on its own carries none of them. So a class map that sets every kind to `"none"` and puts the animation on `default` animates the reveal and no router commit:
+
+```tsx
+"use client";
+import { Suspense, ViewTransition } from "react";
+import type { TransitionWhenKind } from "@rangojs/router";
+import { useLoader } from "@rangojs/router/client";
+import { StatsLoader } from "./stats.loader";
+
+// Every router kind resolves "none"; `default` covers a commit with none of them.
+const ON_REVEAL: Record<TransitionWhenKind, "none"> & { default: string } = {
+  push: "none",
+  replace: "none",
+  pop: "none",
+  action: "none",
+  revalidate: "none",
+  default: "reveal",
+};
+
+function Stats() {
+  const { data } = useLoader(StatsLoader);
+  return <StatsView stats={data} />;
+}
+
+export function StatsSection() {
+  return (
+    <Suspense
+      fallback={
+        <ViewTransition exit={ON_REVEAL} default="none">
+          <StatsSkeleton />
+        </ViewTransition>
+      }
+    >
+      <ViewTransition enter={ON_REVEAL} default="none">
+        <Stats />
+      </ViewTransition>
+    </Suspense>
+  );
+}
+```
+
+```css
+::view-transition-old(.reveal) {
+  animation: 150ms ease both fade-out;
+}
+::view-transition-new(.reveal) {
+  animation: 150ms ease both fade-in;
+}
+```
+
+- Typing the map as `Record<TransitionWhenKind, "none">` makes the compiler report a kind the map misses. `TransitionWhenKind` is a type-only export of `@rangojs/router`, so the client module imports it with `import type`.
+- `default="none"` on both boundaries keeps every other phase still: the content's `update` when an action or a revalidation brings new data, and the fallback's own `enter`.
+- A `"none"` match wins over any other type on the commit, so the types the router adds next to a kind (`"navigation"`, `"navigation-back"`) never reach `default`.
+- `default` also resolves for a transition your own code starts with `startTransition` and no `addTransitionType`.
+- React keeps one queue of transition types per root, and the first commit it can animate (a transition or a Suspense retry) takes the whole queue. A reveal that commits while React holds a router transition takes that transition's kind, resolves `"none"` and shows without animating. Use the map to choose an animation, never for correctness.
+
+What runs, measured in Chromium against the router's e2e test-app on React 19.3.0, with the same results in dev and in a production build. "Reveal" means the fallback's `exit` and the content's `enter` ran, in a view transition with no types:
+
+| How the page with the section is reached                | What animates                                                                                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A click with nothing prefetched, from another route     | The reveal. Under `transition()` on the destination, the router's own boundary animates the navigation first (`push`), then the reveal runs on its own |
+| A click with nothing prefetched, same route, new params | The reveal: the boundary shows its fallback again. Under `transition()` the content is held instead, so no fallback and no reveal                      |
+| A prefetched click (the data arrives with the commit)   | Nothing for the section: no fallback, no reveal                                                                                                        |
+| A server action's revalidation, `router.refresh()`      | Nothing for the section: the new data is an `update`, which `default="none"` keeps still                                                               |
+| Back or Forward                                         | Nothing for the section                                                                                                                                |
+
+**Don't pass a `useHandle` value as a context provider's value around the sections.** A loader that pushes handle data (`ctx.use(Meta)(...)`, any `ctx.use(SomeHandle)`) usually delivers it after the page has committed, and `useHandle` sets that late value in an urgent update. A provider whose `value` is that handle re-renders the components under it that read the context in that urgent render, suspended sections included. A section whose data has already arrived reveals there, and React starts no view transition for an urgent commit. Read the handle with `useHandle` in the component that shows it: a `useHandle` reader next to the sections leaves their reveal alone. In the measurements above, a provider fed by `useHandle` around the section stopped the reveal from animating, and a `useHandle` reader beside it did not. The same holds for any urgent update that re-renders a suspended section once its data is there.
+
+Costs worth weighing:
+
+- React runs one view transition at a time and holds the next view-transition commit until the running one's `finished` resolves. A reveal that lands during a navigation's animation waits for it, and a long reveal animation delays the next navigation that commits in a transition. Keep durations short.
+- Every `<ViewTransition>` that animates gives its DOM nodes a `view-transition-name`, and the browser captures each named part separately. Wrap the few boundaries that visibly pop, not every boundary on the page.
+
+`clientUrls()` groups behave the same way; see `/client-urls`, "Animating Suspense reveals", for what a group's optimistic frame changes.
 
 ## Wrapper form: applying transition to a group of routes
 
