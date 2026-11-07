@@ -193,9 +193,7 @@ function reportedSegments(reported: string[]): string[] {
 /** The one LateHandlePushError the response reported, and its segment. */
 function latePushSegment(reported: string[]): string {
   expect(reported).toHaveLength(1);
-  const segment = /for segment "([^"]+)" was pushed after/.exec(reported[0]!);
-  expect(segment).not.toBeNull();
-  return segment![1]!;
+  return reportedSegments(reported)[0]!;
 }
 
 beforeEach(async () => {
