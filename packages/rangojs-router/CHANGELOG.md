@@ -22,6 +22,40 @@ rerun calls `notFound()` again. A plain loader error after an action is
 unchanged: it already throws at its read. A parallel slot's loader fallback
 is unchanged: it already takes the slot content's place on every lane.
 
+### Added: `loaderFailure()` lets a `renderRoute` test give a loader a `notFound()`, `redirect()` or error result
+
+**Before.** `renderRoute` (`@rangojs/router/testing/dom`) seeded loaders with
+data only. A unit test could not make a loader call `notFound()`, throw
+`redirect()` or fail with an `errorBoundary()` fallback, so a not-found or
+error UI, and what happens to it after an action, was testable at e2e only.
+
+**Now.** `loaderFailure(init)` is the result the server sends for a loader
+that threw. Seed it wherever loader data goes: the render-time `loaders`, the
+`loaders` of `router.navigate()`, `refresh()`, `prefetch()`, `action()` and
+`respondToLoads()`, or as the value a pending seed Promise resolves to. The
+router places it as it places a real one.
+
+```tsx
+import { loaderFailure, renderRoute } from "@rangojs/router/testing/dom";
+
+const { router } = await renderRoute(
+  [{ path: "/items/:id", Component: ItemPage }],
+  { request: "/items/1", loaders: [[ItemLoader, { name: "one" }]] },
+);
+await router.navigate("/items/2", {
+  loaders: [
+    [ItemLoader, loaderFailure({ notFound: true, fallback: <ItemGone /> })],
+  ],
+});
+// also: loaderFailure({ redirect: "/login", state: [[Flash, { text: "Sign in" }]] })
+//       loaderFailure({ error: new Error("down"), fallback: <ItemError /> })
+```
+
+A `notFound()` and an error with a `fallback` render it in place of the
+route's content; a redirect replace-navigates to its target; an error without
+a `fallback` throws at its `useLoader()` read to your app's error boundary. A
+`useLoader().load()` answered with a failure rejects.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
