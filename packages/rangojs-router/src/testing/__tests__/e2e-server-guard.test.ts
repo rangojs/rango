@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ServerGuard, type GuardedServer } from "./server-guard.js";
+import { ServerGuard, type GuardedServer } from "../e2e/server.js";
 
 /** Every pid spawned by a test, so afterEach can reap what a failure leaves. */
 const spawned: number[] = [];
@@ -138,6 +138,35 @@ describe("ServerGuard", { timeout: 20_000 }, () => {
     await late.done;
 
     expect(isAlive(late.pid)).toBe(false);
+  });
+
+  it("SIGKILLs a server tracked after dispose that ignores SIGTERM", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const guard = new ServerGuard({ exitWaitMs: 300 });
+    await guard.dispose();
+
+    const late = spawnIdleServer({ ignoreSigterm: true });
+    // Let the child install its SIGTERM handler before the guard signals it.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(() => guard.track(late)).toThrow(/torn down/);
+    await late.done;
+
+    expect(isAlive(late.pid)).toBe(false);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining(String(late.pid)),
+    );
+  });
+
+  it("track, assertLive and dispose work detached from the guard", async () => {
+    const guard = new ServerGuard();
+    const { track, assertLive, dispose } = guard;
+    const server = [spawnIdleServer()].map(track)[0]!;
+    expect(() => assertLive()).not.toThrow();
+
+    await dispose();
+
+    expect(isAlive(server.pid)).toBe(false);
+    expect(() => assertLive()).toThrow(/torn down/);
   });
 
   it("assertLive passes until dispose, then throws", async () => {

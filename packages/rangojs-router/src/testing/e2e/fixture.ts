@@ -10,7 +10,7 @@ import {
   runCli,
   type RunCliHandle,
   type SpawnOptions,
-  stopServer,
+  stopServers,
   waitForReady,
   warmupDevServer,
 } from "./server.js";
@@ -75,7 +75,14 @@ export function createUseFixture(
           options.mode,
         );
       }
+      // Vite registers `process.stdin.on("end", ...)` as parent-death
+      // detection and calls process.exit() when stdin reaches EOF, unless
+      // process.env.CI === "true" (see vite's setupSIGTERMListener). Real CI
+      // runners set CI=true; mirror that for locally spawned servers so they
+      // stay alive for the duration of the tests. `cliOptions.env` can
+      // override it.
       const cliEnv = {
+        CI: "true",
         ...options.cliOptions?.env,
         ...(isolatedViteCacheDir
           ? { RANGO_E2E_VITE_CACHE_DIR: isolatedViteCacheDir }
@@ -94,7 +101,7 @@ export function createUseFixture(
         // throw (findPort/waitForReady). Otherwise a beforeAll failure leaves
         // afterAll's cleanup a no-op and orphans the dev server (plus workerd
         // children) for the rest of the run.
-        cleanup = () => stopServer(proc!);
+        cleanup = () => stopServers([proc!]);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const readyUrl = options.readyPath
@@ -126,7 +133,7 @@ export function createUseFixture(
           });
           // The build is a finite process, but assign cleanup before the await
           // so a hung build is still killed if beforeAll is torn down.
-          cleanup = () => stopServer(buildProc);
+          cleanup = () => stopServers([buildProc]);
           // Fail loudly on a nonzero build exit. Without this a failed build is
           // swallowed and preview serves the previous stale dist/ (green
           // production tests against old code), or times out with "Server not
@@ -150,7 +157,7 @@ export function createUseFixture(
         });
         // Switch cleanup to the preview process immediately after spawn, before
         // findPort/waitForReady can throw and orphan it.
-        cleanup = () => stopServer(proc!);
+        cleanup = () => stopServers([proc!]);
         const port = await proc.findPort();
         baseURL = `http://localhost:${port}`;
         const buildReadyUrl = options.readyPath

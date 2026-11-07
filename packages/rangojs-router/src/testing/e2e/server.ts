@@ -1,6 +1,7 @@
 // Node-only server-lifecycle machinery for the e2e harness. Contains no
-// Playwright imports so it can be loaded in a plain-node process. Lifted from
-// the internal e2e/fixture.ts and parameterized for consumer apps.
+// Playwright imports so it can be loaded in a plain-node process. The
+// harness's own fixture and the repo's e2e fixtures all spawn and stop their
+// servers through `runCli`, `ServerGuard` and `stopServers`.
 
 import { type SpawnOptions, spawn } from "node:child_process";
 import path from "node:path";
@@ -9,7 +10,21 @@ import { x } from "tinyexec";
 
 export type { SpawnOptions };
 
-export interface RunCliHandle {
+/** A spawned process that `ServerGuard` and `stopServers` can stop. */
+export interface GuardedServer {
+  /**
+   * Stop the process and what it spawned (the whole process group). SIGTERM by
+   * default; `stopServers` escalates to SIGKILL for a process that outlives
+   * the wait.
+   */
+  kill(signal?: NodeJS.Signals): void;
+  /** Settles when the process has exited. Treated as possibly rejecting. */
+  done: Promise<unknown>;
+  /** The process group to wait for, and the pid named in the SIGKILL log. */
+  pid?: number;
+}
+
+export interface RunCliHandle extends GuardedServer {
   proc: ReturnType<typeof x>["process"];
   done: Promise<void>;
   /**
@@ -18,28 +33,32 @@ export interface RunCliHandle {
    * the build step loudly; the long-running serve processes never inspect it.
    */
   exitCode: Promise<number | null>;
-  findPort: (timeoutMs?: number) => Promise<number>;
   /**
-   * Stop the process and what it spawned (the whole process group). SIGTERM by
-   * default; `stopServer` escalates to SIGKILL for a process that outlives the
-   * wait.
+   * Resolves with the first origin the process prints
+   * (`http://localhost:5173`, `http://127.0.0.1:8787`), output printed before
+   * the call included. Rejects when the process exits first or `timeoutMs`
+   * (default 60 s) passes, with the tail of its output.
    */
-  kill: (signal?: NodeJS.Signals) => void;
+  findURL: (timeoutMs?: number) => Promise<string>;
+  /** The port of `findURL`'s origin. */
+  findPort: (timeoutMs?: number) => Promise<number>;
   readonly pid: number | undefined;
   stdout: () => string;
   stderr: () => string;
 }
 
+/** A server's printed origin: vite, `vite preview` and wrangler all print one. */
+const ORIGIN_PATTERN = /http:\/\/(?:localhost|[\d.]+):(\d+)/;
+
+/**
+ * Spawn `options.command` (split on spaces) as the leader of its own process
+ * group. `options.env` is laid over `process.env`; a key set to `undefined` is
+ * left out of the child's environment.
+ */
 export function runCli(
   options: { command: string; label?: string } & SpawnOptions,
 ): RunCliHandle {
   const [name, ...args] = options.command.split(" ");
-  // Vite registers `process.stdin.on("end", ...)` as parent-death detection and
-  // calls process.exit() when stdin reaches EOF, unless process.env.CI === "true"
-  // (see vite's setupSIGTERMListener). Servers spawned here receive an stdin that
-  // hits EOF immediately, so without CI=true the dev/preview server shuts itself
-  // down before it finishes starting. Real CI runners set CI=true; mirror that for
-  // locally-spawned servers so they stay alive for the duration of the tests.
   // detached makes the child a process-group leader (pgid === pid), so kill()
   // can signal the whole tree. `pnpm dev` spawns vite as a grandchild; without
   // it process.kill(-pid) throws ESRCH, the fallback child.kill() stops only
@@ -47,15 +66,13 @@ export function runCli(
   // detached opens a console window per server, and kill() already ends the
   // tree with `taskkill /t`.
   const child = x(name!, args, {
-    nodeOptions: {
-      ...options,
-      detached: process.platform !== "win32",
-      env: { ...process.env, CI: "true", ...options.env },
-    },
+    nodeOptions: { ...options, detached: process.platform !== "win32" },
   }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";
   let stderr = "";
+  // Registered before any findURL listener, so a listener sees the output and
+  // the exit it was called for.
   child.stdout!.on("data", (data) => {
     stdout += stripVTControlCharacters(String(data));
     if (process.env.TEST_DEBUG) {
@@ -68,48 +85,59 @@ export function runCli(
       console.log(styleText("magenta", label), data.toString());
     }
   });
+  let exited: { code: number | null } | undefined;
   let resolveExitCode!: (code: number | null) => void;
   const exitCode = new Promise<number | null>((resolve) => {
     resolveExitCode = resolve;
   });
-  const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
-      if (code !== 0 && code !== 143 && process.platform !== "win32") {
-        console.log(styleText("magenta", `${label}`), `exit code ${code}`);
-      }
-      resolveExitCode(code);
-      resolve();
-    });
+  const done = exitCode.then(() => {});
+  child.on("exit", (code) => {
+    exited = { code };
+    // null: ended by a signal; 143: exited on SIGTERM. Both are a teardown.
+    if (
+      code !== null &&
+      code !== 0 &&
+      code !== 143 &&
+      process.platform !== "win32"
+    ) {
+      console.log(styleText("magenta", label), `exit code ${code}`);
+    }
+    resolveExitCode(code);
   });
 
-  async function findPort(timeoutMs = 60000): Promise<number> {
-    let stdout = "";
+  function waitForOrigin(timeoutMs: number): Promise<RegExpExecArray> {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const settle = () => {
+        clearTimeout(timer);
+        child.stdout!.off("data", check);
+        child.off("exit", check);
+      };
+      const fail = (reason: string) => {
+        settle();
         reject(
           new Error(
-            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`,
+            `${label} ${reason}.\nStdout (tail):\n${tailOutput(stdout)}\nStderr (tail):\n${tailOutput(stderr)}`,
           ),
         );
-      }, timeoutMs);
-
-      child.stdout!.on("data", (data) => {
-        stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/localhost:(\d+)/);
+      };
+      // Reads all the output so far, so an origin printed before the call, or
+      // a process that exited before it, settles the wait at once.
+      function check(): void {
+        const match = ORIGIN_PATTERN.exec(stdout);
         if (match) {
-          clearTimeout(timeout);
-          resolve(Number(match[1]));
+          settle();
+          resolve(match);
+        } else if (exited) {
+          fail(`exited (code ${exited.code}) before printing a URL`);
         }
-      });
-
-      child.on("exit", (code) => {
-        clearTimeout(timeout);
-        if (code !== 0) {
-          reject(
-            new Error(`Server exited with code ${code}. Stdout: ${stdout}`),
-          );
-        }
-      });
+      }
+      const timer = setTimeout(
+        () => fail(`printed no URL within ${timeoutMs} ms`),
+        timeoutMs,
+      );
+      child.stdout!.on("data", check);
+      child.on("exit", check);
+      check();
     });
   }
 
@@ -131,7 +159,9 @@ export function runCli(
     proc: child,
     done,
     exitCode,
-    findPort,
+    findURL: async (timeoutMs = 60_000) => (await waitForOrigin(timeoutMs))[0],
+    findPort: async (timeoutMs = 60_000) =>
+      Number((await waitForOrigin(timeoutMs))[1]),
     kill,
     get pid() {
       return child.pid;
@@ -141,19 +171,25 @@ export function runCli(
   };
 }
 
-/** How long `stopServer` waits for SIGTERM to take effect before SIGKILL. */
+/** How long `stopServers` waits for SIGTERM to take effect before SIGKILL. */
 const STOP_WAIT_MS = 10_000;
-/** How long `stopServer` waits for the SIGKILL to take effect. */
+/** How long `stopServers` waits for the SIGKILL to take effect. */
 const KILL_WAIT_MS = 2_000;
 
-/** Resolves true when `done` settled within `ms`, false when the timer won. */
-async function exitedWithin(done: Promise<unknown>, ms: number) {
+/** Resolves true when every promise settled, false when the timer won. */
+async function settledWithin(
+  promises: Promise<unknown>[],
+  ms: number,
+): Promise<boolean> {
   let timer: NodeJS.Timeout | undefined;
   const timedOut = new Promise<false>((resolve) => {
     timer = setTimeout(() => resolve(false), ms);
   });
   try {
-    return await Promise.race([done.then(() => true as const), timedOut]);
+    return await Promise.race([
+      Promise.allSettled(promises).then(() => true as const),
+      timedOut,
+    ]);
   } finally {
     clearTimeout(timer);
   }
@@ -172,19 +208,25 @@ function groupAlive(pgid: number): boolean {
 }
 
 /**
- * Resolves true once `server.done` settled and no process of its group is left,
- * false when `ms` ran out first. The leader (`pnpm`) exiting says nothing about
- * the vite it spawned, which can outlive it, so the group is polled too.
+ * Resolves true once every server's `done` settled and no process of any of
+ * their groups is left, false when `ms` ran out first. The leader (`pnpm`)
+ * exiting says nothing about the vite it spawned, which can outlive it, so the
+ * groups are polled too.
  */
-async function groupExitedWithin(
-  server: RunCliHandle,
+async function groupsExitedWithin(
+  servers: readonly GuardedServer[],
   ms: number,
 ): Promise<boolean> {
   const deadline = Date.now() + ms;
-  if (!(await exitedWithin(server.done, ms))) return false;
-  const pgid = server.pid;
-  if (pgid === undefined) return true;
-  while (groupAlive(pgid)) {
+  if (
+    !(await settledWithin(
+      servers.map((s) => s.done),
+      ms,
+    ))
+  )
+    return false;
+  const pgids = servers.flatMap((s) => (s.pid === undefined ? [] : [s.pid]));
+  while (pgids.some(groupAlive)) {
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -192,24 +234,107 @@ async function groupExitedWithin(
 }
 
 /**
- * Stop a server started by `runCli` and wait for its whole process group to
- * exit: SIGTERM to the group, then SIGKILL (and a log naming the pid) for a
- * process that outlives the wait, so a leaked server is visible rather than
- * left holding its port.
+ * Stop servers and wait for each whole process group to exit: SIGTERM to every
+ * group, then SIGKILL (and one log naming the pids) for any that outlive
+ * `exitWaitMs` (default 10 s), so a leaked server is visible rather than left
+ * holding its port. A rejecting `done` counts as exited.
  */
-export async function stopServer(
-  server: RunCliHandle,
+export async function stopServers(
+  servers: readonly GuardedServer[],
   options: { exitWaitMs?: number } = {},
 ): Promise<void> {
   const exitWaitMs = options.exitWaitMs ?? STOP_WAIT_MS;
-  server.kill();
-  if (await groupExitedWithin(server, exitWaitMs)) return;
-  console.error(
-    `[rango e2e] server (pid ${server.pid ?? "unknown"}) ignored SIGTERM for ` +
-      `${exitWaitMs} ms and was sent SIGKILL`,
+  const exited = new Set<GuardedServer>();
+  for (const server of servers) {
+    const markExited = () => void exited.add(server);
+    server.done.then(markExited, markExited);
+    server.kill();
+  }
+  if (await groupsExitedWithin(servers, exitWaitMs)) return;
+  // A leader that exited can still leave a live group (the vite `pnpm`
+  // spawned), so a survivor is either.
+  const survivors = servers.filter(
+    (server) =>
+      !exited.has(server) ||
+      (server.pid !== undefined && groupAlive(server.pid)),
   );
-  server.kill("SIGKILL");
-  await groupExitedWithin(server, KILL_WAIT_MS);
+  if (survivors.length === 0) return;
+  for (const server of survivors) server.kill("SIGKILL");
+  const pids = survivors.map((server) => server.pid ?? "unknown").join(", ");
+  console.error(
+    `[rango e2e] ${survivors.length} server(s) ignored SIGTERM for ` +
+      `${exitWaitMs} ms and were sent SIGKILL (pid ${pids})`,
+  );
+  await groupsExitedWithin(survivors, KILL_WAIT_MS);
+}
+
+/**
+ * Owns the child processes (dev/preview servers, builds) a fixture's
+ * `beforeAll` starts, so a `beforeAll` that fails or times out cannot leave one
+ * running.
+ *
+ * Why it exists: a fixture that assigns its `cleanup` only after the server
+ * answered leaks the server when `beforeAll` misses its timeout (common under
+ * load): `afterAll` has nothing to stop and the detached server keeps its port
+ * and RAM after the run. Playwright also does not cancel a timed-out hook: its
+ * body keeps running while `afterAll` runs, so a build that finishes after
+ * teardown goes on to start a preview server nobody would stop. The guard
+ * closes both holes: a server is tracked the moment it is spawned, and once
+ * disposed it refuses (and kills) anything started later.
+ */
+export class ServerGuard {
+  #tracked = new Set<GuardedServer>();
+  #disposed = false;
+  #exitWaitMs: number | undefined;
+
+  /** `exitWaitMs`: how long `dispose()` waits before SIGKILL (default 10 s). */
+  constructor(options: { exitWaitMs?: number } = {}) {
+    this.#exitWaitMs = options.exitWaitMs;
+  }
+
+  // The methods are bound properties, not prototype methods, so a detached
+  // call (`test.afterAll(servers.dispose)`, `procs.map(servers.track)`) still
+  // reaches this guard's private state.
+
+  /** Throws once the guard is disposed: the hook that owns it has ended. */
+  readonly assertLive: () => void = () => {
+    if (this.#disposed) {
+      throw new Error(
+        "The fixture was torn down while its server was still starting " +
+          "(a beforeAll timeout?)",
+      );
+    }
+  };
+
+  /**
+   * Register a server the moment it is spawned, before anything is awaited.
+   * Spawned after dispose(), it is stopped on the spot (with the same SIGKILL
+   * escalation as dispose()) and this throws.
+   */
+  readonly track: <T extends GuardedServer>(server: T) => T = (server) => {
+    if (this.#disposed) {
+      // Not awaited: the caller learns of the teardown from the throw below.
+      // stopServers rejects only when a kill() throws, and that must not
+      // surface as an unhandled rejection.
+      stopServers([server], { exitWaitMs: this.#exitWaitMs }).catch(() => {});
+      this.assertLive();
+    }
+    this.#tracked.add(server);
+    // A rejecting done still means the process is gone, and must not surface
+    // as an unhandled rejection from here.
+    const forget = () => void this.#tracked.delete(server);
+    server.done.then(forget, forget);
+    return server;
+  };
+
+  /**
+   * Stop every tracked server with `stopServers` and wait for them to exit.
+   * Idempotent.
+   */
+  readonly dispose: () => Promise<void> = async () => {
+    this.#disposed = true;
+    await stopServers([...this.#tracked], { exitWaitMs: this.#exitWaitMs });
+  };
 }
 
 export function tailOutput(text: string, maxChars = 4000): string {

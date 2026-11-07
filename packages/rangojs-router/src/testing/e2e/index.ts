@@ -33,6 +33,18 @@ import {
 } from "./parity.js";
 import { createRangoMatchers, type RangoMatchers } from "./matchers.js";
 
+/**
+ * Server lifecycle for a fixture of your own: `runCli` spawns a server as the
+ * leader of its process group, and `ServerGuard` stops what a `beforeAll`
+ * started, escalating to SIGKILL for a group that outlives the wait.
+ */
+export {
+  runCli,
+  ServerGuard,
+  type GuardedServer,
+  type RunCliHandle,
+} from "./server.js";
+
 export {
   assertCacheStatus,
   assertCacheDecision,
