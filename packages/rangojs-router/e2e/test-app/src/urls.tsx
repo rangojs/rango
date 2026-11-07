@@ -101,6 +101,7 @@ import { mwChainPatterns } from "./urls/mw-chain.js";
 import { rewritePatterns } from "./urls/rewrite.js";
 import { revalidationContractPatterns } from "./urls/revalidation-contract.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
+import { devReloadSplitPatterns } from "./urls/dev-reload-split.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
@@ -1550,6 +1551,11 @@ export const urlpatterns = urls(
 
       // Context clean test patterns (verify _rsc* params stripped from ctx)
       include("/ctx-clean", ctxCleanPatterns, { name: "ctxClean" }),
+
+      // Dev RSC runner reload during a request (e2e/dev-reload-handoff.test.ts)
+      include("/dev-reload-split", devReloadSplitPatterns, {
+        name: "devReloadSplit",
+      }),
 
       // Loader cookie + RequestContext reverse test patterns
       include("/loader-cookie", loaderCookiePatterns, {

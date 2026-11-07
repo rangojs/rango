@@ -187,6 +187,33 @@ export const RSC_ENTRY_BOOTSTRAP_IMPORTS: readonly string[] = [
   "virtual:rsc-router/loader-manifest",
 ];
 
+/**
+ * Dev hand-off of the generated Node RSC entries (router/dev-reload-handoff.ts).
+ * They call createRSCHandler, or hostRouter.match, without the hand-off
+ * router.fetch has, so a request a runner full reload lands inside would run
+ * split across two module copies. Behind NODE_ENV, which a build folds. The
+ * registration is each entry's last statement (registerEntryHandler).
+ */
+const DEV_RELOAD_HANDOFF_IMPORT = `import {
+  registerEntryHandler,
+  serveEntryAcrossRunnerReload,
+} from "@rangojs/router/internal/dev-reload-handoff";`;
+
+const DEV_RELOAD_HANDOFF_SERVE = `  // Dev: a runner full reload can drop this entry's module copy before or
+  // during the request; a GET or HEAD then re-runs on the re-evaluated entry.
+  if (process.env.NODE_ENV !== "production") {
+    return serveEntryAcrossRunnerReload(request, input, handler, () =>
+      serve(request, input)
+    );
+  }`;
+
+const DEV_RELOAD_HANDOFF_REGISTER = `
+// Last statement: the dev hand-off may give a request to this entry only once
+// every import above has evaluated.
+if (process.env.NODE_ENV !== "production") {
+  registerEntryHandler(handler);
+}`;
+
 export function getVirtualEntryRSC(routerPath: string): string {
   const bootstrapImports = RSC_ENTRY_BOOTSTRAP_IMPORTS.map(
     (id) => `import "${id}";`,
@@ -215,12 +242,18 @@ ${bootstrapImports}
 
 import { router } from "${routerPath}";
 import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
+${DEV_RELOAD_HANDOFF_IMPORT}
 
 // Lazily create the handler on first request so that ESM live bindings
 // have resolved by the time we read \`router\`. During HMR the module may
 // re-evaluate before router.tsx finishes, leaving the import undefined.
 let _handler;
-export default function handler(request, env) {
+export default function handler(request, input) {
+${DEV_RELOAD_HANDOFF_SERVE}
+  return serve(request, input);
+}
+
+async function serve(request, input) {
   if (!_handler) {
     _handler = createRSCHandler({
       router,
@@ -241,8 +274,9 @@ export default function handler(request, env) {
         import.meta.viteRsc.loadModule("ssr", "index"),
     });
   }
-  return _handler(request, env);
+  return _handler(request, input);
 }
+${DEV_RELOAD_HANDOFF_REGISTER}
 `.trim();
 }
 
@@ -256,6 +290,7 @@ import { isNoRouteMatchError } from "@rangojs/router/host";
 // mounted sub-apps, so the aggregate manifests cover the whole host tree.
 import "virtual:rsc-router/loader-manifest";
 import "virtual:rsc-router/routes-manifest";
+${DEV_RELOAD_HANDOFF_IMPORT}
 
 // The host entry module must export the HostRouter instance (createHostRouter()),
 // as a default export or a named \`hostRouter\`/\`router\` export. A Cloudflare-style
@@ -293,7 +328,12 @@ let _hostRouter;
 // On node/vercel rango owns this entry, so there is no user worker to translate
 // an unmatched host into a response: catch NoRouteMatchError and return 404
 // (parity with the documented Cloudflare catch). Other errors propagate.
-export default async function handler(request, input) {
+export default function handler(request, input) {
+${DEV_RELOAD_HANDOFF_SERVE}
+  return serve(request, input);
+}
+
+async function serve(request, input) {
   if (!_hostRouter) {
     _hostRouter = __resolveHostRouter(__hostEntry);
     if (!_hostRouter) {
@@ -315,6 +355,7 @@ export default async function handler(request, input) {
     throw err;
   }
 }
+${DEV_RELOAD_HANDOFF_REGISTER}
 `.trim();
 }
 
