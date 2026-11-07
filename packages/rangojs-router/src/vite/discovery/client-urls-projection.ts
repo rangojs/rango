@@ -458,14 +458,20 @@ async function installClientUrlProjections(
  * Assign each group of `projections` the other files holding the predicates
  * it reads (each key's file, as the hoist transform recorded it: a key with
  * none stays unregistered, and materialization names it), after loading their
- * registrations into `rscEnv`. The group's own registrations load with its
- * proxy, and its `?rango-revalidate` module imports the assigned files'
- * (plugins/client-urls-revalidate-hoist.ts). When a group's files change, that
- * module is invalidated, so a later evaluation (a reload, a request realm)
- * imports the current ones. Another realm (workerd, a production bundle)
- * loads a group only after discovery: its entry imports the routes-manifest
- * module first, whose load waits for discovery (RSC_ENTRY_BOOTSTRAP_IMPORTS),
- * and a build discovers in buildStart.
+ * registrations, and each group's own, into `rscEnv`. A realm that is not new
+ * loads a group's own registrations only here: its proxy imports the group's
+ * `?rango-revalidate` module, but plugin-rsc re-transforms the proxy of an
+ * edited client reference on update, so the runner reports it cached and
+ * never re-runs it, while the `?rango-revalidate` module the edit invalidated
+ * re-evaluates on this import. An edited predicate's new key would otherwise
+ * be installed in a realm that registered only the old one ("has no server
+ * registration"). The group's `?rango-revalidate` module also imports the
+ * assigned files' (plugins/client-urls-revalidate-hoist.ts). When a group's
+ * files change, that module is invalidated, so a later evaluation (a reload,
+ * a request realm) imports the current ones. Another realm (workerd, a
+ * production bundle) loads a group only after discovery: its entry imports
+ * the routes-manifest module first, whose load waits for discovery
+ * (RSC_ENTRY_BOOTSTRAP_IMPORTS), and a build discovers in buildStart.
  */
 export async function assignClientUrlRevalidateFiles(
   state: Pick<
@@ -493,7 +499,7 @@ export async function assignClientUrlRevalidateFiles(
     next.set(group, [...files].sort());
   }
   await Promise.all(
-    [...new Set([...next.values()].flat())].map((file) =>
+    [...new Set([...next.keys(), ...[...next.values()].flat()])].map((file) =>
       rscEnv.runner.import(hoistedRevalidateId(file)),
     ),
   );

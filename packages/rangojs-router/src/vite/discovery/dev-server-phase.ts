@@ -1666,10 +1666,10 @@ export function devServerPhase(s: DiscoveryState, server: ViteDevServer): void {
         // against the refreshed projection (installed by the pre-entry
         // refresh in discover-routers.ts).
         const mainRscEnv = (server.environments as any)?.rsc;
-        if (
+        const projectionEditOnRunner =
           ((isUseClient && hasClientUrls) || hasComponentUse) &&
-          mainRscEnv?.runner
-        ) {
+          !!mainRscEnv?.runner;
+        if (projectionEditOnRunner) {
           const rscGraph = mainRscEnv.moduleGraph;
           if (rscGraph?.getModulesByFile) {
             // Importers must be invalidated too: the virtual RSC entry
@@ -1742,6 +1742,17 @@ export function devServerPhase(s: DiscoveryState, server: ViteDevServer): void {
         // under the same predicate.
         if (canRefreshRuntimeDiscovery(s)) {
           gate.noteRouteEvent();
+          // A runner full reload before the debounced pre-refresh (another
+          // file's update, the optimizer) re-runs the routes-manifest
+          // module. From its cached transform it would replay the
+          // projection of before a group or `.use` edit, while the fresh
+          // realm registers only the edit's new revalidate() keys: requests
+          // answered "has no server registration" until discovery installed
+          // the new projection. Invalidated, its load waits on the gate just
+          // armed and emits the refreshed projection.
+          if (projectionEditOnRunner) {
+            invalidateRoutesManifestModule(mainRscEnv);
+          }
         }
         scheduleRouteRegeneration();
       } catch (readErr: any) {

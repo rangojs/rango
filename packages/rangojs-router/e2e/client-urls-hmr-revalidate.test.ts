@@ -136,6 +136,66 @@ test.describe.serial("client-urls-hmr-revalidate", () => {
       .toBe("reran");
   });
 
+  test("requests while an edit of a revalidate() body re-runs discovery never fail", async ({
+    page,
+    request,
+  }) => {
+    const path = f.url("/client-urls-action");
+    await expect
+      .poll(async () => (await request.get(path)).status(), {
+        timeout: WATCHER_TIMEOUT,
+      })
+      .toBe(200);
+
+    // Two request loops span each save and the re-discovery it starts. The
+    // edit changes the predicate's key: until the RSC realm registers the
+    // new key, a request that installed or replayed it answered 500 "has no
+    // server registration".
+    const failures: string[] = [];
+    const serveDuring = async (edit: string) => {
+      let saving = true;
+      const loop = async () => {
+        while (saving) {
+          const response = await request.get(path);
+          if (response.status() !== 200) {
+            const body = await response.text();
+            failures.push(
+              `${response.status()} ${
+                /has no server registration[^"<]*|could not resolve the server projection[^"<]*/.exec(
+                  body,
+                )?.[0] ?? body.slice(0, 200)
+              }`,
+            );
+          }
+        }
+      };
+      const loops = [loop(), loop()];
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      writeFileBumpMtime(fixturePath, edit);
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      saving = false;
+      await Promise.all(loops);
+    };
+
+    // After each window the edit is live, so the requests spanned a
+    // re-discovery that installed the new key.
+    for (let round = 0; round < 3; round++) {
+      await serveDuring(originalContent.replace(before, after));
+      await expect
+        .poll(() => decide(page, "ca-result-ok"), {
+          timeout: WATCHER_TIMEOUT,
+        })
+        .toBe("held");
+      await serveDuring(originalContent);
+      await expect
+        .poll(() => decide(page, "ca-result-ok"), {
+          timeout: WATCHER_TIMEOUT,
+        })
+        .toBe("reran");
+    }
+    expect(failures).toEqual([]);
+  });
+
   /** The fixture with the result loader's revalidate() argument replaced. */
   function withResultRevalidate(arg: string): string {
     const head = "loader(ClientUrlsResultLoader, () => [";

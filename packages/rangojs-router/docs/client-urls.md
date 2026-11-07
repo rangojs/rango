@@ -796,8 +796,16 @@ the plugin in discovery's temp server share it
 the group modules the dev server or the build serves. Discovery imports the
 RSC entry before it projects, so a static group's module has loaded once
 already, with no files on a cold start or the previous ones after an edit.
-Two things cover that. Discovery imports the assigned files' modules into
-its own realm before it installs a projection that reads their keys. All
+Two things cover that. Discovery imports each group's own `?rango-revalidate`
+module and the assigned files' modules into its own realm before it installs
+a projection that reads their keys. The group's own module needs this too,
+although its proxy imports it: when you edit a group, plugin-rsc
+re-transforms the proxy on the update, so the runner reports it cached and
+never re-runs it, and only the `?rango-revalidate` module the edit
+invalidated re-evaluates, on this import. Before, an edited predicate's new
+key was installed in a realm that had registered only the old one: requests
+and the re-discovery itself failed with "has no server registration" until a
+runner reload, in about one save in six in the router test-app. All
 three install sites go through one function (`installClientUrlProjections`):
 the dev watcher's pre-refresh, the pass's refresh before the entry import,
 and the strict pass after it. The order matters because node dev serves
@@ -806,9 +814,14 @@ projection. Before this ordering, moving a `.use` into a module the group
 had not loaded made requests fail with "has no server registration" (a 500).
 The failures lasted about 3.5 s in the router test-app, until the pass's
 entry import ended. One install does not go through it: the routes-manifest
-module replays the last projection when the RSC runner reloads, so for about
-the watcher's 100 ms debounce after a reload a request can still read a key
-whose registration the fresh realm has not loaded. And when a group's files change, discovery invalidates
+module replays the projection `state` holds when the RSC runner reloads. A
+reload that lands after a save but before the watcher's 100 ms debounce
+(another file's update, the dep optimizer) used to replay it from the cached
+transform, the projection of before the edit, while the fresh realm
+registered only the edited group's new keys. So the watcher invalidates the
+routes-manifest module in the same tick it sees a group or `.use` edit and
+arms the discovery gate: the reloaded module's `load` waits for re-discovery
+and replays the refreshed projection. And when a group's files change, discovery invalidates
 the group's module in its environment's module graph, so the next
 evaluation (a request realm after a reload) imports the current files. A realm that is not discovery's never loads a group before
 its files are known: its entry imports the routes-manifest module first
