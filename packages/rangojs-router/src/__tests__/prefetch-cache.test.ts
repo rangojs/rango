@@ -197,7 +197,7 @@ describe("prefetch cache", () => {
       const promise = Promise.resolve(entry);
 
       markPrefetchInflight(key);
-      setInflightPromise(key, promise);
+      setInflightPromise(key, promise, currentPrefetchEpoch());
 
       expect(hasPrefetch(key)).toBe(true);
 
@@ -216,6 +216,21 @@ describe("prefetch cache", () => {
       expect(result).toBe(entry);
     });
 
+    it("consumeInflightPrefetch treats one started before markPrefetchesStale as a miss unless acceptStale, without consuming it", () => {
+      const key = "http://localhost/\0/products";
+      const promise = Promise.resolve(makeEntry());
+      markPrefetchInflight(key);
+      setInflightPromise(key, promise, currentPrefetchEpoch());
+      markPrefetchesStale();
+
+      expect(consumeInflightPrefetch(key)).toBe(null);
+      expect(consumeInflightPrefetch(key, { acceptStale: false })).toBe(null);
+      // Left in flight for a caller that takes a stale one.
+      expect(hasPrefetch(key)).toBe(true);
+      expect(consumeInflightPrefetch(key, { acceptStale: true })).toBe(promise);
+      expect(consumeInflightPrefetch(key, { acceptStale: true })).toBe(null);
+    });
+
     it("consumeInflightPrefetch returns null when nothing is in-flight", () => {
       expect(consumeInflightPrefetch("nonexistent")).toBe(null);
     });
@@ -223,7 +238,7 @@ describe("prefetch cache", () => {
     it("clearPrefetchInflight removes both inflight flag and promise", () => {
       const key = "/test";
       markPrefetchInflight(key);
-      setInflightPromise(key, Promise.resolve(null));
+      setInflightPromise(key, Promise.resolve(null), currentPrefetchEpoch());
 
       expect(hasPrefetch(key)).toBe(true);
 
@@ -235,7 +250,11 @@ describe("prefetch cache", () => {
     it("clearPrefetchCache clears inflight promises", () => {
       const key = "/test";
       markPrefetchInflight(key);
-      setInflightPromise(key, Promise.resolve(makeEntry()));
+      setInflightPromise(
+        key,
+        Promise.resolve(makeEntry()),
+        currentPrefetchEpoch(),
+      );
 
       clearPrefetchCache();
 

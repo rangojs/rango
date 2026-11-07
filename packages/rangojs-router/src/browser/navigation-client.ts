@@ -216,13 +216,23 @@ export function createNavigationClient(
       const cachedEntry = stored.entry;
       let hitKey = stored.hitKey;
 
+      // An in-flight prefetch that started before the latest action is a miss
+      // for a navigation that never revalidates, decided before its headers
+      // arrive, so this navigation fetches without waiting on it.
       let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
       if (canUsePrefetch && !cachedEntry) {
-        inflightEntryPromise = consumeInflightPrefetch(cacheKey);
+        const inflightOptions = { acceptStale: acceptStalePrefetch };
+        inflightEntryPromise = consumeInflightPrefetch(
+          cacheKey,
+          inflightOptions,
+        );
         if (inflightEntryPromise) {
           hitKey = cacheKey;
         } else {
-          inflightEntryPromise = consumeInflightPrefetch(wildcardKey);
+          inflightEntryPromise = consumeInflightPrefetch(
+            wildcardKey,
+            inflightOptions,
+          );
           if (inflightEntryPromise) hitKey = wildcardKey;
         }
       }
@@ -409,9 +419,11 @@ export function createNavigationClient(
             );
           }
         } else if (!acceptStalePrefetch && isPrefetchStale(entry)) {
-          // An action marked it stale, and this navigation never revalidates
-          // (not a click): drop it and fetch fresh. Its reserve is released;
-          // the decode it started is never read.
+          // An action landed while this navigation waited for the prefetch's
+          // headers, and this navigation never revalidates (not a click):
+          // drop it and fetch fresh. Its reserve is released; the decode it
+          // started is never read. One stale before the lookup was never
+          // adopted (consumeInflightPrefetch).
           entry.dispose?.();
           if (tx) {
             browserDebugLog(tx, "inflight prefetch is stale, refetching");

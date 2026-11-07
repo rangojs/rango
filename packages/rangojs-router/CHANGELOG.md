@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: Back after a server action no longer waits on a stale prefetch still in flight
+
+**Before.** Back (or Forward) onto a page the history cache no longer held,
+after a server action and while a prefetch of that page made before the
+action was still downloading, waited for that prefetch's response headers,
+dropped the response, and only then fetched the page: one extra round trip
+before the page showed.
+
+**Now.** Back fetches the page at once. The in-flight prefetch is neither
+waited on nor aborted: it finishes on its own and is kept stale, like a stale
+prefetch that finished before Back, so a later click on its link shows it
+once and then revalidates. A click on a link whose prefetch is in flight
+still adopts it, stale or not.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

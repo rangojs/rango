@@ -22,9 +22,9 @@ import type { FetchPartialResult, RscPayload } from "../browser/types";
  *
  * - Only a click takes a stale prefetch (`acceptStalePrefetch`): it
  *   revalidates its page once it settled. Every other navigation (Back on a
- *   history-cache miss, leaving an intercept) treats a stale stored entry as
- *   a miss and drops a stale in-flight one, so none commits pre-write data
- *   it never revalidates.
+ *   history-cache miss, leaving an intercept) treats a stale stored entry,
+ *   and an in-flight one started before the action, as a miss without
+ *   waiting on it, so none commits pre-write data it never revalidates.
  * - A prefetch whose stream ends after the action and before any click is
  *   stored stale with its whole body.
  * - A stale entry is served at most once: a second click fetches fresh.
@@ -177,14 +177,64 @@ describe("a prefetch a server action marked stale", () => {
     await expect(restOf(click)).resolves.toBe("head;prefetched");
   });
 
-  it("in flight, is dropped and fetched again by a navigation that never revalidates", async () => {
+  it("in flight, is not waited on by a navigation that never revalidates: it fetches at once", async () => {
     const fetchMock = stubServer({ holdHeaders: true });
     prefetchDirect("/blog", ["A0"], "v1");
     await vi.advanceTimersByTimeAsync(10);
     markPrefetchesStale();
 
+    // The prefetch's headers have not arrived: the navigation's own request
+    // leaves anyway.
     const navigation = navigateToBlog(false);
     await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    responses[1]!.respond();
+    responses[1]!.push("fresh");
+    responses[1]!.end();
+
+    const result = await navigation;
+    expect(result.stalePrefetch).toBe(false);
+    await expect(restOf(result)).resolves.toBe("head;fresh");
+
+    // The skipped prefetch finishes and is stored stale: a click takes it
+    // once, and revalidates.
+    responses[0]!.respond();
+    responses[0]!.push("prefetched");
+    responses[0]!.end();
+    await vi.advanceTimersByTimeAsync(10);
+    const click = await navigateToBlog(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(click.stalePrefetch).toBe(true);
+    await expect(restOf(click)).resolves.toBe("head;prefetched");
+  });
+
+  it("in flight, is adopted by a click before its headers arrive", async () => {
+    const fetchMock = stubServer({ holdHeaders: true });
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(10);
+    markPrefetchesStale();
+
+    const navigation = navigateToBlog(true);
+    await vi.advanceTimersByTimeAsync(10);
+    responses[0]!.respond();
+    responses[0]!.push("prefetched");
+    responses[0]!.end();
+
+    const click = await navigation;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(click.stalePrefetch).toBe(true);
+    await expect(restOf(click)).resolves.toBe("head;prefetched");
+  });
+
+  it("in flight and fresh when adopted, is dropped and fetched again when an action lands before its headers", async () => {
+    const fetchMock = stubServer({ holdHeaders: true });
+    prefetchDirect("/blog", ["A0"], "v1");
+    await vi.advanceTimersByTimeAsync(10);
+
+    const navigation = navigateToBlog(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    markPrefetchesStale();
     responses[0]!.respond();
     await vi.advanceTimersByTimeAsync(10);
     expect(fetchMock).toHaveBeenCalledTimes(2);

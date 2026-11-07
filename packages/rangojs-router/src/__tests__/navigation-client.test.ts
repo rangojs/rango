@@ -803,6 +803,10 @@ describe("navigation-client", () => {
       consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(stale));
       const adopted = await client.fetchPartial(click);
       expect(adopted.stalePrefetch).toBe(true);
+      expect(consumeInflightPrefetchMock).toHaveBeenCalledWith(
+        expect.any(String),
+        { acceptStale: true },
+      );
 
       const fresh = makeEntry({ metadata: { matched: [], diff: [] } });
       consumeInflightPrefetchMock.mockReturnValue(Promise.resolve(fresh));
@@ -812,7 +816,7 @@ describe("navigation-client", () => {
       isPrefetchStaleMock.mockReturnValue(false);
     });
 
-    it("asks the cache for no stale entry, and refetches over a stale in-flight one, for a navigation that never revalidates", async () => {
+    it("asks the cache for no stale entry, and refetches over an in-flight one an action made stale while it was awaited, for a navigation that never revalidates", async () => {
       const fetchMock = vi.fn(async () => new Response("fresh"));
       vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
       const freshPayload = { metadata: { matched: [], diff: [] } };
@@ -834,6 +838,10 @@ describe("navigation-client", () => {
       expect(consumePrefetchMock).toHaveBeenCalledWith(expect.any(String), {
         acceptStale: false,
       });
+      expect(consumeInflightPrefetchMock).toHaveBeenCalledWith(
+        expect.any(String),
+        { acceptStale: false },
+      );
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(back.payload).toBe(freshPayload);
       expect(back.stalePrefetch).toBe(false);
