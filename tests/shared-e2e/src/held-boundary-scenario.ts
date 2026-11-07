@@ -159,11 +159,10 @@ export function runHeldBoundaryTests(
       unattributedFallbacks: _unattributed,
       treeUpdates: _updates,
       handed: _handed,
-      // I7 is the console guard's (tools/e2e-console-baseline.json).
-      mutations: _mutations,
       ...counters
     } = audit!;
     expect(counters, JSON.stringify(events)).toEqual({
+      mutations: 0,
       uncaused: 0,
       swaps: 0,
       untracked: 0,

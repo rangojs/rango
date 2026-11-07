@@ -264,7 +264,7 @@ describe("suspense audit, segments after hand-over (I7)", () => {
     expect(audit().mutations).toBe(1);
   });
 
-  it("renderSegments rewrites a parallel slot's loader fields in place when it re-renders the slot (main)", async () => {
+  it("renderSegments gives a re-rendered parallel slot its loader fields on a new segment object", async () => {
     const slot = seg({
       id: "L0.@side",
       namespace: "parallel.side",
@@ -291,14 +291,10 @@ describe("suspense audit, segments after hand-over (I7)", () => {
     expect(audit().mutations).toBe(0);
     const tree = await renderSegments(segments(), { isAction: true });
     await act(async () => startTransition(() => setTree(tree)));
-    expect(audited()).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("I7 mutated at segment:L0.@side: loaderIds"),
-        expect.stringContaining(
-          "I7 mutated at segment:L0.@side: loaderDataPromise",
-        ),
-      ]),
-    );
+    expect(slot).not.toHaveProperty("loaderIds");
+    expect(slot).not.toHaveProperty("loaderDataPromise");
+    expect(audit().mutations).toBe(0);
+    expect(audited()).toEqual([]);
   });
 });
 
@@ -328,10 +324,10 @@ describe("suspense audit, the tree React holds (I4, I5, I7)", () => {
         slot: "@side",
         loading: <Fallback />,
       });
-    const hmrSlot = slot();
+    const hmrLayout = layout();
     const segments = (): ResolvedSegment[] => [
-      layout(),
-      hmrSlot,
+      hmrLayout,
+      slot(),
       seg({
         id: "L0D0.side-data",
         namespace: "parallel.side",
@@ -348,10 +344,14 @@ describe("suspense audit, the tree React holds (I4, I5, I7)", () => {
     const tree = await pending;
     // What React's use() leaves on a promise it has read.
     Object.assign(pending, { status: "fulfilled", value: tree });
+    // The next tree's start holds it; a write after that to one of its
+    // segments is reported when the tree after starts.
+    await renderSegments(segments(), { isAction: true });
+    hmrLayout.namespace = "written";
     await renderSegments(segments(), { isAction: true });
     expect(audited()).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("I7 mutated at segment:L0.@side: loaderIds"),
+        expect.stringContaining("I7 mutated at segment:L0: namespace"),
       ]),
     );
   });

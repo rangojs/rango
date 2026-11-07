@@ -825,7 +825,13 @@ export async function renderSegments(
           }
         }
 
-        for (const p of node.parallel) {
+        // The slot object may be one a held tree was built from (segment or
+        // history cache), and ParallelOutlet reads these fields during
+        // render (client.tsx renderSlotContent), so the slot is replaced with
+        // a new object, never written (rule 6, suspense-contract.md). The
+        // array is this build's own (segmentTreeWalk), not yet handed to React.
+        for (let j = 0; j < node.parallel.length; j++) {
+          const p = node.parallel[j]!;
           if (!p.loading || !p.namespace) {
             continue;
           }
@@ -835,7 +841,7 @@ export async function renderSegments(
             continue;
           }
 
-          p.loaderIds = ownedLoaders.map((l) => l.loaderId!);
+          const slotLoaderIds = ownedLoaders.map((l) => l.loaderId!);
           const aggregated = getMemoizedLoaderPromise(ownedLoaders);
           // Parallel slots must NOT take the loaderStreams path.
           // LoaderResolver skips use(aggregate) when streams are set, so
@@ -852,32 +858,29 @@ export async function renderSegments(
             settleLoaders ||
               ownedLoaders.every((l) => l.awaitBeforeFlush === true),
           );
-          if (settleParallelAggregate) {
-            const parallelAwaitStart = segDebug ? performance.now() : 0;
-            p.loaderDataPromise =
-              aggregated instanceof Promise ? await aggregated : aggregated;
-            p.loaderStreams = undefined;
-            p.awaitedLoaderIds = undefined;
-            if (segDebug) {
-              segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr: "await")`,
-                {
-                  loaderIds: p.loaderIds,
-                  ms: Math.round(performance.now() - parallelAwaitStart),
-                },
-              );
-            }
-          } else {
-            p.loaderDataPromise = aggregated;
-            p.loaderStreams = undefined;
-            p.awaitedLoaderIds = undefined;
-            if (segDebug) {
-              segDebugLog(
-                `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
-                { loaderIds: p.loaderIds },
-              );
-            }
+          const parallelAwaitStart = segDebug ? performance.now() : 0;
+          const slotLoaderData =
+            settleParallelAggregate && aggregated instanceof Promise
+              ? await aggregated
+              : aggregated;
+          if (segDebug) {
+            segDebugLog(
+              settleParallelAggregate
+                ? `segment ${id}: parallel ${p.id} loaders awaited (forceAwait/action/ssr: "await")`
+                : `segment ${id}: parallel ${p.id} loaders via aggregate (suspense)`,
+              {
+                loaderIds: slotLoaderIds,
+                ms: Math.round(performance.now() - parallelAwaitStart),
+              },
+            );
           }
+          node.parallel[j] = {
+            ...p,
+            loaderIds: slotLoaderIds,
+            loaderDataPromise: slotLoaderData,
+            loaderStreams: undefined,
+            awaitedLoaderIds: undefined,
+          };
         }
       }
 

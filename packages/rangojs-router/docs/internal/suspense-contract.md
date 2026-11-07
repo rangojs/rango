@@ -127,7 +127,7 @@ as I2 on a refresh under CPU throttling (the shell layout's loader data fulfille
 after the build and its boundary rendered 94 ms after it). With an accessor on every
 promise handed unread, the same throttled refresh showed React writing a status on none
 of them, so those two baseline entries are gone. A parallel slot does read the
-aggregate: slots take no streams (`src/segment-system.tsx:806`), and there the gap is
+aggregate: slots take no streams (`src/segment-system.tsx:846`), and there the gap is
 real. A full dev run of cloudflare-basic at a load average of 20 to 49 once caught the
 `@badge` slot of the PPR slot-hole route mounting its `loading()` fallback over an
 aggregate already settled (I3, idle-fallback); 6 reruns and 6 runs with 8x CPU
@@ -248,16 +248,18 @@ When a later tree needs a different value, it gets a new object. A promise in on
 and the settled value in a later tree is fine: a different input at a different time.
 A switch within one render, or one that shows a fallback, is not.
 
-The known violation on main: `renderSegments` writes `loaderIds`, `loaderDataPromise`,
-`loaderStreams` and `awaitedLoaderIds` on a parallel slot's segment object in place
-(`src/segment-system.tsx:804`, `:822-838`), and when the slot is reused from the cache
-that object is the one the previous tree handed to React. `ParallelOutlet` reads those
-fields during render (`renderSlotContent`, `src/client.tsx:40`). The audit reports a
-write to a segment object after its tree was handed to React as I7. Measured with the
-guard recording, twice: it fires in 15 dev tests, 7 in the router's suites and 8 in
-cloudflare-basic, all on a parallel slot with a loader (`@zlbsSlot` in the held-boundary
-fixture, `@cart` in mini, `@sidebar` in the blog), and only on `loaderIds` and
-`loaderDataPromise`. Every one is in the baseline.
+Where this bit: a parallel slot with a loader. `renderSegments` gives the slot its
+`loaderIds` and `loaderDataPromise` (and clears `loaderStreams` and `awaitedLoaderIds`)
+on every build, and the slot object it is handed may come from the segment cache or a
+history entry: the one the previous tree handed to React, which `ParallelOutlet` reads
+during render (`renderSlotContent`, `src/client.tsx`). It used to write those fields in
+place, so a render of the held tree could read the next tree's loader data. The audit
+caught it as I7 in 17 dev tests across both apps (`@zlbsSlot` in the held-boundary
+fixture, `@cart` in mini, `@sidebar` in the blog, `@side` in the prefetch-false
+fixture). It now replaces the slot in the build's own `parallel` array with a new
+object carrying the new values (the slot-loader loop in `src/segment-system.tsx`), as
+`foldInterceptLoaders` does for an intercept's slot. The aggregate is still memoized on
+the loaders, so a pending slot keeps its one thenable across builds (rule 1).
 
 ## How it is enforced
 
@@ -373,8 +375,8 @@ run.
 
 What fails on main today and no test asks for is listed in
 `tools/e2e-console-baseline.json`, one entry per test and rule, each with a reason:
-messages no test declares (`Undeclared, cause: ...`), the intermittent I3 report of
-rule 2's timing gap on a slot, and the I7 reports of the slot writes under rule 6. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
+messages no test declares (`Undeclared, cause: ...`) and the intermittent I3 report of
+rule 2's timing gap on a slot. `pnpm check:e2e-console-baseline` (CI lint job) fails on an
 entry without a reason, or one whose full title path is not a test in that app's dev
 project as `playwright test --list` enumerates it; the guard itself fails a test whose
 entry no longer fires. A message that depends on timing goes into the baseline marked
