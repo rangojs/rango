@@ -1,112 +1,7 @@
-import { type SpawnOptions, spawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import path from "node:path";
-import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
-import { ServerGuard } from "@shared/e2e";
-import { x } from "tinyexec";
-
-function runCli(options: { command: string; label?: string } & SpawnOptions) {
-  const [name, ...args] = options.command.split(" ");
-  const child = x(name!, args, {
-    nodeOptions: { ...options, detached: true },
-  }).process!;
-  const label = `[${options.label ?? "cli"}]`;
-  let stdout = "";
-  let stderr = "";
-  child.stdout!.on("data", (data) => {
-    stdout += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("cyan", label), data.toString());
-    }
-  });
-  child.stderr!.on("data", (data) => {
-    stderr += stripVTControlCharacters(String(data));
-    if (process.env.TEST_DEBUG) {
-      console.log(styleText("magenta", label), data.toString());
-    }
-  });
-  const done = new Promise<void>((resolve) => {
-    child.on("exit", (code) => {
-      if (
-        code !== null &&
-        code !== 0 &&
-        code !== 143 &&
-        process.platform !== "win32"
-      ) {
-        console.log(styleText("magenta", `${label}`), `exit code ${code}`);
-      }
-      resolve();
-    });
-  });
-
-  async function findPort(): Promise<number> {
-    let stdout = "";
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(
-          new Error(
-            `Timeout waiting for server to start after 60s. Stdout: ${stdout}`,
-          ),
-        );
-      }, 60000);
-
-      child.stdout!.on("data", (data) => {
-        stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/(?:localhost|[\d.]+):(\d+)/);
-        if (match) {
-          clearTimeout(timeout);
-          resolve(Number(match[1]));
-        }
-      });
-
-      child.on("exit", (code) => {
-        clearTimeout(timeout);
-        reject(
-          new Error(
-            `Server exited with code ${code}.\nStdout: ${stdout}\nStderr: ${stderr}`,
-          ),
-        );
-      });
-    });
-  }
-
-  function kill(signal: NodeJS.Signals = "SIGTERM") {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
-    } else {
-      // The whole process group; ServerGuard escalates to SIGKILL.
-      try {
-        process.kill(-child.pid!, signal);
-      } catch {
-        child.kill(signal);
-      }
-    }
-  }
-
-  return {
-    proc: child,
-    done,
-    get pid() {
-      return child.pid;
-    },
-    findPort,
-    kill,
-    stdout: () => stdout,
-    stderr: () => stderr,
-  };
-}
-
-async function waitForReady(url: string, timeoutMs = 30000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
-}
+import { runCli, ServerGuard, waitForReady } from "@rangojs/router/testing/e2e";
 
 export function useFixture(options: {
   root: string;
@@ -142,7 +37,10 @@ export function useFixture(options: {
       );
       const port = await proc.findPort();
       baseURL = `http://localhost:${port}`;
-      await waitForReady(baseURL);
+      await waitForReady(baseURL, () => ({
+        stdout: proc.stdout(),
+        stderr: proc.stderr(),
+      }));
     }
   });
 

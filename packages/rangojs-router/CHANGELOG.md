@@ -1,5 +1,86 @@
 # Changelog
 
+## Unreleased
+
+### Added: `runCli` and `ServerGuard` in `@rangojs/router/testing/e2e`, for a server fixture of your own
+
+**Before.** `createRangoE2E`'s `useFixture` spawned and stopped your dev or
+preview server, but a Playwright fixture of your own (a worker-scoped dev
+server, a build step with its own checks) had to copy that code: spawning the
+server as the leader of its process group so `pnpm dev`'s vite grandchild is
+stopped too, finding the printed port, and escalating to SIGKILL when the
+group outlives SIGTERM.
+
+**Now.** The entry exports the pieces `useFixture` is built from. `runCli`
+spawns a command as a process-group leader and returns a handle with
+`findURL()` / `findPort()` (which also see output printed before the call, and
+reject when the process exits first or prints no URL within 60 s), `exitCode`,
+`stdout()` / `stderr()` and a group-wide `kill()`. `ServerGuard` tracks what a
+`beforeAll` starts and, on `dispose()`, stops every group: SIGTERM, then
+SIGKILL with one log naming the pids for any group still up after
+`exitWaitMs` (10 s by default). A server tracked after `dispose()` is killed
+and the call throws, so a timed-out hook that keeps running cannot leave one
+behind.
+
+```ts
+import { test as base } from "@playwright/test";
+import { runCli, ServerGuard } from "@rangojs/router/testing/e2e";
+
+export const test = base.extend<{}, { devServerURL: string }>({
+  devServerURL: [
+    async ({}, use) => {
+      const servers = new ServerGuard();
+      const server = servers.track(
+        runCli({ command: "pnpm dev", label: "dev", cwd: process.cwd() }),
+      );
+      try {
+        await use(await server.findURL());
+      } finally {
+        await servers.dispose();
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+```
+
+`useFixture` now tracks its build and servers with a `ServerGuard` too. Before,
+a production `beforeAll` that timed out while `pnpm build` was finishing could
+start `pnpm preview` after `afterAll` had run, and nothing stopped that server;
+now the hook throws instead of starting it. A server killed at teardown no
+longer logs `exit code null`, and a server that exits with code 0 before
+printing a URL now fails `beforeAll` at once instead of at the 60 s timeout.
+
+### Added: `waitForReady`, `warmupDevServer` and `createIsolatedViteCacheDir` in `@rangojs/router/testing/e2e`
+
+**Before.** A fixture of your own built on `runCli` and `ServerGuard` still
+had to copy the steps `useFixture` runs between spawning a server and handing
+out its URL: polling it until it answers, warming the dev server's dep
+optimizer, and giving a server its own Vite cache directory.
+
+**Now.** The entry exports those steps too. `waitForReady(url, getOutput?,
+timeoutMs?)` polls `url` until it answers 2xx and, after `timeoutMs` (60 s
+when `CI` is set, 30 s otherwise), throws with the tail of `getOutput()`'s
+stdout and stderr. `warmupDevServer(url)` requests the page as a document
+until two answers in a row are OK, so the dep optimizer's reload happens
+before your tests run. `createIsolatedViteCacheDir(cwd, name, mode)` returns
+a fresh path under `<cwd>/.vite-isolated/` to pass to the server as its Vite
+`cacheDir`.
+
+```ts
+import { runCli, ServerGuard, waitForReady } from "@rangojs/router/testing/e2e";
+
+const servers = new ServerGuard();
+const server = servers.track(
+  runCli({ command: "pnpm preview", label: "preview", cwd: process.cwd() }),
+);
+const url = await server.findURL();
+await waitForReady(`${url}/health`, () => ({
+  stdout: server.stdout(),
+  stderr: server.stderr(),
+}));
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

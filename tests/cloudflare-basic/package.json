@@ -41,7 +41,6 @@
     "@vitejs/plugin-react": "catalog:",
     "happy-dom": "^20.10.1",
     "oxc-transform-react": "catalog:",
-    "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
     "vitest": "^4.1.11",

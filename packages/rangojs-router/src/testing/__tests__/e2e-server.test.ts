@@ -2,13 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runCli, stopServer } from "../e2e/server.js";
+import { runCli, stopServers } from "../e2e/server.js";
 
 /**
  * The consumer fixture starts `pnpm dev` / `pnpm preview`, which spawn vite as
  * a grandchild. Stopping only the direct child leaves vite running after the
  * suite, so these tests spawn a parent with a grandchild and
- * check that stopServer reaches both. Process groups are POSIX-only; on Windows
+ * check that stopServers reaches both. Process groups are POSIX-only; on Windows
  * the harness ends the tree with `taskkill /t`.
  */
 
@@ -91,7 +91,7 @@ async function startServer(options: {
   return { server, grandchild };
 }
 
-describe.skipIf(process.platform === "win32")("stopServer", () => {
+describe.skipIf(process.platform === "win32")("stopServers", () => {
   beforeEach(() => {
     dir = mkdtempSync(path.join(tmpdir(), "rango-e2e-server-"));
   });
@@ -121,7 +121,7 @@ describe.skipIf(process.platform === "win32")("stopServer", () => {
       grandchildIgnoresSigterm: false,
     });
 
-    await stopServer(server);
+    await stopServers([server]);
 
     expect(isAlive(server.pid!)).toBe(false);
     expect(await waitUntil(() => !isAlive(grandchild))).toBe(true);
@@ -134,7 +134,7 @@ describe.skipIf(process.platform === "win32")("stopServer", () => {
       grandchildIgnoresSigterm: true,
     });
 
-    await stopServer(server, { exitWaitMs: 300 });
+    await stopServers([server], { exitWaitMs: 300 });
 
     expect(isAlive(server.pid!)).toBe(false);
     expect(await waitUntil(() => !isAlive(grandchild))).toBe(true);
@@ -150,13 +150,94 @@ describe.skipIf(process.platform === "win32")("stopServer", () => {
       grandchildIgnoresSigterm: true,
     });
 
-    await stopServer(server, { exitWaitMs: 300 });
+    await stopServers([server], { exitWaitMs: 300 });
 
-    // No waitUntil: stopServer returning is the contract, so a grandchild
+    // No waitUntil: stopServers returning is the contract, so a grandchild
     // still alive here is a leaked server.
     expect(isAlive(grandchild)).toBe(false);
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining(`pid ${server.pid}`),
     );
+  });
+});
+
+describe.skipIf(process.platform === "win32")("runCli", () => {
+  const handles: Array<ReturnType<typeof runCli>> = [];
+
+  /** Runs `source` with node; `env` is passed through as runCli's. */
+  function runNode(
+    source: string,
+    env: NodeJS.ProcessEnv = {},
+  ): ReturnType<typeof runCli> {
+    const scriptDir = mkdtempSync(path.join(tmpdir(), "rango-run-cli-"));
+    writeFileSync(path.join(scriptDir, "main.mjs"), source);
+    const handle = runCli({
+      command: "node main.mjs",
+      label: "run-cli-test",
+      cwd: scriptDir,
+      env: {
+        PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
+        ...env,
+      },
+    });
+    handles.push(handle);
+    void handle.done.then(() =>
+      rmSync(scriptDir, { recursive: true, force: true }),
+    );
+    return handle;
+  }
+
+  afterEach(async () => {
+    await stopServers(handles.splice(0), { exitWaitMs: 1000 });
+  });
+
+  it("findURL and findPort read output printed before they were called", async () => {
+    const handle = runNode(
+      "console.log('Ready on http://127.0.0.1:8787'); setInterval(() => {}, 1000);",
+    );
+    await new Promise<void>((resolve) => {
+      const poll = () =>
+        handle.stdout().includes("Ready") ? resolve() : setTimeout(poll, 20);
+      poll();
+    });
+
+    expect(await handle.findURL(1000)).toBe("http://127.0.0.1:8787");
+    expect(await handle.findPort(1000)).toBe(8787);
+  });
+
+  it("findPort rejects when the process exits before printing a URL, even with code 0", async () => {
+    const handle = runNode("console.error('port in use');");
+
+    await expect(handle.findPort(5000)).rejects.toThrow(
+      /exited \(code 0\) before printing a URL[\s\S]*Stderr \(tail\)/,
+    );
+    // Called after the exit, it still settles at once rather than at its timeout.
+    await expect(handle.findURL(60_000)).rejects.toThrow(/exited \(code 0\)/);
+  });
+
+  it("findURL rejects after its timeout when no URL is printed", async () => {
+    const handle = runNode("setInterval(() => {}, 1000);");
+
+    await expect(handle.findURL(200)).rejects.toThrow(
+      /printed no URL within 200 ms/,
+    );
+  });
+
+  it("lays env over process.env and leaves out a key set to undefined", async () => {
+    process.env.RANGO_RUN_CLI_INHERITED = "inherited";
+    process.env.RANGO_RUN_CLI_REMOVED = "present";
+    try {
+      const handle = runNode(
+        "console.log(JSON.stringify([process.env.RANGO_RUN_CLI_INHERITED, process.env.RANGO_RUN_CLI_SET, 'RANGO_RUN_CLI_REMOVED' in process.env]));",
+        { RANGO_RUN_CLI_SET: "set", RANGO_RUN_CLI_REMOVED: undefined },
+      );
+      // close, not exit: stdout is fully read only once the pipes close.
+      await new Promise((resolve) => handle.proc!.once("close", resolve));
+      expect(await handle.exitCode).toBe(0);
+      expect(JSON.parse(handle.stdout())).toEqual(["inherited", "set", false]);
+    } finally {
+      delete process.env.RANGO_RUN_CLI_INHERITED;
+      delete process.env.RANGO_RUN_CLI_REMOVED;
+    }
   });
 });

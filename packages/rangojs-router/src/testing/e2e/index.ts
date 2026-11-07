@@ -33,6 +33,23 @@ import {
 } from "./parity.js";
 import { createRangoMatchers, type RangoMatchers } from "./matchers.js";
 
+/**
+ * Server lifecycle for a fixture of your own: `runCli` spawns a server as the
+ * leader of its process group, and `ServerGuard` stops what a `beforeAll`
+ * started, escalating to SIGKILL for a group that outlives the wait.
+ * `waitForReady`, `warmupDevServer` and `createIsolatedViteCacheDir` are the
+ * readiness and cache-dir steps `useFixture` runs between the two.
+ */
+export {
+  createIsolatedViteCacheDir,
+  runCli,
+  ServerGuard,
+  waitForReady,
+  warmupDevServer,
+  type GuardedServer,
+  type RunCliHandle,
+} from "./server.js";
+
 export {
   assertCacheStatus,
   assertCacheDecision,

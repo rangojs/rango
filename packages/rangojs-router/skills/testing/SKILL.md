@@ -165,7 +165,7 @@ beside their function):
 |                                           | `serveShellRequest`, `resetShellTestState`, `createActionForm`                                                                                               | [`serve-shell-request.md`](./serve-shell-request.md) |
 | `@rangojs/router/testing/flight-matchers` | `flightMatchers` (`toMatchFlight`, `toMatchFlightSnapshot`)                                                                                                  | [`flight.md`](./flight.md)                           |
 | `@rangojs/router/testing/vitest`          | `rangoTestConfig`, `rangoTestAliases`, `rangoInlineDeps`, `rangoUseClientTransform`, `rangoUseCacheTransform`                                                | [`setup.md`](./setup.md)                             |
-| `@rangojs/router/testing/e2e`             | `createRangoE2E` and its standalone helpers; the cache/shell status helpers above are re-exported here                                                       | [`e2e-parity.md`](./e2e-parity.md)                   |
+| `@rangojs/router/testing/e2e`             | `createRangoE2E` and its standalone helpers, `runCli`, `ServerGuard` and `waitForReady`; the cache/shell status helpers above are re-exported here           | [`e2e-parity.md`](./e2e-parity.md)                   |
 
 ## Pre-push checklist
 

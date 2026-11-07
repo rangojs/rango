@@ -1629,6 +1629,42 @@ the dep optimizer, and tears the server down with a cross-platform process-group
 kill. Options include `command`, `buildCommand`, `isolatedServer`, `readyPath`,
 `skipBuild`. Use `f.url(path)` to resolve against the running server.
 
+When a fixture of your own needs a server `useFixture` does not start (a
+worker-scoped dev server shared by a file's tests, say), build it from the same
+pieces: `runCli` spawns the command as the leader of its process group, so
+stopping it reaches the vite that `pnpm dev` spawns, and `ServerGuard` stops
+everything it tracks, escalating to SIGKILL for a group that outlives
+`exitWaitMs`. Track the server the moment it is spawned, before anything is
+awaited, so a `beforeAll` or fixture that fails while the server starts still
+stops it. The steps `useFixture` runs in between are exported too:
+`waitForReady(url, getOutput?, timeoutMs?)` polls until the URL answers 2xx
+and throws with the tail of the server's output when it never does,
+`warmupDevServer(url)` lets a fresh dev server's dep optimizer settle before
+your tests run, and `createIsolatedViteCacheDir(cwd, name, mode)` gives a
+server a Vite `cacheDir` of its own.
+
+```ts
+import { test as base } from "@playwright/test";
+import { runCli, ServerGuard } from "@rangojs/router/testing/e2e";
+
+export const test = base.extend<{}, { devServerURL: string }>({
+  devServerURL: [
+    async ({}, use) => {
+      const servers = new ServerGuard();
+      const server = servers.track(
+        runCli({ command: "pnpm dev", label: "dev", cwd: process.cwd() }),
+      );
+      try {
+        await use(await server.findURL());
+      } finally {
+        await servers.dispose();
+      }
+    },
+    { scope: "worker" },
+  ],
+});
+```
+
 ### expectParity — JS vs no-JS
 
 ```ts
@@ -1922,6 +1958,13 @@ useFixture({ root, mode: "dev"|"build", command?, buildCommand?, isolatedServer?
 parityDescribe(name, (f) => { /* tests */ }, options?); // dev + (production) from one body
 expectParity(page, { navigate } | { submit: { testId, data? } }, { observe: string[], baseURL? });
 rangoMatchers; // expect.extend -> toHaveRangoPathname(page, expected)
+// Server lifecycle for a fixture of your own (the pieces useFixture is built from)
+runCli({ command, label?, cwd?, env?, ...spawnOptions }) // process-group leader; env laid over process.env
+  -> { findURL(timeoutMs?), findPort(timeoutMs?), exitCode, done, kill(signal?), pid, stdout(), stderr(), proc };
+new ServerGuard({ exitWaitMs? }) // track(server) at spawn, assertLive(), dispose(): SIGTERM, then SIGKILL after exitWaitMs (10 s)
+waitForReady(url, getOutput?, timeoutMs?) // polls until 2xx; throws after timeoutMs (60 s with CI, else 30 s) with the output's tail
+warmupDevServer(url) // document requests until two OK in a row (dep optimizer settled), 30 s at most
+createIsolatedViteCacheDir(cwd, name, mode) // fresh <cwd>/.vite-isolated/... path for a server's Vite cacheDir
 ```
 
 ## Migration: from an ad-hoc fixture to the official harness
