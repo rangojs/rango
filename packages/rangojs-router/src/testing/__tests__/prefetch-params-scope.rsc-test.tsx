@@ -254,22 +254,19 @@ describe("x-rsc-prefetch-scope through serveShellRequest", () => {
     expect(sharedWith(fromPage1, await standingOn("/q/other/2"))).toBe(false);
   });
 
-  it("a rule on the route that reads currentParams and falls back to the route's default keep, to a target a rewrite renders: the exact page's (source)", async () => {
+  it("a rule on the route that reads currentParams and falls back to the route's default, to a target a rewrite renders: the route is sent, so the answer is shared", async () => {
     // /rw/deals renders /rw/en/p/1: from /rw/en/p/1 its params and search
-    // equal the source's, so the route's default keeps product 1, and the
-    // offers layout is sent.
+    // equal the source's, but the visitor's URL moved, which the default
+    // counts as a change. Kept, the answer would be the exact page's: grouped
+    // by locale, /rw/en/p/2 would adopt it and keep product 2 at /rw/deals.
     const p1 = await standingOn("/rw/en/p/1");
     const toDeals = await prefetch("/rw/en/p/1", p1, "/rw/deals");
     const answer = (
       await deserializeResult<{ metadata: Metadata }>(toDeals.flight!)
     ).metadata;
     const productId = p1.matched[p1.matched.length - 1]!;
-    expect(answer.matched).toContain(productId);
-    expect(answer.diff).not.toContain(productId);
-    expect(answer.diff.length).toBeGreaterThan(0);
-    // Grouped by locale (`params; $k=id,locale&locale=en`), /rw/en/p/2 would
-    // adopt it and keep product 2 at /rw/deals.
-    expect(scopeOf(toDeals)).toBe("source");
+    expect(answer.diff).toContain(productId);
+    expect(scopeOf(toDeals)).toBeNull();
   });
 
   it("an action request is not a prefetch: its response carries no prefetch scope", async () => {

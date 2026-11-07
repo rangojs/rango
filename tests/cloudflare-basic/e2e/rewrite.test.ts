@@ -518,6 +518,51 @@ function rewriteTests(f: Fixture) {
     await expectIdentityKept(page);
   });
 
+  test("a navigation to a rewritten URL from the page it renders re-renders that page for the visitor's URL", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    // /rw/deal rewrites to /rw/products/hat: the same route, params and
+    // search, but ctx.rewrittenFrom moved.
+    await page.goto(f.url("/rw/products/hat"));
+    await waitForHydration(page);
+    await expect(testId(page, "rw-product-from")).toHaveText("none");
+    await using _reload = await expectNoReload(page);
+
+    await testId(page, "rw-product-to-deal").click();
+    await expect(page).toHaveURL(/\/rw\/deal$/);
+    await expect(testId(page, "rw-product")).toHaveText("Product hat");
+    await expect(testId(page, "rw-product-from")).toHaveText("/rw/deal");
+  });
+
+  test("a prefetch of a rewritten URL made on the page it renders shows that page when clicked from another product", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/rw/products/hat"));
+    await waitForHydration(page);
+    await using _reload = await expectNoReload(page);
+
+    // A hover prefetch of /rw/deal sent from the hat, read to its end.
+    const prefetched = page.waitForResponse(
+      (resp) =>
+        new URL(resp.url()).pathname === "/rw/deal" &&
+        resp.request().headers()["x-rango-prefetch"] !== undefined,
+    );
+    await testId(page, "rw-product-to-deal").hover();
+    await (await prefetched).finished();
+
+    // The cap's page holds the same segment ids as the hat's.
+    await testId(page, "rw-product-to-cap").click();
+    await expect(page).toHaveURL(/\/rw\/products\/cap$/);
+    await expect(testId(page, "rw-product")).toHaveText("Product cap");
+
+    await testId(page, "rw-product-to-deal").click();
+    await expect(page).toHaveURL(/\/rw\/deal$/);
+    await expect(testId(page, "rw-product")).toHaveText("Product hat");
+    await expect(testId(page, "rw-product-from")).toHaveText("/rw/deal");
+  });
+
   test("a loader fetch under the lock rejects with the rule as a loaderError", async ({
     request,
   }) => {
