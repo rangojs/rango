@@ -705,6 +705,15 @@ export interface RequestContext<
   _payloadVisitorLocation?: boolean;
 
   /**
+   * @internal Set when a navigation or an action answers a redirect as a
+   * Flight payload (`metadata.redirect`, rsc/handler.ts
+   * createRedirectFlightResponse), a 200. The document cache does not store
+   * it: a redirect can depend on the request (a session, an auth check), and
+   * the page stored before keeps serving.
+   */
+  _payloadRedirect?: boolean;
+
+  /**
    * Attach location state entries to the current response.
    *
    * For a client navigation or an action, the state is included in the RSC
@@ -1067,6 +1076,7 @@ export type PublicRequestContext<
   | "_servedFromStorage"
   | "_requestKind"
   | "_payloadVisitorLocation"
+  | "_payloadRedirect"
   | "_locationState"
   | "_documentLocationState"
   | "_carriedLocationStateCookie"

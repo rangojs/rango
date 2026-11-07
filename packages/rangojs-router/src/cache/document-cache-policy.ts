@@ -74,6 +74,7 @@ export function shouldCacheResponse(
     | "_payloadSourceScoped"
     | "_payloadVisitorLocation"
     | "_documentLocationState"
+    | "_payloadRedirect"
   >,
 ): CacheDirectives | null {
   // Only cache successful responses
@@ -107,6 +108,12 @@ export function shouldCacheResponse(
   // The payload carries the visitor's location state (#1330,
   // server/document-location-state.ts).
   if (requestCtx?._documentLocationState) {
+    return null;
+  }
+
+  // A redirect sent as a Flight payload, a 200. It can depend on the
+  // request, so it is never stored: the page stored before keeps serving.
+  if (requestCtx?._payloadRedirect) {
     return null;
   }
 

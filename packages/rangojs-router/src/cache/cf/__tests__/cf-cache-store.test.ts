@@ -1680,6 +1680,47 @@ describe("CFCacheStore", () => {
       expect(await result!.response.text()).toBe("stale");
     });
 
+    it("a write after a stale read lands after that read's REVALIDATING re-put", async () => {
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      await store.putResponse("doc-race", new Response("stale"), 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
+      vi.advanceTimersByTime(120 * 1000);
+
+      // The marker re-put carries the stale body and finishes last.
+      const cache = mockCaches.default;
+      const put = cache.put.bind(cache);
+      let releaseMarker!: () => void;
+      const markerGate = new Promise<void>((r) => (releaseMarker = r));
+      vi.spyOn(cache, "put").mockImplementation(async (request, response) => {
+        if (response.headers.get(CACHE_STATUS_HEADER) === "REVALIDATING") {
+          await markerGate;
+        }
+        return put(request, response);
+      });
+
+      const stale = await store.getResponse("doc-race");
+      expect(stale!.shouldRevalidate).toBe(true);
+      await stale!.response.text();
+      const written = store.putResponse(
+        "doc-race",
+        new Response(null, { status: 404 }),
+        60,
+        300,
+      );
+      releaseMarker();
+      await written;
+      await Promise.all(mockCtx.waitUntil.mock.results.map((r) => r.value));
+
+      const stored = await cache.match(
+        new Request(
+          "https://rsc-dummy-host-1.com/" + encodeURIComponent("doc:doc-race"),
+        ),
+      );
+      expect(stored?.status).toBe(404);
+    });
+
     it("should set Cache-Control with TTL + SWR", async () => {
       const mockCtx = createMockCtx();
       const store = new CFCacheStore({ ctx: mockCtx });

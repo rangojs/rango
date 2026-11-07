@@ -111,6 +111,8 @@ import { debugLog, debugWarn, getOrCreateRequestId } from "../logging.js";
 import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import { getContext } from "../../server/context.js";
 import { executionStart } from "../../cache/tag-invalidation.js";
+import { refreshRetiresEntry } from "../../cache/retired-entry.js";
+import { isDataNotFoundError } from "../../errors.js";
 import {
   createRequestContext,
   runAsBackgroundWork,
@@ -128,8 +130,11 @@ import {
  * cacheScope.cacheRoute: the stale-hit refresh below and proactive caching
  * (cache-store.ts). Returns the number of segments written.
  *
- * A render whose status is not 200 (an error or notFound boundary resolved)
- * is not written and returns 0, as a non-200 MISS is not cached
+ * A render that answers notFound() deletes the record and writes nothing:
+ * the record is gone (cache/retired-entry.ts). It shows as status 404, or,
+ * from a handler streaming behind loading(), as the segment's error, which
+ * cacheRoute reads. Any other non-200 render (an error boundary resolved) is
+ * not written and returns 0, as a non-200 MISS is not cached
  * (cache-store.ts): the entry it would replace keeps serving until a later
  * refresh succeeds or it expires. Nothing is held in process; a store's own
  * revalidation marker (CFCacheStore's REVALIDATING) re-arms after
@@ -204,9 +209,18 @@ export async function rerenderAndCacheRoute<TEnv>(
         },
       ),
     );
+    const retire = async (): Promise<number> => {
+      await cacheScope.retireRoute(
+        ctx.pathname,
+        ctx.matched.params,
+        interceptRecordKey(ctx.interceptResult),
+      );
+      return 0;
+    };
     if (ctx.interceptResult) {
-      segments.push(
-        ...(await runInStore(() =>
+      let interceptSegments: ResolvedSegment[];
+      try {
+        interceptSegments = await runInStore(() =>
           routerCtx.resolveInterceptEntry(
             // Nothing held: render fresh. Its loaders are skipped as the
             // route's are: the record drops them.
@@ -222,13 +236,19 @@ export async function rerenderAndCacheRoute<TEnv>(
             // A handler error rejects, so the failure is never cached.
             { background: true },
           ),
-        )),
-      );
+        );
+      } catch (error) {
+        // The intercept's handler answered notFound() (retired-entry.ts).
+        if (isDataNotFoundError(error)) return retire();
+        throw error;
+      }
+      segments.push(...interceptSegments);
     }
 
     handleStore.seal();
     // Boundaries set 500/404 through _setStatus (catchSegmentError), which
-    // lands on the sink.
+    // lands on the sink. notFound() retires the record (retired-entry.ts).
+    if (refreshRetiresEntry(sink.res.status)) return retire();
     if (sink.res.status !== 200) {
       debugLog("backgroundRevalidation", "skipping cache for non-200 render", {
         status: sink.res.status,
@@ -242,6 +262,7 @@ export async function rerenderAndCacheRoute<TEnv>(
       segments,
       interceptRecordKey(ctx.interceptResult),
       start,
+      true, // retireOnNotFound
     );
     return segments.length;
   });

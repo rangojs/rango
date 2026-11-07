@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readThroughItem } from "../read-through-swr.js";
+import { RETIRED_ITEM } from "../retired-entry.js";
 import type { CacheItemResult, CacheItemOptions } from "../types.js";
 import type { CacheErrorCategory } from "../cache-error.js";
 
@@ -225,6 +226,83 @@ describe("readThroughItem", () => {
       });
 
       expect(store.setItem).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("retire", () => {
+    class Gone extends Error {}
+    const isGone = (error: unknown) => error instanceof Gone;
+
+    async function staleRevalidation(failure: Error) {
+      const store = createMockStore({
+        value: "ser:stale-data",
+        shouldRevalidate: true,
+      });
+      const bgTasks: Array<() => Promise<void>> = [];
+      const reportError = vi.fn();
+      const write = vi.fn(async () => {});
+      const result = await readThroughItem({
+        ...store,
+        key: "k",
+        execute: vi.fn().mockRejectedValue(failure),
+        serialize,
+        deserialize,
+        storeOptions,
+        host: {
+          waitUntil: (fn: () => Promise<void>) => bgTasks.push(fn),
+          _reportBackgroundError: reportError,
+        } as never,
+        retire: { when: isGone, write },
+      });
+      await bgTasks[0]().catch(() => {});
+      return { result, store, write, reportError };
+    }
+
+    it("a revalidation that rejects with an accepted error writes the tombstone, unreported", async () => {
+      const { result, store, write, reportError } = await staleRevalidation(
+        new Gone(),
+      );
+      expect(result).toBe("stale-data");
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(store.setItem).not.toHaveBeenCalled();
+      expect(reportError).not.toHaveBeenCalled();
+    });
+
+    it("any other rejection keeps the entry and is reported", async () => {
+      const { write, store, reportError } = await staleRevalidation(
+        new Error("down"),
+      );
+      expect(write).not.toHaveBeenCalled();
+      expect(store.setItem).not.toHaveBeenCalled();
+      expect(reportError).toHaveBeenCalledWith(
+        expect.any(Error),
+        "stale-revalidation",
+      );
+    });
+
+    it("a stored tombstone is a miss: the body runs and its value is stored", async () => {
+      const store = createMockStore({
+        value: RETIRED_ITEM,
+        shouldRevalidate: false,
+      });
+      const localExecute = vi.fn(async () => "fresh-data");
+      const localDeserialize = vi.fn(async (value: string) => value);
+      const result = await readThroughItem({
+        ...store,
+        key: "k",
+        execute: localExecute,
+        serialize,
+        deserialize: localDeserialize,
+        storeOptions,
+        host: null,
+      });
+      expect(result).toBe("fresh-data");
+      expect(localDeserialize).not.toHaveBeenCalled();
+      expect(store.setItem).toHaveBeenCalledWith(
+        "k",
+        "ser:fresh-data",
+        storeOptions,
+      );
     });
   });
 

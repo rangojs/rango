@@ -422,6 +422,7 @@ import {
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
+import { refreshOutcomePatterns } from "./pages/refresh-outcome.js";
 import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
 import clientUrlsVarsPatterns from "./client-urls-vars/urls.js";
 import clientUrlsSsrSignalsPatterns from "./client-urls-ssr-signals/urls.js";
@@ -1246,6 +1247,11 @@ export const urlpatterns = urls(
         // A kept hero above a PLP the document cache stores: its partial is
         // the source page's only (e2e/doc-cache-source.test.ts).
         include("/doc-cache-source", docCacheSourcePatterns),
+        // A stale entry's refresh that answers notFound(), redirect() or an
+        // error (e2e/refresh-outcome.test.ts).
+        include("/refresh-outcome", refreshOutcomePatterns, {
+          name: "refreshOutcome",
+        }),
         // Prefetch answers served from storage: cache() records, a Prerender
         // entry, the document cache (e2e/prefetch-stored.test.ts).
         include("/prefetch-stored", prefetchStoredPatterns, {

@@ -232,6 +232,7 @@ export function createRSCHandler<
     external?: boolean,
   ): Response {
     const reqCtx = _getRequestContext<TEnv>();
+    if (reqCtx) reqCtx._payloadRedirect = true;
     const requestOrigin =
       reqCtx?.url.origin ?? new URL("http://localhost").origin;
     // Resolve with the same policy as 3xx guardOutgoingRedirect. Keep

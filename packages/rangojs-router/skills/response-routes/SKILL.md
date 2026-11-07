@@ -422,11 +422,12 @@ path.json("/api/users", handler, { name: "users" }, () => [
 Response-route `cache()` stores whole `Response`s. The serve leaf
 (`serveResponseRouteWithCache`) applies the same safety gates as document cache:
 
-| Gate                   | Behavior                                                                                                                                                                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **GET/HEAD only**      | Non-GET/HEAD methods skip the cache (handler runs uncached).                                                                                                                                             |
-| **Per-client signals** | A response with `Set-Cookie` or `x-rango-keep-cache` is returned live but **not** stored (MISS + SWR revalidation also skip put).                                                                        |
-| **Default key**        | `response:{type}:{routerId}@{host}{path}[?search]` — the serving router's id, sorted search, reserved `_rsc*` / allowlisted `__*` params excluded. Custom `key()` / store `keyGenerator` still override. |
+| Gate                   | Behavior                                                                                                                                                                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **GET/HEAD only**      | Non-GET/HEAD methods skip the cache (handler runs uncached).                                                                                                                                                                     |
+| **Per-client signals** | A response with `Set-Cookie` or `x-rango-keep-cache` is returned live but **not** stored (MISS + SWR revalidation also skip put).                                                                                                |
+| **Default key**        | `response:{type}:{routerId}@{host}{path}[?search]` — the serving router's id, sorted search, reserved `_rsc*` / allowlisted `__*` params excluded. Custom `key()` / store `keyGenerator` still override.                         |
+| **Stale refresh 404**  | A GET whose stale entry's refresh answers 404 (a `RouterError` with `status: 404`, or a 404 `Response`) retires the entry: the next request runs the handler. A redirect or any other status stores nothing and keeps the entry. |
 
 ## CSRF
 

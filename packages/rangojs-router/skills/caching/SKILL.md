@@ -200,6 +200,32 @@ cache(
 - `cache(false, () => [...])` disables caching for a subtree (see "Nested Cache
   Boundaries").
 
+### When a stale entry's refresh does not render the page
+
+A stale entry is served while its background refresh runs. What the refresh
+does when it does not render the page depends on what it answers. This holds
+for every cache: route `cache()`, a loader's `cache()`, `"use cache"`, the
+document cache (`/document-cache`) and a response route's `cache()`:
+
+| The refresh answers                    | The stored entry                                                                                                                                          |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notFound()` (a response route: a 404) | Retired. The next request runs the handler and the visitor gets its not-found, not the deleted record's page                                              |
+| `redirect()`                           | Kept, nothing stored. A redirect can depend on the request (a session, an auth check), so the entry revalidates on its own schedule (its `ttl`, its tags) |
+| An error                               | Kept, nothing stored, reported to `onError`. A later refresh replaces it                                                                                  |
+
+```typescript
+path("/product/:id", async (ctx) => {
+  const product = await db.products.get(ctx.params.id);
+  // Deleted after the entry was stored: the stale page is served once more,
+  // its refresh lands here, and the next request renders the not-found.
+  if (!product) notFound();
+  return <Product product={product} />;
+});
+```
+
+To drop an entry at once instead, invalidate its tags when the record is
+deleted (`updateTag()`, see "Tag-Based Invalidation").
+
 ## When cache() does not pay
 
 A cache hit is not free: it still runs middleware, the store read, and the

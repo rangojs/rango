@@ -6,7 +6,7 @@
  * with another request's) the route runs uncached rather than caching under
  * the default key.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { serveResponseRouteWithCache } from "../response-cache-serve.js";
 import { createCacheScope } from "../../cache/cache-scope.js";
 import { MemorySegmentCacheStore } from "../../cache/memory-segment-store.js";
@@ -271,5 +271,99 @@ describe("serveResponseRouteWithCache: router.prerender() warm", () => {
     expect(executeHandler).toHaveBeenCalledTimes(1);
     expect(putResponse).not.toHaveBeenCalled();
     expect(record.writes.response).toBe(0);
+  });
+});
+
+describe("serveResponseRouteWithCache: a stale entry's refresh", () => {
+  function harness(method: "GET" | "HEAD") {
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    const store = new MemorySegmentCacheStore();
+    const putResponse = vi.spyOn(store, "putResponse");
+    const url = new URL("http://localhost/api/data");
+    const manifestEntry = {
+      type: "route",
+      cache: { options: { ttl: 1, swr: 300 } },
+      parent: null,
+    } as unknown as EntryData;
+    let answer = () => Response.json({ n: 1 });
+    const executeHandler = vi.fn(async () => answer());
+    const serve = async (m: "GET" | "HEAD" = "GET") => {
+      const reqCtx = createRequestContext({
+        env: {},
+        request: new Request(url, { method: m }),
+        url,
+        variables: {},
+        cacheStore: store,
+      });
+      const pending: Promise<void>[] = [];
+      reqCtx.waitUntil = (fn) => {
+        pending.push(fn());
+      };
+      const served = await runWithRequestContext(reqCtx, () =>
+        serveResponseRouteWithCache({
+          reqCtx,
+          manifestEntry,
+          responseType: "json",
+          url,
+          executeHandler,
+          deps: { createCacheScope },
+        }),
+      );
+      await Promise.all(pending);
+      return served;
+    };
+    return {
+      putResponse,
+      executeHandler,
+      async staleRefresh(next: () => Response) {
+        await serve();
+        offset += 1_500;
+        answer = next;
+        putResponse.mockClear();
+        executeHandler.mockClear();
+        return serve(method);
+      },
+      serve,
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a 404 writes a bodiless 404 tombstone under the key, which the next read misses", async () => {
+    const h = harness("GET");
+    const stale = await h.staleRefresh(
+      () => new Response("gone", { status: 404 }),
+    );
+    expect(await stale?.json()).toEqual({ n: 1 });
+    expect(h.putResponse).toHaveBeenCalledTimes(1);
+    const [, tombstone, ttl, swr] = h.putResponse.mock.calls[0];
+    expect(tombstone.status).toBe(404);
+    expect(await tombstone.text()).toBe("");
+    expect([ttl, swr]).toEqual([1, 300]);
+
+    h.executeHandler.mockClear();
+    const next = await h.serve();
+    expect(h.executeHandler).toHaveBeenCalledTimes(1);
+    expect(next?.status).toBe(404);
+  });
+
+  it.each([
+    ["a redirect", () => Response.redirect("http://localhost/moved", 302)],
+    ["a 500", () => new Response("down", { status: 500 })],
+    ["a 403", () => new Response("no", { status: 403 })],
+  ])("%s writes nothing", async (_label, next) => {
+    const h = harness("GET");
+    await h.staleRefresh(next);
+    expect(h.putResponse).not.toHaveBeenCalled();
+  });
+
+  it("a HEAD request's 404 refresh writes nothing", async () => {
+    const h = harness("HEAD");
+    await h.staleRefresh(() => new Response(null, { status: 404 }));
+    expect(h.putResponse).not.toHaveBeenCalled();
   });
 });

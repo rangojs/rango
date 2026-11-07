@@ -35,6 +35,8 @@ import {
   noteWarmWrite,
 } from "../prerender/warm-request.js";
 import { reportCacheError } from "./cache-error.js";
+import { refreshRetiresEntry, retireStoredResponse } from "./retired-entry.js";
+import { isDataNotFoundError } from "../errors.js";
 import {
   executionStart,
   markResponseStart,
@@ -390,6 +392,21 @@ export function createDocumentCacheMiddleware<TEnv = any>(
           }),
         });
 
+        // The stale entry's window, from the Cache-Control it was stored
+        // with: a tombstone written for it outlives the entry. A store that
+        // dropped that header leaves the entry.
+        const retiredWindow = shouldCacheResponse(cached.response);
+        const retire = async (): Promise<void> => {
+          if (!retiredWindow) return;
+          await retireStoredResponse(
+            store,
+            cacheKey,
+            retiredWindow.sMaxAge!,
+            retiredWindow.staleWhileRevalidate,
+          );
+          log(`[DocumentCache] RETIRED ${typeLabel}: ${url.pathname}`);
+        };
+
         // Re-establish the request-context ALS around the whole background
         // task: next() re-runs the full handler pipeline, and on workerd a
         // waitUntil task runs detached from the request's I/O context, so a
@@ -412,6 +429,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                 PHASES.background("document-revalidation"),
                 async () => {
                   const fresh = await next();
+                  // notFound(): the record is gone (retired-entry.ts).
+                  if (refreshRetiresEntry(fresh.status)) return retire();
                   const directives = shouldCacheResponse(fresh, rerunCtx);
 
                   if (!directives || !fresh.body) return;
@@ -420,6 +439,11 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   // drain the fresh render fully before snapshotting tags
                   // (same render-complete barrier as the miss path).
                   const body = await new Response(fresh.body).arrayBuffer();
+                  // A handler streaming behind loading() answers notFound()
+                  // after the 200 committed: its error, not the status.
+                  if (rerunCtx._renderErrors?.some(isDataNotFoundError)) {
+                    return retire();
+                  }
                   throwIfRenderErrored(rerunCtx);
                   // Not written when one of its tags was invalidated since
                   // the render started (#977).

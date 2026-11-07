@@ -543,13 +543,13 @@ describe("a background re-render that resolves an error or notFound boundary", (
     expect(served().route).toBe("v2");
   });
 
-  it("a refresh that calls notFound() leaves the stale entry serving", async () => {
-    const { miss, hit, handlerRan } = await failRefresh(
+  it("a refresh that calls notFound() retires the stale entry: the next request runs the handler", async () => {
+    const { miss, handlerRan } = await failRefresh(
       "/refresh-not-found",
       "notFound",
     );
     expect(miss.route).toBe("v1");
-    expect({ hit, handlerRan }).toEqual({ hit: miss, handlerRan: false });
+    expect(handlerRan).toBe(true);
   });
 
   it("proactive caching writes nothing when only its re-render throws", async () => {

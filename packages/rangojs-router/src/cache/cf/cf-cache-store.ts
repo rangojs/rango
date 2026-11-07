@@ -762,6 +762,8 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly tagInvalidationTtl?: number;
   private readonly tagCacheTtl: number;
   private readonly kvFallThrough: boolean;
+  /** A stale read's REVALIDATING re-put still in flight, by L1 request URL. */
+  private readonly markerWrites = new Map<string, Promise<void>>();
 
   constructor(options: CFCacheStoreOptions<TEnv>) {
     if (!options.ctx) {
@@ -1250,10 +1252,12 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
    *   is still initiated synchronously (this.waitUntil invokes its callback
    *   immediately), so concurrent readers see the marker land at the same time an
    *   awaited write would -- awaiting only blocks the current request.
-   * - The background revalidation's fresh set() is gated behind a full re-render,
-   *   so it lands well after this put; a stale-clobbers-fresh race would require
-   *   this single put to be slower than that entire render+set, and self-heals
-   *   within MAX_REVALIDATION_INTERVAL.
+   * - A write or a delete of the same entry from this store waits for it
+   *   (afterMarker): the marker carries the stale entry, so landing after a
+   *   refresh's write or retire it would restore the stale entry for
+   *   MAX_REVALIDATION_INTERVAL. A response route's refresh answers without a
+   *   render, and a document marker streams its body, so the refresh can
+   *   finish first.
    *
    * Cache-Control is recomputed to the REMAINING ttl from the stored hard-expiry
    * deadline (see remainingCacheControl), not copied from the original
@@ -1287,8 +1291,18 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         // the entry simply re-arms on the next stale read.
       }
     };
-    if (this.waitUntil) this.waitUntil(write);
-    else void write();
+    const url = request.url;
+    const pending: Promise<void> = write().finally(() => {
+      if (this.markerWrites.get(url) === pending) this.markerWrites.delete(url);
+    });
+    this.markerWrites.set(url, pending);
+    if (this.waitUntil) this.waitUntil(() => pending);
+  }
+
+  /** Run an L1 write or delete of `request` after its marker re-put lands. */
+  private afterMarker<T>(request: Request, op: () => Promise<T>): Promise<T> {
+    const pending = this.markerWrites.get(request.url);
+    return pending ? pending.then(op) : op();
   }
 
   // ============================================================================
@@ -1597,7 +1611,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         },
       });
 
-      const putPromise = cache.put(request, response);
+      const putPromise = this.afterMarker(request, () =>
+        cache.put(request, response),
+      );
 
       let l1Write: Promise<void> | undefined;
       if (this.waitUntil) {
@@ -1637,7 +1653,10 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     if (this.isReservedSegmentKey(key, "cache-delete")) return false;
     try {
       const cache = await this.getCache();
-      const result = await cache.delete(this.keyToRequest(key, "data"));
+      const request = this.keyToRequest(key, "data");
+      const result = await this.afterMarker(request, () =>
+        cache.delete(request),
+      );
 
       // L2: delete from KV
       if (this.kv && this.waitUntil) {
@@ -1768,7 +1787,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         headers,
       });
 
-      const putPromise = cache.put(request, toCache);
+      const putPromise = this.afterMarker(request, () =>
+        cache.put(request, toCache),
+      );
 
       if (this.waitUntil) {
         // Non-blocking write
@@ -1884,7 +1905,9 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
         },
       });
 
-      const putPromise = cache.put(request, response);
+      const putPromise = this.afterMarker(request, () =>
+        cache.put(request, response),
+      );
 
       if (this.waitUntil) {
         this.waitUntil(() =>

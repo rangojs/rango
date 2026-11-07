@@ -1153,7 +1153,28 @@ State:    |  FRESH   |    STALE      |  EXPIRED    |
 Action:   |  serve   | serve+reval   |  miss       |
 ```
 
-A route refresh that resolves an error or notFound boundary is not written, the same way the MISS gate in `cache-store.ts` skips a non-200 response, so the stale entry keeps serving until a later refresh succeeds or the entry expires (`rerenderAndCacheRoute` in `match-middleware/background-revalidation.ts`; proactive caching goes through the same gate).
+### What a refresh does with its answer
+
+A refresh writes the page it renders, and only a page. What it does with any other answer depends on what that answer tells about the record behind the entry:
+
+| The refresh answers                                                                      | The stored entry                                                      | Why                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A page                                                                                   | replaced                                                              | the ordinary refresh                                                                                                                                                                                               |
+| `notFound()` (status 404, or a handler behind `loading()` that answers it after the 200) | retired: the next request runs the handler and serves its live answer | the record is gone. Writing nothing kept the deleted record's page serving, with status 200, until the SWR window ended or a tag invalidated it                                                                    |
+| `redirect()`                                                                             | kept, nothing stored                                                  | a redirect can depend on the request (a session or an auth check), so it does not show the page is gone. The entry revalidates on its own schedule (its ttl and tags, a later refresh). A redirect is never stored |
+| An error (a 5xx, an error boundary, a render error)                                      | kept, nothing stored                                                  | a transient failure; the entry keeps serving until a later refresh succeeds or it expires                                                                                                                          |
+
+Every writer applies it in its own refresh branch, with the rule in `src/cache/retired-entry.ts`:
+
+- Route `cache()` records: `rerenderAndCacheRoute` (`match-middleware/background-revalidation.ts`; proactive caching goes through the same function) deletes the record (`CacheScope.retireRoute`) when the re-render's status is 404 or an intercept record's handler rejects with `notFound()` (the background intercept pass does not recover into a boundary), and `cacheRoute(..., retireOnNotFound)` deletes it when a streamed handler's recovered or Flight error is a `notFound()`. Any other non-200 render is not written, the same way the MISS gate in `cache-store.ts` skips a non-200 response.
+- The document cache (`createDocumentCacheMiddleware`) and the response-route cache (`rsc/response-cache-serve.ts`): the response family has no delete, so the refresh writes a bodiless 404 response under the key for the stale entry's window (`retireStoredResponse`). Both readers serve a stored response only at status 200, so it reads as a miss. The document cache reads a streamed `notFound()` from the re-run's `_renderErrors`. A response route's not-found is its 404 (a `RouterError` with `status: 404`, or a 404 `Response`), on GET only.
+- Loader `cache()` (`readThroughItem`'s `retire`) and `"use cache"` (`cache-runtime.ts`, the background refresh and a `foregroundOnAction` foreground one): a refresh that rejects with `notFound()` writes the `RETIRED_ITEM` tombstone, which every item lookup reads as a miss.
+
+On `CFCacheStore` a stale read re-puts the entry marked `REVALIDATING`, carrying the stale body (`markRevalidating`). A write or a delete of the same L1 entry from that store waits for the re-put (`afterMarker`): otherwise a refresh that finishes first, a response route's or a retire, has its write overwritten by the stale entry, which then serves as `REVALIDATING` for `MAX_REVALIDATION_INTERVAL`.
+
+A tombstone only ever turns a hit into a miss, so it skips the invalidation gate (`predatesInvalidation`), and one that lands after a newer page costs a single render. The on-demand prerender store has its own marker (`create-prerender-trigger.ts`'s `noPage`), and PPR shell entries are recaptured on their own path, which this does not cover.
+
+A navigation or an action that redirects with a Flight payload (a 200 carrying `metadata.redirect`: an external redirect, or one with location state) marks the request `_payloadRedirect`, so the document cache stores it neither on a MISS nor on a refresh.
 
 ### Data Structures
 

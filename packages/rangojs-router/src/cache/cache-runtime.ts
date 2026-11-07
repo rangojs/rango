@@ -71,6 +71,8 @@ import {
   type CacheExecScope,
 } from "./cache-exec-scope.js";
 import { reportCacheError } from "./cache-error.js";
+import { isRetiredItem, RETIRED_ITEM } from "./retired-entry.js";
+import { isDataNotFoundError } from "../errors.js";
 import { IN_FLIGHT_LEADER_MAX_WAIT_MS } from "./cache-policy.js";
 import { isWarmReplace, noteWarmWrite } from "../prerender/warm-request.js";
 import {
@@ -642,7 +644,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
     // be reading data from before the change the warm publishes, and a
     // follower writes nothing of its own.
     const warmReplace = isWarmReplace(requestCtx);
-    const cached = warmReplace ? null : await store.getItem(cacheKey);
+    const stored = warmReplace ? null : await store.getItem(cacheKey);
+    // A notFound() refresh's tombstone (retired-entry.ts) reads as a miss.
+    const cached = stored && isRetiredItem(stored.value) ? null : stored;
+    // The value is gone (notFound(), retired-entry.ts): replace the entry
+    // with the tombstone. Throws to the caller's report.
+    const retire = (): Promise<void> =>
+      store.setItem!(cacheKey, RETIRED_ITEM, {
+        ttl: profile.ttl,
+        swr: profile.swr,
+      });
 
     // Serve a cached entry on the hit path: deserialize the stored value,
     // replay handle data (gated on tainted args), and surface the entry's tags
@@ -803,8 +814,17 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
                 );
               } catch (bgError) {
                 bgCapture?.stop();
+                let failure = bgError;
+                if (isDataNotFoundError(bgError)) {
+                  try {
+                    await retire();
+                    return;
+                  } catch (retireError) {
+                    failure = retireError;
+                  }
+                }
                 reportCacheError(
-                  bgError,
+                  failure,
                   "stale-revalidation",
                   "[use cache] background revalidation failed",
                   requestCtx,
@@ -965,6 +985,23 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       // they retry fresh, then propagate to this caller.
       clearSelf();
       rejectEnvelope(execError);
+      // A stale entry this call refreshed in the foreground
+      // (foregroundOnAction) answered notFound(): it is gone too.
+      if (cached && isDataNotFoundError(execError)) {
+        void runBackground(
+          requestCtx,
+          () =>
+            retire().catch((error) =>
+              reportCacheError(
+                error,
+                "cache-write",
+                `[use cache] "${id}" retire`,
+                requestCtx,
+              ),
+            ),
+          true,
+        );
+      }
       throw execError;
     } finally {
       // Decrement ref count; symbol is deleted when it reaches zero
