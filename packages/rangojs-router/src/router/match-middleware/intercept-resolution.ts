@@ -114,7 +114,7 @@ import { isInterceptSegment } from "../../browser/intercept-utils.js";
  *
  * If ctx.interceptResult exists and we're not in a cache-hit-with-intercept scenario:
  * - Resolves intercept segments
- * - Updates state.interceptSegments
+ * - Updates state.interceptSegments and state.interceptMatchedIds
  * - Updates state.slots with the intercept slot
  * - Yields intercept segments after main segments
  */
@@ -174,7 +174,7 @@ export function withInterceptResolution<TEnv>(
     });
 
     const Store = ctx.Store;
-    const interceptSegments = await Store.run(() =>
+    const { segments: interceptSegments, matchedIds } = await Store.run(() =>
       resolveInterceptEntry(
         interceptPassInput(ctx),
         ctx.interceptResult!.intercept,
@@ -184,6 +184,7 @@ export function withInterceptResolution<TEnv>(
     );
 
     state.interceptSegments = interceptSegments;
+    state.interceptMatchedIds = matchedIds;
     state.slots[slotName] = {
       active: true,
       segments: interceptSegments,
@@ -229,7 +230,7 @@ async function handleCacheHitIntercept<TEnv>(
     delete slot.loaderIds;
   }
 
-  const loaderSegments = resolveInterceptLoadersOnly
+  const { segments: loaderSegments, matchedIds } = resolveInterceptLoadersOnly
     ? await ctx.Store.run(() =>
         resolveInterceptLoadersOnly(
           interceptPassInput(ctx),
@@ -238,9 +239,10 @@ async function handleCacheHitIntercept<TEnv>(
           true, // belongsToRoute
         ),
       )
-    : [];
+    : { segments: [], matchedIds: cachedSlot.map((s) => s.id) };
   const interceptSegments = [...cachedSlot, ...loaderSegments];
   state.interceptSegments = interceptSegments;
+  state.interceptMatchedIds = matchedIds;
   state.slots[slotName] = {
     active: true,
     segments: interceptSegments,

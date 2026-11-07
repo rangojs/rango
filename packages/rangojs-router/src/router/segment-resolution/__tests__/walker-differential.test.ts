@@ -584,6 +584,7 @@ function delivered(
   const state = {
     matchedIds,
     interceptSegments: [],
+    interceptMatchedIds: [],
     slots: {},
   } as unknown as MatchPipelineState;
   return restoreParallelLoaderMarkers(
@@ -733,8 +734,8 @@ type Exception =
   /**
    * The intercept branch of resolveAllSegments
    * (`interceptResult`): under an intercept the walker skips the intercepted
-   * route's entry (its handler and loaders) and lists only the route's id
-   * as matched. A full match's FRESH pass has no intercept; the background
+   * route's entry (its handler and loaders) and lists none of its ids as
+   * matched. A full match's FRESH pass has no intercept; the background
    * re-render of an intercept record passes it to its FRESH pass
    * (rerenderAndCacheRoute), which is not modelled here.
    */
@@ -1157,6 +1158,7 @@ const CASES: Case[] = [
         "M0L0L0L2R1D0.walker#Data",
         "M0L0L0L2R1",
         "not matched: M0L0L0L2R1D0.walker#Data",
+        "not matched: M0L0L0L2R1",
       ],
     },
     recorded: {

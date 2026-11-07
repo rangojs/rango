@@ -91,6 +91,7 @@
  *
  * Intercept data:
  *   - interceptSegments: Segments for modal slots
+ *   - interceptMatchedIds: Every segment ID the intercept's slot owns
  *   - slots: Named slot data for client
  *
  *
@@ -274,6 +275,9 @@ export interface MatchPipelineState {
 
   // Intercept segments
   interceptSegments: ResolvedSegment[];
+  // Every segment id the intercept's slot owns, in order: the slot, then each
+  // loader segment, run or not (intercept-resolution.ts resolveInterceptEntry)
+  interceptMatchedIds: string[];
 
   // Slots state
   slots: Record<
@@ -294,6 +298,7 @@ export function createPipelineState(): MatchPipelineState {
     segments: [],
     matchedIds: [],
     interceptSegments: [],
+    interceptMatchedIds: [],
     slots: {},
   };
 }

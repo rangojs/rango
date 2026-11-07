@@ -440,7 +440,7 @@ describe("intercept handler lanes left unchanged", () => {
         { background: true },
       ),
     );
-    const slot = result.find((seg: any) => seg.slot === "@modal");
+    const slot = result.segments.find((seg: any) => seg.slot === "@modal");
     await expect(slot!.component).rejects.toThrow(
       "background streamed modal failed",
     );
