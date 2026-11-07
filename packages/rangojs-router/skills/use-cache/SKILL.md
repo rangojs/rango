@@ -73,6 +73,11 @@ until expiry. Instead the write is skipped, logged and reported to `onError`
 background refresh): the next call runs the function again, and a stale entry
 keeps serving.
 
+A function that throws `notFound()` in a stale entry's background refresh
+retires the entry instead: the next call runs it again, and its `notFound()`
+reaches the page. `redirect()` or an error there keeps the stale entry (see
+`/caching`, "When a stale entry's refresh does not render the page").
+
 A miss renders a decoded copy of what it encodes, as a hit renders the stored
 entry, so a child that throws or a promise that rejects throws where the copy
 renders, as it would on a hit. A value Flight cannot encode at all (a

@@ -171,6 +171,12 @@ starts from what middleware ahead of the cache wrote to the response before
 its headers are kept, and a cookie it sets keeps the refreshed page out of the
 cache.
 
+When the re-run answers `notFound()` (a 404, or a handler behind `loading()`
+that answers it after the 200), the stale entry is retired: the next request
+runs the handler and gets its not-found, not the deleted record's page. A
+redirect or an error stores nothing and keeps the stale entry (see
+`/caching`, "When a stale entry's refresh does not render the page").
+
 ## Cache Status Header
 
 Response includes `x-document-cache-status`:
@@ -210,6 +216,9 @@ suffixes are still appended.
 
 ## What's NOT Cached
 
+- A redirect, including a client navigation's redirect sent in its RSC payload
+  (an `external: true` redirect, or one with location state), which answers
+  200
 - Server actions (`_rsc_action`)
 - Loader requests (`_rsc_loader`)
 - Stale requests (`_rsc_stale`): the client marks stale the follow-up

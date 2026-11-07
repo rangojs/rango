@@ -661,6 +661,11 @@ handler.
 The loader's data is cached independently from the route's segment cache,
 using the same `SegmentCacheStore` (app-level or per-loader override).
 
+A stale entry's background refresh that throws `notFound()` retires the entry:
+the next request runs the loader, and its `notFound()` reaches the page. A
+refresh that throws `redirect()` or an error keeps the stale entry (see
+`/caching`, "When a stale entry's refresh does not render the page").
+
 Values are serialized through RSC Flight, so loaders can return ReactNode,
 Promises, null, and any RSC-serializable type — all round-trip correctly
 through the cache.

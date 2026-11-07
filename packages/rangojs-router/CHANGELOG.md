@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fix: a cached page whose refresh answers `notFound()` stops serving
+
+**Before.** When a stale entry's background refresh rendered `notFound()`,
+the cache wrote nothing and deleted nothing, so the deleted record's page kept
+serving with status 200 until the stale-while-revalidate window ended or a tag
+invalidated it. This held for route `cache()`, a loader's `cache()`,
+`"use cache"`, the document cache (`createDocumentCacheMiddleware`) and a
+response route's `cache()` (whose not-found is a 404). The document cache
+also stored a client navigation's redirect when it came as an RSC payload (an
+`external: true` redirect, or one with location state), and served it to
+later navigations.
+
+**Now.** That refresh retires the entry: the next request runs the handler
+and the visitor gets its not-found. A handler streaming behind `loading()`
+that answers `notFound()` after the 200 retires it too. A refresh that answers
+`redirect()` or an error stores nothing and keeps the entry, as before: a
+redirect can depend on the request, so the entry revalidates on its own
+schedule. A redirect is never stored by the document cache.
+
+On `CFCacheStore`, a write of an entry no longer lands before the
+`REVALIDATING` re-put of the stale read that scheduled it: a fast refresh,
+such as a response route's, used to have its new entry overwritten by the
+stale one for up to 30 seconds.
+
+```ts
+path("/product/:id", async (ctx) => {
+  const product = await db.products.get(ctx.params.id);
+  if (!product) notFound(); // the stale page is served once more, then the 404
+  return <Product product={product} />;
+});
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
