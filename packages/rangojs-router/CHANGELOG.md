@@ -22,8 +22,10 @@ route's, the layout's or the slot's:
 Each handler's ctx carries its own segment, and its own `use` keeps it when a
 component calls it detached from the ctx, copied off it, or borrowed onto
 another object. A loader the ctx starts reads the same carried segment, so
-its pushes land in the layout's or the slot's bucket. The push is still
-rejected, at the same moment, and production still shows no message.
+its pushes land in the layout's or the slot's bucket, and a `"use cache"` HIT
+replays a recorded push into it rather than into whichever segment the walker
+pinned since. The push is still rejected, at the same moment, and production
+still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

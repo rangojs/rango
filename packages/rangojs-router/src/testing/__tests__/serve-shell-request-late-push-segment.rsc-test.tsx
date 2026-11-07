@@ -181,6 +181,15 @@ async function serve(url: string, hold: Hold) {
   return { errors: [...errors], matched: await matchedOf(result.flight) };
 }
 
+/** Every reported late push's segment. */
+function reportedSegments(reported: string[]): string[] {
+  return reported.map((message) => {
+    const segment = /for segment "([^"]+)" was pushed after/.exec(message);
+    expect(segment).not.toBeNull();
+    return segment![1]!;
+  });
+}
+
 /** The one LateHandlePushError the response reported, and its segment. */
 function latePushSegment(reported: string[]): string {
   expect(reported).toHaveLength(1);
@@ -364,6 +373,78 @@ describe("a loader a handler's ctx starts from the component it rendered", () =>
     const matched = await matchedOf(result.flight);
     const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
     expect(latePushSegment([...errors])).toBe(layout);
+  });
+});
+
+/** A "use cache" function taking a handler's ctx; its body pushes a handle. */
+async function cachedCrumb(ctx: HandlerContext) {
+  "use cache";
+  ctx.use(Crumbs)("cached");
+  return "cached";
+}
+
+let requests = 0;
+
+async function FromComponent({ ctx }: { ctx: HandlerContext }) {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (requests > 1) await cachedCrumb(ctx);
+  return <span>component</span>;
+}
+
+/**
+ * A layout whose handler calls the cached function on the first request (so
+ * its record holds the push) and whose component calls it on the second (a
+ * replay), with a slot that pins before the component renders.
+ */
+function replayRouter() {
+  return createRouter({
+    onError: ({ error }) => {
+      errors.push(error instanceof Error ? error.message : String(error));
+    },
+  }).routes(
+    urls(({ path, layout, parallel }) => [
+      layout(
+        () => <main>shell</main>,
+        () => [
+          layout(
+            async (ctx) => {
+              requests++;
+              if (requests === 1) await cachedCrumb(ctx);
+              return <FromComponent ctx={ctx} />;
+            },
+            () => [
+              path(
+                "/cached-replay",
+                () => <p>page</p>,
+                { name: "cachedReplay" },
+                () => [parallel({ "@side": () => <aside>side</aside> })],
+              ),
+            ],
+          ),
+        ],
+      ),
+    ]),
+  );
+}
+
+describe('a "use cache" replay through a layout\'s ctx', () => {
+  it("lands in the layout, not the slot the walker pinned last", async () => {
+    requests = 0;
+    errors.length = 0;
+    const router = replayRouter();
+    const cacheStore = new MemorySegmentCacheStore();
+    const options = { cacheStore, cacheProfiles: { default: { ttl: 300 } } };
+    // The MISS records the body's push under the layout.
+    const miss = await serveShellRequest(router, "/cached-replay", options);
+    const matched = await matchedOf(miss.flight);
+    const layout = matched.filter((id) => /L\d+$/.test(id)).at(-1)!;
+    errors.length = 0;
+    // The component's call replays the record after an await, by which time
+    // the route's slot is the pin.
+    await serveShellRequest(router, "/cached-replay", options);
+    const segments = reportedSegments([...errors]);
+    expect(segments.length).toBeGreaterThan(0);
+    expect([...new Set(segments)]).toEqual([layout]);
   });
 });
 

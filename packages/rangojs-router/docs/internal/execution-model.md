@@ -2621,12 +2621,19 @@ time, because `loader-cache.ts` swaps that for its override interceptor.
 
 A loader the ctx starts (`ctx.use(loader)`) belongs to the segment that ctx
 carries too: `loaderOwner` (`segment-resolution/prefetch-deferral.ts`) takes
-the calling ctx from the same receiver and reads its carried segment, so a
-loader a layout's ctx starts from the layout's component — after the walker
-moved the pin on — files its body's pushes under the layout, not the route.
-The one remaining reader that takes `segmentPinOf(ctx)` with no carried
-segment is the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`), which keeps reading the pin.
+the calling ctx from the same receiver and reads its own segment, so a loader
+a layout's ctx starts from the layout's component — after the walker moved
+the pin on — files its body's pushes under the layout, not the route. It
+reads `_handleSegmentId` only, never the route's `_pushSegmentId`: the walker
+starts a DSL loader through the same shared ctx with the pin on the entry
+that declares it, so an orphan layout's loader must keep filing under the
+orphan.
+
+The caller segment a `"use cache"` call records and replays under
+(`cache-runtime.ts`) reads the carried segment as well: a HIT replays a
+recorded push into the segment the ctx belongs to, so a layout's ctx handed
+to a component replays into the layout after the walker pinned a slot, where
+the pin alone put the value in the slot's bucket.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
@@ -2652,7 +2659,8 @@ segment a `LateHandlePushError` names for a component a route, a layout and a
 slot handed the ctx to, through `ctx.use`, through a destructured `use` and
 through a `use` borrowed onto a props object, and for a route whose slot
 resolves after its handler; a loader a layout's ctx starts from the component
-the handler rendered) and `server/__tests__/segment-pin.test.ts`. The e2e
+the handler rendered; a `"use cache"` HIT replayed through a layout's ctx) and
+`server/__tests__/segment-pin.test.ts`. The e2e
 `handles-after-await` (test-app and cloudflare-basic, dev and production)
 checks the message on the page.
 

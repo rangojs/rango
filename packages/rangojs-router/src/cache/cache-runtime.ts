@@ -25,7 +25,7 @@ import {
   runAsBackgroundWork,
   type RequestContext,
 } from "../server/request-context.js";
-import { segmentPinOf } from "../server/context.js";
+import { carriedSegmentOf, segmentPinOf } from "../server/context.js";
 import { isUnderTestRunner } from "../runtime-env.js";
 import {
   isTainted,
@@ -507,10 +507,16 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
           hasBodyCtx = true;
         }
         // Only an argument with a pin (a handler or loader ctx, or its copy)
-        // is the caller: a request context before it has no claim.
+        // is the caller: a request context before it has no claim. The
+        // segment the ctx carries beats the pin for the same reason a push
+        // does: a layout's or slot's ctx handed to a component still names
+        // its own segment after the walker moved the pin on, and the replay
+        // must land where the MISS's push did (carriedSegmentOf).
         if (callerSegmentId === undefined) {
           callerSegmentId =
-            ctx._currentSegmentId === undefined ? undefined : segmentPinOf(ctx);
+            ctx._currentSegmentId === undefined
+              ? undefined
+              : segmentPinOf(ctx, carriedSegmentOf(ctx));
           claimLoaderPushes = ctx._claimLoaderPushes;
         }
         if (ctx.params && typeof ctx.params === "object") {
