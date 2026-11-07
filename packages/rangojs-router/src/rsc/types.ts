@@ -230,6 +230,14 @@ export interface SSRRenderOptions {
     status?: number;
     location?: string;
   }) => void;
+
+  /**
+   * Whether the render answers this shell error itself once this step returns.
+   * A redirect a component threw is control flow (render-pipeline.ts
+   * createRscRenderPlan): in dev, rethrowing it to the host would answer the
+   * host's 500 instead of the redirect, so it is answered as production does.
+   */
+  shellErrorAnsweredByRender?: (error: unknown) => boolean;
 }
 
 /**

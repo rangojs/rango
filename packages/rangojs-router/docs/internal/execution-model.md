@@ -1163,6 +1163,117 @@ e2e describes in `e2e/ssr-shell-error.test.ts`,
 `e2e/ssr-shell-error-mini.test.ts` and
 `tests/cloudflare-basic/e2e/ssr-shell-error.test.ts` (dev + production).
 
+### A component that throws `redirect()` redirects, if the render says so in time
+
+A `redirect()` thrown while React renders a component is not a handler result:
+`handleHandlerResult` never sees it, React reports it to the Flight `onError`
+and renders the nearest boundary. Before, a document answered `200` with that
+boundary and a client navigation rendered it.
+
+The render answers it instead (`render-pipeline.ts` `createRscRenderPlan`).
+The thrown `Response` is in what the render's Flight `onError` received
+(`RscFlightStage.reported`, collected by `createFlightStage`), and the plan
+reads that list back before the status line commits:
+
+- a document: after the html step, which decodes the payload before it can
+  answer, so a redirect thrown in the shell is already collected — a
+  synchronous component's and an async one's alike. The html stage also tells
+  `renderHTML` that the render answers this shell error
+  (`shellErrorAnsweredByRender`), because in dev `renderHTML` otherwise rethrows
+  a shell error to the host and the host's 500 would be the answer;
+- a Flight response (a client navigation, an action's revalidation, an explicit
+  `Accept: text/x-component`): after the body's opening chunk, which the plan
+  holds back and replays (`peekOpeningChunk`) so nothing is lost. Only a caller
+  that passes `RscRenderOptions.redirect` or `.notFound` pays that wait; every
+  other Flight response still goes out before its body is touched.
+
+A redirect a component throws is control flow, so `createFlightStage`'s
+`onError` records it and reports/prints nothing: it is not a rendering error.
+
+The answer is converted for the channel (`helpers.ts` `answerRenderRedirect`):
+a document follows a real 3xx (its `redirect(url, { state })` state rides the
+one-shot cookie, `server/document-location-state.ts`), a Flight response gets
+what a handler's redirect already gets (`interceptRedirectForPartial`: 204 +
+`X-RSC-Redirect`, or the Flight payload when it carries state or is external).
+The open-redirect guard still runs once, on the final response
+(`request-stages.ts` `finalizeRequestResponse`).
+
+A redirect that arrives after the body started streaming keeps the error row it
+always had: the status line has committed. That is a route declaring
+`loading()` (the segment streams behind its fallback), a streamed handler (see
+"Limitation: a Response from an async handler under `loading()` is not a
+redirect"), and a PPR tail rendered after a shell HIT. On a client navigation it
+is also an **async** component whose redirect lands in a later Flight chunk: the
+opening chunk that the plan holds is complete only once the shell's own
+components have rendered, and an async component is a task of its own. Waiting
+for its row would mean buffering the whole render, which the streaming contract
+forbids.
+
+Tests: `testing/__tests__/render-component-redirect.rsc-test.tsx` (userland,
+through `serveShellRequest`), `rsc/__tests__/render-pipeline.test.ts` (the
+plan's reading and replaying), and the `component redirect` e2e describes in
+`e2e/component-redirect.test.ts` and
+`tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev + production).
+
+### A component that throws `notFound()` renders its route's `notFoundBoundary()`
+
+`notFound()` thrown while React renders a component takes the same road as the
+redirect above: `catchSegmentError` never sees it, React reports it to the
+Flight `onError`, and the client's root boundary renders the error row. Before,
+a document answered the router's error page (a `500` recovery document in
+production: the decoded copy is masked to `{digest:""}`, so `answerShellError`
+cannot tell it from a failure) and a client navigation rendered the root
+boundary. The route's `notFoundBoundary()` never rendered.
+
+Both answers go through one funnel, `answerRenderControl` in
+`render-pipeline.ts`. It runs at the two points described above (after the html
+step for a document, after the held opening chunk for a Flight response) and
+reads what that Flight render's `onError` received (`RscFlightStage.reported`):
+a redirect first (`renderRedirectOf`, it leaves the page), then a not-found
+(`renderNotFoundOf`). The classification only works there: the list holds the
+original `DataNotFoundError`, not the masked copy the client decodes.
+
+Why not `_renderErrors`, which `onError` also pushes to: that list is the
+request's. A `loading()` route's handler that rejects with `notFound()` is
+recovered into its boundary (`streamed-handler-boundary.ts`) and recorded there
+too, with no status write; one that rejects at once is recorded before the
+decision, and reading the shared list answered it again as a component's throw
+(a second render and a 404). Fizz's errors and an earlier pass's land there as
+well. The html stage's dev gate (`shellErrorAnsweredByRender`) reads the same
+`reported` list for the same reason.
+
+A not-found has no response of its own to answer, so the plan renders again,
+once (`RscRenderOptions.notFound` returns the payload; the second render keeps
+`redirect` and drops `notFound`). The payload is the same one with the route
+segment's content replaced (`full-payload.ts` `payloadWithSegmentContent`) by
+what `router.resolveRenderNotFound` (`router/match-api.ts`) returns: the
+fallback a `notFound()` from the route's handler renders in `catchSegmentError`
+— the nearest `notFoundBoundary()` from the route entry, else the router's
+`notFound` option — and the 404 written to the request stub. Layouts, loaders
+and parallel slots keep their ids, so a navigation reconciles as it would for
+the healthy page. The handle streams are taken again from the handle store:
+the first render consumed the ones it serialized. The first render's body is
+cancelled before the second starts.
+
+Why the route and not the segment that threw: React reports no position with
+the error, and the server sees only the original object. A component a route
+renders is the common case and lands exactly where a handler's `notFound()`
+would. A `notFound()` from a layout's or a parallel slot's own component still
+throws on the second render, so that response answers `404` with the layout's
+error row. An async component on a client navigation, a `loading()` route, a
+streamed handler and a PPR tail keep the error row, for the reason given for
+the redirect: the status line has committed.
+
+A not-found is never stored: the response is a `404` (the document cache and the
+PPR capture refuse it by status), and the first render's error stays in
+`_renderErrors` (the prefetch cache and the document cache's write gate read it).
+
+Tests: `testing/__tests__/render-component-not-found.rsc-test.tsx` (userland,
+through `serveShellRequest`, including the parity with a handler's `notFound()`
+and the async-navigation limit), and the `component notFound` e2e describes in
+`e2e/component-not-found.test.ts` and
+`tests/cloudflare-basic/e2e/component-not-found.test.ts` (dev + production).
+
 ### Server errors print once, where they originate
 
 The browser gets a masked copy of a server failure (`createErrorInfo`,

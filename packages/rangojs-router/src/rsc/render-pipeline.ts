@@ -7,6 +7,8 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { isDataNotFoundError, type DataNotFoundError } from "../errors.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
@@ -88,6 +90,14 @@ export interface RscFlightStage {
   payload: RscPayload;
   stream: ReadableStream<Uint8Array>;
   init: ResponseInit;
+  /**
+   * What React reported to THIS Flight render's onError, in order, as thrown
+   * (the client decodes a masked copy). Not `_renderErrors`: that list is the
+   * request's, and also holds what other layers recorded (a streamed handler's
+   * recovered notFound(), Fizz's errors, an earlier pass), which a render must
+   * not answer as its own (answerRenderControl).
+   */
+  reported: readonly unknown[];
 }
 
 export interface RscPreparedHtmlRender {
@@ -99,6 +109,26 @@ export interface RscRenderOptions {
   html?: (
     flight: RscFlightStage,
   ) => RscPreparedHtmlRender | Promise<RscPreparedHtmlRender>;
+  /**
+   * Answer a redirect React caught while rendering it, in the shape the
+   * request's channel can carry. A component's `throw redirect()` is not a
+   * handler's return, so it never reaches handleHandlerResult: React reports it
+   * to the Flight onError and renders the nearest boundary, which answered a
+   * 200 error page. See answerRenderControl. Absent: the thrown Response is
+   * answered as it is.
+   */
+  redirect?: (thrown: Response) => Response;
+  /**
+   * The payload to render instead when a component threw `notFound()` while
+   * React rendered it. Like a redirect, it never reaches catchSegmentError:
+   * React renders the nearest client boundary and the response answered a 200
+   * error page. The render runs again once, on what this returns, before the
+   * status commits; undefined keeps the response as rendered. See
+   * answerRenderControl.
+   */
+  notFound?: (
+    thrown: DataNotFoundError,
+  ) => RscPayload | undefined | Promise<RscPayload | undefined>;
 }
 
 interface RscFlightCommand<TEnv> {
@@ -114,7 +144,7 @@ interface RscHtmlCommand {
 
 interface RscResponseCommand {
   type: "response";
-  execute: () => Response;
+  execute: () => Response | Promise<Response>;
 }
 
 export type RscRenderCommand<TEnv> =
@@ -159,10 +189,15 @@ function createFlightStage<TEnv>(
   // Read once here: onError can fire outside the ALS frame.
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
+  const reported: unknown[] = [];
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      reported.push(error);
       renderErrors?.push(error);
+      // A redirect a component threw is control flow, answered before the
+      // status commits (createRscRenderPlan); it is not a rendering error.
+      if (error instanceof Response && isRedirectResponse(error)) return;
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
@@ -176,7 +211,7 @@ function createFlightStage<TEnv>(
       });
     },
   });
-  return { type: "flight", payload: input.payload, stream, init };
+  return { type: "flight", payload: input.payload, stream, init, reported };
 }
 
 function expectCommandResult(
@@ -226,7 +261,7 @@ function* htmlStep<TEnv>(
 }
 
 function* responseStep<TEnv>(
-  execute: () => Response,
+  execute: () => Response | Promise<Response>,
 ): Generator<RscRenderCommand<TEnv>, Response, RscRenderCommandResult> {
   return expectCommandResult(yield { type: "response", execute }, "response");
 }
@@ -240,25 +275,194 @@ export function* createRscRenderPlan<TEnv>(
   input: RscRenderInput<TEnv>,
   options: RscRenderOptions = {},
 ): RscRenderPlan<TEnv> {
+  const answersControl =
+    options.redirect !== undefined || options.notFound !== undefined;
+  // Set when the render answers a not-found by rendering again: the response
+  // step's value is then superseded by the second render's.
+  let renderAgain: RscPayload | undefined;
+  const supersede = (payload: RscPayload): Response => {
+    renderAgain = payload;
+    return new Response(null);
+  };
+
   const flight = yield* flightStep<TEnv>(
     () => createFlightStage(input, input.init),
     input.recordSerializeMetric ?? true,
   );
 
+  let response: Response;
   if (options.html) {
     const html = options.html;
+    // No held chunk here: the HTML step decodes the payload before it can
+    // answer, so everything the render threw in the shell (a synchronous
+    // component's redirect or notFound() and an async one's alike) is
+    // collected by now.
     const page = yield* htmlStep<TEnv>(() => html(flight));
-    return yield* responseStep<TEnv>(() =>
+    const respond = (): Response =>
       createResponseWithMergedHeaders(page.body, {
         ...input.init,
         ...page.init,
-      }),
+      });
+    response = answersControl
+      ? yield* responseStep<TEnv>(async () => {
+          const control = await answerRenderControl(flight, options);
+          if (!control) return respond();
+          cancelBody(page.body);
+          return "response" in control
+            ? control.response
+            : supersede(control.payload);
+        })
+      : yield* responseStep<TEnv>(respond);
+  } else if (!answersControl) {
+    return yield* responseStep<TEnv>(() =>
+      createResponseWithMergedHeaders(flight.stream, input.init),
     );
+  } else {
+    // A Flight response has no HTML step to pull its payload, and the client
+    // parses the body as it arrives: hold the opening chunk, which is complete
+    // only once the shell's own components have rendered.
+    response = yield* responseStep<TEnv>(async () => {
+      const held = holdOpeningChunk(flight);
+      await held.opened;
+      const control = await answerRenderControl(flight, options);
+      if (!control) {
+        return createResponseWithMergedHeaders(held.stage.stream, input.init);
+      }
+      await held.discard();
+      return "response" in control
+        ? control.response
+        : supersede(control.payload);
+    });
   }
 
-  return yield* responseStep<TEnv>(() =>
-    createResponseWithMergedHeaders(flight.stream, input.init),
+  if (renderAgain === undefined) return response;
+  // Once: the second render answers a redirect it throws, and keeps whatever
+  // else it reports.
+  return yield* createRscRenderPlan<TEnv>(
+    { ...input, payload: renderAgain },
+    { ...options, notFound: undefined },
   );
+}
+
+/**
+ * What the response becomes when the render threw control flow before its
+ * status committed: a redirect's answer (options.redirect), or the payload to
+ * render instead of a not-found (options.notFound). A redirect wins over a
+ * not-found: it leaves the page. Undefined: answer the render as it is.
+ */
+async function answerRenderControl(
+  flight: RscFlightStage,
+  options: RscRenderOptions,
+): Promise<{ response: Response } | { payload: RscPayload } | undefined> {
+  const { redirect: answerRedirect, notFound: renderInstead } = options;
+  const redirect = answerRedirect && renderRedirectOf(flight.reported);
+  if (redirect) return { response: answerRedirect(redirect) };
+  const notFound = renderInstead && renderNotFoundOf(flight.reported);
+  if (!notFound) return undefined;
+  const payload = await renderInstead(notFound);
+  return payload ? { payload } : undefined;
+}
+
+/**
+ * The `notFound()` a render threw, if it threw one (`errors` is a Flight
+ * stage's `reported`): React reports it to the Flight onError like the
+ * redirect (renderRedirectOf), and the copy the client decodes is masked in
+ * production, so only the original here can be classified.
+ */
+export function renderNotFoundOf(
+  errors: readonly unknown[],
+): DataNotFoundError | undefined {
+  return errors.find(isDataNotFoundError);
+}
+
+/**
+ * The redirect a render threw, if it threw one: a component's `throw
+ * redirect()` is a Flight error row (React's onError, createFlightStage), not a
+ * Response handed back to the router, so the router only sees it here.
+ *
+ * `errors` is a Flight stage's `reported`, so only what THIS render threw is
+ * read, and only a real 3xx with a Location counts: an ordinary boundary error
+ * and a streamed redirect that arrives after the body started leave the
+ * response as it was (a notFound() is renderNotFoundOf's).
+ */
+export function renderRedirectOf(
+  errors: readonly unknown[],
+): Response | undefined {
+  return errors.find(
+    (error): error is Response =>
+      error instanceof Response && isRedirectResponse(error),
+  );
+}
+
+/**
+ * A render's Flight stage with its opening chunk held back, so a redirect the
+ * render threw can be answered before the status line commits: React reports
+ * the error in the same pass that completes that chunk, so the render's errors
+ * are known once `opened` settles.
+ *
+ * `stage.stream` replays the held chunk, then the rest, in order — the client
+ * sees the same bytes it would without the hold.
+ */
+function holdOpeningChunk(flight: RscFlightStage): {
+  stage: RscFlightStage;
+  opened: Promise<void>;
+  discard: () => Promise<void>;
+} {
+  const { opened, body } = peekOpeningChunk(flight.stream);
+  return {
+    stage: { ...flight, stream: body },
+    opened,
+    discard: () => body.cancel().catch(() => {}),
+  };
+}
+
+/** Abort a render whose body is already streaming (a document's HTML step). */
+function cancelBody(body: BodyInit | null): void {
+  if (body instanceof ReadableStream) body.cancel().catch(() => {});
+}
+
+/**
+ * The stream with its opening chunk held back and replayed, so a caller can
+ * look at what the render reported before handing the body on. A render that
+ * fails before its first chunk hands the same failure to the body, as it did
+ * before the hold existed.
+ */
+export function peekOpeningChunk(stream: ReadableStream<Uint8Array>): {
+  opened: Promise<void>;
+  body: ReadableStream<Uint8Array>;
+} {
+  const reader = stream.getReader();
+  let opening: Uint8Array | undefined;
+  let failure: unknown;
+  let failed = false;
+  const opened = reader.read().then(
+    (result) => {
+      if (!result.done) opening = result.value;
+    },
+    (error: unknown) => {
+      failed = true;
+      failure = error;
+    },
+  );
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      await opened;
+      if (failed) {
+        controller.error(failure);
+        return;
+      }
+      if (opening !== undefined) controller.enqueue(opening);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { opened, body };
 }
 
 /**
@@ -427,7 +631,9 @@ export async function driveRscRenderPlan<TEnv>(
           const body = await observePhase(PHASES.ssr, prepared.render);
           commandValue = { body, init: prepared.init };
         } else {
-          commandValue = command.execute();
+          // A response command may await its body's opening chunk
+          // (answerRenderControl); the Flight and HTML commands are synchronous.
+          commandValue = await command.execute();
         }
         const durationMs = measured ? performance.now() - phaseStartedAt : 0;
         appendSerializeMetric(

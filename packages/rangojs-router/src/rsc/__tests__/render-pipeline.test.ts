@@ -584,3 +584,178 @@ describe("RSC render pipeline", () => {
     });
   });
 });
+
+describe("a redirect React caught while rendering", () => {
+  const thrown = () =>
+    new Response(null, { status: 302, headers: { Location: "/target" } });
+
+  /** A Flight render that reports `error` before its opening chunk. */
+  function renderThatReports(error: unknown) {
+    return vi.fn(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            options?.onError?.(error);
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            controller.close();
+          },
+        }),
+    );
+  }
+
+  it("answers the caller's redirect instead of a 200 Flight response", async () => {
+    const error = thrown();
+    const { input, requestContext } = makeInput(renderThatReports(error));
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          redirect: (caught) =>
+            new Response(null, {
+              status: 307,
+              headers: { Location: caught.headers.get("Location")! },
+            }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("/target");
+    expect(response.body).toBeNull();
+    // The render's error is recorded once, by the Flight onError it came from.
+    expect(requestContext._renderErrors).toEqual([error]);
+  });
+
+  it("replays the opening chunk to the client when the render threw nothing", async () => {
+    const { input, requestContext } = makeInput(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            controller.enqueue(new TextEncoder().encode("1:page\n"));
+            controller.close();
+          },
+        }),
+    );
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          redirect: () => new Response(null, { status: 302 }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("0:shell\n1:page\n");
+  });
+
+  it("ignores an error an earlier pass of the request left in the list", async () => {
+    const earlier = thrown();
+    const { input, requestContext } = makeInput(
+      () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            controller.close();
+          },
+        }),
+    );
+    requestContext._renderErrors = [earlier];
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          redirect: () => new Response(null, { status: 302 }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("answers a document's redirect before the response is built", async () => {
+    const error = thrown();
+    let report!: (error: unknown) => void;
+    const { input, requestContext } = makeInput(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) => {
+        report = options!.onError!;
+        return new ReadableStream<Uint8Array>();
+      },
+    );
+    let cancelled = false;
+    const htmlBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("<html></html>"));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          // The HTML step decodes the payload, which is when React reports what
+          // the render threw.
+          html: async () => ({
+            render: () => {
+              report(error);
+              return htmlBody;
+            },
+          }),
+          redirect: () => new Response(null, { status: 303 }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(303);
+    expect(cancelled).toBe(true);
+  });
+
+  it("keeps the response when the redirect arrives after the opening chunk", async () => {
+    const error = thrown();
+    const { input, requestContext } = makeInput(
+      (_payload: unknown, options?: { onError?: (error: unknown) => void }) =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("0:shell\n"));
+            // The redirect surfaces only once the client is already reading the
+            // body: the status line has committed by then.
+            setTimeout(() => {
+              options?.onError?.(error);
+              controller.enqueue(new TextEncoder().encode("1:E{}\n"));
+              controller.close();
+            }, 0);
+          },
+        }),
+    );
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(
+        { ...input, init: { status: 200 } },
+        {
+          redirect: () => new Response(null, { status: 302 }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("0:shell\n1:E{}\n");
+  });
+
+  it("leaves a Flight response unread when the caller answers no redirect", async () => {
+    const stream = new ReadableStream<Uint8Array>();
+    const { input, requestContext } = makeInput(() => stream);
+
+    const response = await runWithRequestContext(requestContext, () =>
+      renderRscResponse({ ...input, init: { status: 200 } }),
+    );
+
+    expect(response.body).toBe(stream);
+  });
+});

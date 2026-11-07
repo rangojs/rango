@@ -20,6 +20,18 @@ import type { ResolvedTimeouts, OnTimeoutCallback } from "./timeout.js";
 import type { ResolvedTracing } from "./tracing.js";
 import type { TelemetrySink } from "./telemetry.js";
 import type { ActionContext } from "./types.js";
+import type { DataNotFoundError } from "../errors.js";
+
+/**
+ * A route's answer to a `notFound()` thrown while React rendered one of its
+ * components (RSCRouter.resolveRenderNotFound).
+ */
+export interface RenderNotFound {
+  /** The route segment whose content the fallback replaces. */
+  segmentId: string;
+  /** The rendered not-found fallback. */
+  fallback: ReactNode;
+}
 
 /**
  * Options passed to router.fetch(), router.match(), and other request entrypoints.
@@ -606,6 +618,18 @@ export interface RangoInternal<
     error: unknown,
     segmentType?: ErrorInfo["segmentType"],
   ): Promise<MatchResult | null>;
+
+  /**
+   * What the route at `pathname` renders for a `notFound()` one of its
+   * components threw while React rendered it: the fallback a `notFound()`
+   * from the route's handler renders, and the route segment it replaces.
+   * Null when nothing matches.
+   * @internal
+   */
+  resolveRenderNotFound(
+    pathname: string,
+    error: DataNotFoundError,
+  ): Promise<RenderNotFound | null>;
 
   /**
    * Low-level route matching function.

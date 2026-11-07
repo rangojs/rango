@@ -67,6 +67,7 @@ import { printServerError } from "./server/print-server-error.js";
 // Extracted module factories
 import { createSegmentWrappers } from "./router/segment-wrappers.js";
 import { createMatchHandlers } from "./router/match-handlers.js";
+import { resolveRenderNotFound } from "./router/match-api.js";
 import { buildDebugManifest } from "./router/debug-manifest.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
@@ -1233,6 +1234,12 @@ export function createRouter<TEnv = any>(
       const env = input?.env ?? ({} as TEnv);
       return matchError(request, env, error, segmentType);
     },
+    resolveRenderNotFound: (pathname, error) =>
+      resolveRenderNotFound(pathname, error, {
+        findMatch,
+        findNearestNotFoundBoundary,
+        notFoundComponent: notFound,
+      }),
     previewMatch: (request: Request, input: RouterRequestInput<TEnv> = {}) => {
       const env = input.env ?? ({} as TEnv);
       return previewMatch(request, env);

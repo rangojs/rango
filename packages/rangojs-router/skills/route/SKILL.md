@@ -581,6 +581,33 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   `RootErrorBoundary` replaces the page. A `redirect()` thrown from a streamed
   handler is not recovered either (see "Redirects").
 
+## `notFound()` thrown by a component
+
+A server component a route renders may throw `notFound()` itself (an async
+component that fetches its own record). The route then renders as if its
+handler had thrown it: the nearest `notFoundBoundary()` (else the router's
+`notFound` option) replaces the route's content inside its layouts, and the
+response is a 404, on a document load and on a client navigation.
+
+```typescript
+async function Product({ slug }: { slug: string }) {
+  const product = await db.products.find(slug);
+  if (!product) notFound("No such product");
+  return <ProductView product={product} />;
+}
+
+path("/product/:slug", (ctx) => <Product slug={ctx.params.slug} />, {
+  name: "product",
+});
+```
+
+- It is answered only before the response starts, like a streamed handler's
+  error above: under `loading()`, from a streamed handler, or from an async
+  component on a client navigation, the error page renders instead. Throw it
+  from the handler or a loader when the route must always answer 404.
+- It is answered for the route: from a layout's or a parallel slot's own
+  component it answers 404 but the layout still renders its error page.
+
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
