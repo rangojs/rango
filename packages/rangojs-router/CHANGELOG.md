@@ -7,8 +7,8 @@
 **Before.** Served from its build-time bake, a `Prerender()` route asked a
 held parent layout's `revalidate()` rules only when the route params changed.
 Between two prerendered routes with equal params (`/a/1` to `/b/1`), on a
-search-only change and on a stale request, the client kept the layout it
-held, even with `revalidate(() => true)`. A layout whose bake depends on the
+search-only change, on a stale request and on a server action, the client
+kept the layout it held, even with `revalidate(() => true)`. A layout whose bake depends on the
 route, such as a server-rendered active link, went on marking the previous
 page. The same navigation rendered live re-sent the layout.
 
