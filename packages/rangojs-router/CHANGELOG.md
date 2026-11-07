@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `Static()` layout or parallel slot links inside its own module at every depth
+
+**Before.** A baked `Static()` layout or parallel slot resolved
+`ctx.reverse(".name")` one module too high. Inside
+`include("/acme", …, { name: "account" })` holding
+`include("/web", …, { name: "project" })`, the project module's Static layout
+baked the account module's URL for `.settings`, while the same layout rendered
+live linked to the project module's. A root-level `Static()` layout (no named
+`include()` above it) failed the build outright with
+`Unknown route: ".home"`, where the same layout rendered live resolved it.
+
+**Now.** A baked layout or slot resolves `.name` in the `include()` scope it was
+declared in — the same scope its live segment gets — at every nesting depth and
+at the root. A `path()` `Static` is a route and keeps resolving from its own
+route name, unchanged.
+
+The include scope is stamped on the definition when it is mounted
+(`stampStaticDefScope`), and the build hands it to the render, so the bake no
+longer passes a name prefix where a route name goes.
+
+```tsx
+export const ProjectLayout = Static((ctx) => (
+  // include("/web", project, { name: "project" }) inside { name: "account" }:
+  // baked "/acme/settings" (the account route) before, now "/acme/web/settings"
+  <span>{ctx.reverse(".settings")}</span>
+));
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

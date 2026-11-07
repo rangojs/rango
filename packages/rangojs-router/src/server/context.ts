@@ -856,11 +856,10 @@ export function scopeReverse(
  * Stamp build-time scope identity onto a Static() definition at mount time.
  * The bake collector (prerender-collection.ts) renders defs OUTSIDE any
  * evaluation scope and used to iterate the registry first-non-null, so these
- * are the ONLY reliable carriers of the def's owning router, root-scope, and
- * full route name — a name-keyed registry lookup at bake time reproduces the
- * cross-router collision #757/#762 fixed (and the collector's historical
- * `$$routePrefix` argument is a name PREFIX, which the root-scope registry
- * never contains, silently degrading to the dot-heuristic).
+ * are the ONLY reliable carriers of the def's owning router, its full route
+ * name (a path() Static only) and the include scope it was declared in — a
+ * name-keyed registry lookup at bake time reproduces the cross-router
+ * collision #757/#762 fixed.
  * A definition mounted more than once is stamped each time; the last mount wins.
  */
 export function stampStaticDefScope(
@@ -870,7 +869,10 @@ export function stampStaticDefScope(
   const store = RangoContext.getStore();
   const def = handler as Record<string, unknown>;
   if (routeName !== undefined) def.$$routeName = routeName;
-  def.$$rootScoped = getRootScoped();
+  // The same ReverseScope a live structural entry carries (EntryData.reverseScope):
+  // a baked layout()/parallel() Static resolves dot names in it, so its
+  // `ctx.reverse(".name")` cannot drift from the live segment's.
+  def.$$reverseScope = getReverseScope();
   if (store?.routerId !== undefined) def.$$routerId = store.routerId;
 }
 

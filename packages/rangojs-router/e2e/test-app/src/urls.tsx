@@ -91,6 +91,7 @@ import { redirectGuardPatterns } from "./urls/redirect-guard.js";
 import { suffixOverlapPatterns } from "./urls/suffix-overlap.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
 import { reverseSegmentScopePatterns } from "./urls/reverse-segment-scope.js";
+import { staticReverseScopePatterns } from "./urls/static-reverse-scope.js";
 import { clientReversePatterns } from "./urls/client-reverse.js";
 import { catchAllPatterns } from "./urls/catch-all.js";
 import { useCachePatterns } from "./urls/use-cache.js";
@@ -1538,6 +1539,13 @@ export const urlpatterns = urls(
       // (account layout above a nested project module).
       include("/reverse-scope", reverseSegmentScopePatterns, {
         name: "reverseScope",
+      }),
+
+      // The same rule for baked segments: a Static() layout or slot resolves
+      // its dot names in its own module at build time too. Transparent
+      // include, so the module's layout sits at root scope.
+      include("/static-reverse-scope", staticReverseScopePatterns, {
+        name: "",
       }),
 
       // "use cache" directive test patterns (file-level, function-level, named profiles)

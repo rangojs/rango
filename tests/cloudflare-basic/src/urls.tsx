@@ -308,6 +308,7 @@ import {
 } from "./pages/inline.js";
 import { clientReversePatterns } from "./pages/client-reverse.js";
 import { reverseSegmentScopePatterns } from "./pages/reverse-segment-scope.js";
+import { staticReverseScopePatterns } from "./pages/static-reverse-scope.js";
 import { guidesPatterns } from "./pages/guides.js";
 import {
   GuidePlainDef,
@@ -3173,6 +3174,10 @@ export const urlpatterns = urls(
         include("/static-content", staticContentPatterns, {
           name: "staticContent",
         }),
+
+        // Baked segments resolve dot names in their own module, at every
+        // depth (transparent include: the module's layout sits at root scope).
+        include("/srs", staticReverseScopePatterns, { name: "" }),
 
         // Composable docs package (demonstrates include + factory pattern)
         include("/docs", docsPatterns, { name: "docs" }),

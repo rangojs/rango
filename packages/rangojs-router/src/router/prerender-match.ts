@@ -23,7 +23,11 @@ import { traverseBack } from "./pattern-matching.js";
 import type { RouterContext } from "./router-context.js";
 import { freshPassInput } from "./segment-resolution/resolution-pass.js";
 import { runWithRouterContext } from "./router-context.js";
-import type { EntryData, InterceptEntry } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  ReverseScope,
+} from "../server/context";
 import type { PartialPrerenderProps } from "../urls/pattern-types.js";
 import type { InternalHandlerContext, ResolvedSegment } from "../types";
 import type {
@@ -667,7 +671,7 @@ export async function renderStaticSegment<TEnv = any>(
   buildEnv?: TEnv,
   devMode?: boolean,
   routerId?: string,
-  rootScoped?: boolean,
+  reverseScope?: ReverseScope,
 ): Promise<{ encoded: string; handles: string } | null> {
   const syntheticUrl = new URL("http://prerender/");
   const syntheticRequest = new Request(syntheticUrl);
@@ -723,10 +727,10 @@ export async function renderStaticSegment<TEnv = any>(
       mergedRouteMap,
       routeName,
       {},
-      // Def-stamped value first: the collector passes the mount-time
-      // root-scope captured on the Static definition (stampStaticDefScope),
-      // which needs no registry lookup and survives name-prefix arguments.
-      rootScoped ??
+      // Def-stamped value first: the collector passes the mount-time scope
+      // captured on the Static definition (stampStaticDefScope), which needs
+      // no registry lookup and is the def's own, not the first router's.
+      reverseScope?.rootScoped ??
         (routeName ? isRouteRootScoped(routeName, routerId) : undefined),
     ),
     // Scope the bake context's own lookups (createStaticContext reads it
@@ -741,6 +745,7 @@ export async function renderStaticSegment<TEnv = any>(
       routeName,
       buildEnv,
       devMode,
+      reverseScope,
     );
 
     // Set segment ID so handle pushes are keyed correctly

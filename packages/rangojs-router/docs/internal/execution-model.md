@@ -2554,14 +2554,41 @@ Limits:
   those. A getter keyed by its holder resolves through the prototype chain
   (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
   child inherits.
-- `Static()` layouts and slots bake at build time through
-  `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
-  through this scope. At one include level that gives the same module; in a
-  nested module the last name segment is dropped.
 
 Pinned by `testing/__tests__/reverse-segment-scope.rsc-test.tsx`, the
 `runLoader({ declaredIn })` test in `testing/__tests__/run-loader.test.ts`,
 and the `reverse-segment-scope` e2e (test-app and cloudflare-basic).
+
+### A baked `Static()` segment resolves in the same scope
+
+A `Static()` layout or parallel slot bakes once at build time through
+`renderStaticSegment`, outside any evaluation scope, so it cannot read the
+request's handler ctx or the DSL store. The def carries the scope instead:
+`stampStaticDefScope` stamps `$$reverseScope` (`getReverseScope()`, the same
+value `EntryData.reverseScope` holds) when the def is mounted, and the bake
+collector (`prerender-collection.ts`) hands it to `renderStaticSegment`, which
+passes it to `createStaticContext`. A def with no route name — a layout or a
+slot — gets the scoped ctx its live segment gets (`withReverseScope`), so
+`.settings` in a project module nested under an account module bakes the
+project module's URL at every depth, and a root-level layout resolves `.home`
+at root scope instead of throwing `Unknown route`.
+
+A `path()` Static is a route, not a structural segment: it keeps the live route
+ctx's resolution from its own route name (`$$routeName`), including the
+last-segment strip that makes a dotted local name (`"a.b"`) resolve from `a`.
+The collector therefore passes `$$routeName` only, never a prefix in its place;
+`ctx.routeName` of a layout or slot still reports the include prefix, as it
+always has.
+
+What a bake still cannot do: autofill mount params (there is no request), so
+`.settings` under `include("/:projectId", …)` throws `Missing param` where the
+live segment fills in the request's; and `getRequestContext().reverse(".name")`
+has no matched route to resolve from, so it throws `Unknown route` instead of
+answering with some other module's URL.
+
+Pinned by `router/__tests__/prerender-static-reverse-scope.test.ts` (all three
+depths, the root, a slot, and a `path()` Static as the unchanged case) and the
+`static-reverse-scope` e2e in both apps, dev and production.
 
 ### A streamed handler keeps its segment
 
