@@ -129,21 +129,9 @@ function startPreload([href, as, options]: PreloadHint): void {
   preload(href, { ...options, as } as PreloadOptions);
 }
 
-function concat(parts: Uint8Array[]): Uint8Array {
-  let length = 0;
-  for (const part of parts) length += part.byteLength;
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.byteLength;
-  }
-  return out;
-}
-
 /**
- * A stream transform that takes `hold`'s rows out of one Flight stream and
- * hands each to `hold`.
+ * A stream transform that takes the held preload rows out of one Flight
+ * stream and hands each to `hold`.
  */
 function holdRows(
   hold: (hint: PreloadHint) => void,
@@ -154,6 +142,12 @@ function holdRows(
   // A row's id and tag bytes, kept until the tag says whether it is a hint
   // row; then the whole hint row, to its `\n`.
   let rowBytes: Uint8Array[] = [];
+  const passRowBytes = (
+    controller: TransformStreamDefaultController<Uint8Array>,
+  ) => {
+    for (const part of rowBytes) controller.enqueue(part);
+    rowBytes = [];
+  };
 
   return new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -180,8 +174,7 @@ function holdRows(
               break;
             }
             // Not a hint row: its id and `:` pass on, then the row itself.
-            for (const part of rowBytes) controller.enqueue(part);
-            rowBytes = [];
+            passRowBytes(controller);
             if (BINARY_TAGS.has(tag)) {
               i++;
               binaryLength = 0;
@@ -220,8 +213,7 @@ function holdRows(
               break;
             }
             // Any other hint passes on as it is, its id and tag first.
-            for (const part of rowBytes) controller.enqueue(part);
-            rowBytes = [];
+            passRowBytes(controller);
             state = Row.Text;
             break;
           }
@@ -232,11 +224,18 @@ function holdRows(
             from = i = end;
             if (newline === -1) break;
             state = Row.Id;
-            const row = concat(rowBytes);
-            rowBytes = [];
-            const hint = heldPreload(decoder.decode(row));
-            if (hint) hold(hint);
-            else controller.enqueue(row);
+            let row = "";
+            for (const part of rowBytes) {
+              row += decoder.decode(part, { stream: true });
+            }
+            row += decoder.decode();
+            const hint = heldPreload(row);
+            if (hint) {
+              hold(hint);
+              rowBytes = [];
+            } else {
+              passRowBytes(controller);
+            }
             break;
           }
         }
@@ -246,8 +245,7 @@ function holdRows(
     flush(controller) {
       // A stream that ends inside a row's prefix or a hint row: the decoder
       // gets the bytes as they came.
-      for (const part of rowBytes) controller.enqueue(part);
-      rowBytes = [];
+      passRowBytes(controller);
     },
   });
 }
