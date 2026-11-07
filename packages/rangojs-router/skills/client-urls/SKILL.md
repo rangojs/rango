@@ -256,10 +256,12 @@ DIFFERENT schedules:
   `ctx.set()` variables are fresh for the group's loaders on every pass. The
   instant feel comes from held data and optimistic presentation, not from
   skipping the server.
-- **The outer layout handler does NOT re-run on within-group navigations** —
-  partial rendering holds its segment (and the parent chain skips on actions
-  by default). Layout-rendered data that must track the group belongs in
-  middleware `ctx.set()`, not the layout body.
+- **The outer layout handler does NOT re-run on within-group navigations by
+  default** — partial rendering holds its segment (and the parent chain skips
+  on actions by default). Chrome that must track the group opts in with
+  `revalidate()` on that layout (below). Middleware `ctx.set()` is fresh on
+  every pass, but it reaches the screen only through a handler or loader that
+  re-runs.
 - The only thing that precedes middleware is the optimistic branch
   (destination `loading()` / `useOutlet().pending`) — presentation, never
   authorization.
@@ -267,6 +269,42 @@ DIFFERENT schedules:
 All three pinned by dev + production e2e in the router repository (a
 middleware-stamped header per request, a layout run-count stamp held across
 navigations).
+
+### Opting the outer layout in: `revalidate()`
+
+`revalidate()` on the server layout around the group re-runs its handler on
+the requests its predicate names. The new output lands in the canonical
+commit with the URL and `pending`, and reconciles in place: no remount of the
+layout, the group or the route, and no fallback. Write the rule once, in a
+module without `"use client"`, and import it in the layout's `revalidate()`
+and in the group loader that feeds the same chrome, so both re-run on the
+same requests:
+
+```ts
+// chrome-rules.ts (no "use client")
+import type { Revalidate } from "@rangojs/router";
+import * as CartActions from "./actions/cart";
+
+export const cartChromeChanged: Revalidate = ({ isAction, toRouteName }) =>
+  isAction() ? isAction(CartActions) : toRouteName === "shop.cart";
+
+// server urls: layout(<ShopChrome />, () => [revalidate(cartChromeChanged), include("/shop", shopUrls, { name: "shop" })])
+// the group:   layout(ShopLayout, () => [loader(CartLoader, () => [revalidate(cartChromeChanged)]), ...])
+```
+
+What it costs:
+
+- The handler runs to its end before the group's loaders start, so its time
+  adds to every response it re-runs on (a 300 ms handler over 300 ms of
+  loaders: about 605 ms against 305 ms).
+- A re-run loader the chrome reads (on the outer layout, or the group
+  `layout()`'s own) sits in content already on screen, so it holds the whole
+  canonical commit: the destination's ready data waits behind its
+  `loading()` until the chrome loader lands. Keep it fast; never key a
+  boundary per navigation to dodge the hold.
+- `revalidate(() => true)` re-runs it on every action too. Scope it with
+  `isAction(ref)` for actions and `nextParams` / `toRouteName` for
+  navigations.
 
 ## Revalidation runs on the server
 
