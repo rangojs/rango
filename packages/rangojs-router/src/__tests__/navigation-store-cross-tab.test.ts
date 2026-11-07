@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   adoptRangoStateMock,
+  bumpRangoStateWriteWhenUnbackedMock,
   clearPrefetchCacheMock,
   markPrefetchesStaleMock,
   getRangoStateCookieNameMock,
   getRangoStateMock,
 } = vi.hoisted(() => ({
   adoptRangoStateMock: vi.fn(() => true),
+  bumpRangoStateWriteWhenUnbackedMock: vi.fn(),
   clearPrefetchCacheMock: vi.fn(),
   markPrefetchesStaleMock: vi.fn(),
   getRangoStateCookieNameMock: vi.fn(() => "rango-state_router"),
@@ -21,6 +23,7 @@ vi.mock("../browser/prefetch/cache.js", () => ({
 
 vi.mock("../browser/rango-state.js", () => ({
   adoptRangoState: adoptRangoStateMock,
+  bumpRangoStateWriteWhenUnbacked: bumpRangoStateWriteWhenUnbackedMock,
   getRangoStateCookieName: getRangoStateCookieNameMock,
   getRangoState: getRangoStateMock,
 }));
@@ -97,6 +100,8 @@ describe("navigation-store cross-tab invalidation", () => {
     store.markCacheAsStaleAndBroadcast();
 
     expect(markPrefetchesStaleMock).toHaveBeenCalledOnce();
+    // A jar that keeps no state value takes the write in this tab's own.
+    expect(bumpRangoStateWriteWhenUnbackedMock).toHaveBeenCalledOnce();
     expect(clearPrefetchCacheMock).not.toHaveBeenCalled();
     expect(channel.postMessage).toHaveBeenCalledWith({
       type: "invalidate",
@@ -119,6 +124,8 @@ describe("navigation-store cross-tab invalidation", () => {
     exitActionFence();
 
     expect(markPrefetchesStaleMock).not.toHaveBeenCalled();
+    // The rotation mints a new value: no write part to bump.
+    expect(bumpRangoStateWriteWhenUnbackedMock).not.toHaveBeenCalled();
     // A newer value than the server's, which a tab that already read the
     // jar still adopts.
     expect(clearPrefetchCacheMock).toHaveBeenCalledExactlyOnceWith();
@@ -186,6 +193,7 @@ describe("navigation-store cross-tab invalidation", () => {
     expect(adoptRangoStateMock).toHaveBeenCalledWith("build:sender");
     expect(clearPrefetchCacheMock).toHaveBeenCalledExactlyOnceWith(false);
     expect(markPrefetchesStaleMock).not.toHaveBeenCalled();
+    expect(bumpRangoStateWriteWhenUnbackedMock).not.toHaveBeenCalled();
   });
 
   it("a soft message whose state is not newer marks prefetches stale, never flushes", () => {
@@ -199,6 +207,7 @@ describe("navigation-store cross-tab invalidation", () => {
     });
 
     expect(markPrefetchesStaleMock).toHaveBeenCalledOnce();
+    expect(bumpRangoStateWriteWhenUnbackedMock).toHaveBeenCalledOnce();
     expect(clearPrefetchCacheMock).not.toHaveBeenCalled();
   });
 
@@ -213,6 +222,7 @@ describe("navigation-store cross-tab invalidation", () => {
 
     expect(clearPrefetchCacheMock).toHaveBeenCalledExactlyOnceWith(true);
     expect(markPrefetchesStaleMock).not.toHaveBeenCalled();
+    expect(bumpRangoStateWriteWhenUnbackedMock).not.toHaveBeenCalled();
   });
 
   it("every branch marks history stale and refreshes the page", () => {

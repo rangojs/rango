@@ -40,8 +40,10 @@
  * their source key while cross-source ones fall through to the wildcard
  * alias — with consume/clear atomically removing every alias.
  *
- * Replaces the previous browser HTTP cache approach which was unreliable
- * due to response draining race conditions and browser inconsistencies.
+ * This map, not the browser HTTP cache, is what a click adopts: reusing a
+ * drained response from the HTTP cache raced and differed across browsers.
+ * The HTTP cache still keeps a stored prefetch (its `private, max-age`), which
+ * answers a later fetch of the page, keyed by the whole `X-Rango-State` value.
  *
  * State here lives in module-level singletons (cache, inflight, generation,
  * cacheTTL, etc.) rather than a per-instance factory. This is correct because
@@ -222,9 +224,10 @@ let staleEpoch = 0;
  *
  * Low-level primitive — callers that want a specific scope should use
  * one of:
- * - Wildcard (source-agnostic): prefix is the Rango state value from
- *   `getRangoState()`. Shared across all source pages. Invalidated
- *   automatically when Rango state bumps (deploy or invalidateClientCache()).
+ * - Wildcard (source-agnostic): prefix is the state's epoch, the
+ *   `{version}:{timestamp}` part of `getRangoState()` (`stateEpoch`).
+ *   Shared across all source pages. Invalidated automatically when the state
+ *   rotates (a deploy or invalidateClientCache()); a write bump leaves it.
  *   `_rsc_segments` is omitted so sibling payloads prefetched from one page
  *   remain reusable after another prefetched navigation commits. Key shape:
  *   `rangoState\0/target?...`.

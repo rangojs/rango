@@ -369,9 +369,13 @@ automatically and coherently:
   bumps the write part of the `X-Rango-State` value — sent on every prefetch
   and navigation and keyed into the browser HTTP cache via `Vary` — which
   strands every HTTP-cached payload from before the mutation.
-- Sibling tabs are notified, and the state cookie itself is the cross-tab
-  sync channel, so a mutation in one tab cannot serve pre-mutation data in
-  another.
+- Sibling tabs whose page shares a segment with the acting page are
+  notified at once (`BroadcastChannel`), and the state cookie itself is the
+  cross-tab sync channel: any other tab sees the bumped write part on its
+  next prefetch, navigation or Back, before it decides what to serve, so a
+  mutation in one tab cannot serve pre-mutation data in another. Where the
+  browser blocks cookies there is no shared cookie: only the notified tabs
+  hear the write (see What it costs).
 - The escape hatch is per-invocation, not per-definition. An action that
   turns out to be a no-op keeps the caches warm by saying so:
 
@@ -506,6 +510,13 @@ them:
   DSL intentionally omits route middleware, nested `include()`/`parallel()`,
   error/not-found boundaries, and `cache()` — those stay in the server tree
   around the mount.
+- **Without cookies, tabs hear writes only by broadcast.** Where the browser
+  blocks the state cookie, each tab keeps its own state value in memory
+  (`src/browser/rango-state.ts`). An action still bumps it in its own tab
+  and in each tab its broadcast reaches, but a tab whose page shares no
+  segment with the acting page (or one with `crossTabSync: false`) keeps
+  serving its prefetches from before the write until its next action,
+  reload or `prefetchCacheTTL`.
 
 If you want a router where the behavior you get is the behavior you can read
 — in your own route tree, in a contract document, and in the tests that pin

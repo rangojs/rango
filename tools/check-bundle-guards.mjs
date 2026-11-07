@@ -299,7 +299,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.125KB on 2026-11-07 for a server action in a browser
+// that cannot keep the state cookie, measured on cloudflare-basic from main
+// 5260819 53997B -> 54036B (+39B gzip; main sat 19B under the old limit). No
+// response's Set-Cookie reaches such a jar, so the action's landing and a tab
+// that hears its soft broadcast bump the write part of the in-memory state
+// themselves (browser/rango-state.ts bumpRangoStateWriteWhenUnbacked, called
+// from browser/navigation-store.ts). It cannot load lazily: it runs at every
+// action's landing. By the owner's rule above: 54036B + 256B, rounded up to
+// the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

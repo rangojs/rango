@@ -80,7 +80,14 @@ The value has two kinds of change, and the client tells them apart:
   actions that start from one value in the same server millisecond (a
   Worker's clock does not move between I/O) must not set the same value, or
   a prefetch cached between them would answer after the second write. A
-  request with no state value gets no bump.
+  request with no state value gets no bump. That is every request from a
+  page whose jar keeps no state value (cookies blocked, a sandboxed frame),
+  so there the client bumps it: the landing, and a tab that hears its soft
+  broadcast without adopting a newer state, bump the write part of the
+  in-memory mirror when a read of the jar finds no value
+  (`bumpRangoStateWriteWhenUnbacked` in `rango-state.ts`). Without it the
+  value such a tab sends stayed the same across the write, and the HTTP
+  cache answered its next hover with the pre-write bytes as fresh.
 
 A two-part value (written before the write part existed, by a tab still
 open across the deploy) parses with write 0. An open tab still running the
@@ -1010,7 +1017,10 @@ would reintroduce exactly the staleness this design removes.
 
 What makes the first column unconditional: with cookies blocked the in-memory
 mirror is the source of truth within a page session; the `X-Rango-State` header
-is always sent, and the in-memory prefetch map never touches storage. Cookie
+is always sent, and the in-memory prefetch map never touches storage. No
+response's `Set-Cookie` reaches it, so a server action's write bump is made on
+the client, in the mirror, by the tab that ran the action and by each tab that
+hears its soft broadcast (`bumpRangoStateWriteWhenUnbacked`). Cookie
 write failures are silently absorbed. The failure direction is always toward
 freshness: divergent states produce extra misses, never stale reads — except
 the narrow case of a tab that missed a `BroadcastChannel` message _and_ can't
@@ -1019,11 +1029,12 @@ by `prefetchCacheTTL`. Browsers also block site data wholesale, not cookies à
 la carte, so any configuration that breaks the cookie was already breaking
 localStorage; this design inherits the blast radius, it doesn't widen it.
 
-The router no longer writes the HTTP-cache surface at all (#1170: no prefetch
-response carries `Cache-Control`; `Vary` is still emitted and keys responses a
-route caches itself). When `prefetchCacheTTL` is `false`/`0` the state keys only
-the history cache, and every TTL-bounded window above collapses to the page
-lifetime.
+The router writes the HTTP-cache surface only for a prefetch with nothing live
+in it (#1356: `private, max-age={prefetchCacheTTL}`); a live render carries no
+`Cache-Control` of the router's (#1170). `Vary` is always emitted and also keys
+responses a route caches itself. When `prefetchCacheTTL` is `false`/`0` the
+state keys only the history cache and what a route caches itself, and every
+TTL-bounded window above collapses to the page lifetime.
 
 Deliberately rejected: a silent cookie → localStorage → memory fallback chain.
 It resurrects a dual-backend test matrix for users whose browsers almost

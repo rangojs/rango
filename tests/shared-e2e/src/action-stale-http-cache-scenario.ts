@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import {
   readState,
   stateEpochOf,
@@ -33,8 +33,14 @@ import { waitForShellHydration } from "./shell-request.js";
  * links to it with ?prefetch=max-age, prefetched on hover. The bare layout's
  * add writes the cart and answers at once. /action-stale/basket, under the
  * layout whose `as-cart-default` loader reads the cart with no revalidate(),
- * and the bare basket link to each other, unprefetched. Both apps call this
- * from a dev and a (production) describe.
+ * and the bare basket link to each other, unprefetched. The bare layout also
+ * posts the add as a form, which a document without JavaScript sends through
+ * the progressive-enhancement path. Both apps call this from a dev and a
+ * (production) describe.
+ *
+ * A page that cannot keep the state cookie (cookies blocked) never gets the
+ * response's bump: its in-memory value takes the write, in the tab that ran
+ * the action and in one that hears its broadcast.
  */
 
 const SOURCE = "/action-stale/bare/basket?prefetch=max-age";
@@ -108,6 +114,41 @@ async function hoverPrefetch(
   await expect
     .poll(() => sent.filter((entry) => entry.finished).length)
     .toBe(count);
+}
+
+/**
+ * Hides the rango state cookie from the page, as a browser that blocks
+ * cookies does: `document.cookie` reads leave it out and writes of it are
+ * dropped. Other cookies (the fixture's `as-key`) pass. The jar never holds
+ * the state, so no request carries it as a cookie either.
+ */
+async function blockStateCookie(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const native = Object.getOwnPropertyDescriptor(
+      Document.prototype,
+      "cookie",
+    )!;
+    const isState = (part: string): boolean =>
+      part.trim().startsWith("rango-state_");
+    Object.defineProperty(Document.prototype, "cookie", {
+      configurable: true,
+      get(this: Document): string {
+        return (native.get!.call(this) as string)
+          .split(";")
+          .filter((part) => part.trim() !== "" && !isState(part))
+          .join(";");
+      },
+      set(this: Document, value: string): void {
+        if (!isState(value)) native.set!.call(this, value);
+      },
+    });
+  });
+}
+
+/** Whether the browser's jar holds a rango state cookie. */
+async function jarHoldsState(page: Page): Promise<boolean> {
+  const cookies = await page.context().cookies();
+  return cookies.some((cookie) => cookie.name.startsWith("rango-state_"));
 }
 
 /** Write once through the bare layout's add, and wait until it settled. */
@@ -276,5 +317,92 @@ export function runActionStaleHttpCacheTests(
     expect(stateEpochOf(after), "only its write part").toBe(
       stateEpochOf(before),
     );
+  });
+
+  test("a form posted without JavaScript bumps the state: a hover after it shows the write", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    const sent = await openSource(page, options);
+    await hoverPrefetch(page, sent, 1);
+    const before = await readState(page);
+
+    // The same document with no script to run: the form posts natively.
+    const noScript = (route: Route): Promise<void> =>
+      route.request().resourceType() === "script"
+        ? route.abort()
+        : route.continue();
+    await page.route("**/*", noScript);
+    await page.goto(options.url(SOURCE));
+    await page.getByTestId("as-bare-add-form").click();
+    await expect(page.getByTestId("as-bare-basket")).toHaveText("basket:1");
+    await page.unroute("**/*", noScript);
+    const posted = await readState(page);
+    expect(posted, "the form's response bumps the state").not.toBe(before);
+    expect(stateEpochOf(posted), "only its write part").toBe(
+      stateEpochOf(before),
+    );
+
+    await page.goto(options.url(SOURCE));
+    await waitForShellHydration(page);
+    await hoverPrefetch(page, sent, 2);
+    expect(sent[1]!.state).toBe(posted);
+    await page.getByTestId("as-to-max-age-prefetched").click();
+    await expect(page.getByTestId("as-max-age")).toHaveText("max-age:1");
+  });
+
+  test("where the page cannot keep the state cookie, a hover after an action shows the write", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    await blockStateCookie(page);
+    const sent = await openSource(page, options);
+    await hoverPrefetch(page, sent, 1);
+    expect(sent[0]!.cacheControl, "the fixture's own max-age").toBe(
+      "private, max-age=60",
+    );
+
+    await write(page);
+    await hoverPrefetch(page, sent, 2);
+    await page.getByTestId("as-to-max-age-prefetched").click();
+    await expect(page.getByTestId("as-max-age")).toHaveText("max-age:1");
+
+    expect(await jarHoldsState(page), "the jar never holds the state").toBe(
+      false,
+    );
+    // The value the page keeps in memory took the write.
+    expect(sent[1]!.state).not.toBe(sent[0]!.state);
+    expect(stateEpochOf(sent[1]!.state), "only its write part").toBe(
+      stateEpochOf(sent[0]!.state),
+    );
+  });
+
+  test("where pages cannot keep the state cookie, a tab that hears an action's broadcast shows the write on hover", async ({
+    page,
+    context,
+  }) => {
+    test.setTimeout(60000);
+    await blockStateCookie(page);
+    await openSource(page, options);
+
+    // Opened after the acting tab, so its own value is the newer one and it
+    // adopts nothing from the broadcast: only its own bump moves it.
+    const other = await context.newPage();
+    try {
+      await blockStateCookie(other);
+      const otherSent = await openSource(other, options);
+      await hoverPrefetch(other, otherSent, 1);
+
+      await write(page);
+      await hoverPrefetch(other, otherSent, 2);
+      await other.getByTestId("as-to-max-age-prefetched").click();
+      await expect(other.getByTestId("as-max-age")).toHaveText("max-age:1");
+      expect(otherSent[1]!.state).not.toBe(otherSent[0]!.state);
+      expect(stateEpochOf(otherSent[1]!.state), "only its write part").toBe(
+        stateEpochOf(otherSent[0]!.state),
+      );
+    } finally {
+      await other.close();
+    }
   });
 }
