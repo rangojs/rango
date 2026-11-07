@@ -44,8 +44,11 @@ export const test = base.extend<{}, { devServerURL: string }>({
 });
 ```
 
-`useFixture` itself behaves as before, except that a server killed at teardown
-no longer logs `exit code null`, and a server that exits with code 0 before
+`useFixture` now tracks its build and servers with a `ServerGuard` too. Before,
+a production `beforeAll` that timed out while `pnpm build` was finishing could
+start `pnpm preview` after `afterAll` had run, and nothing stopped that server;
+now the hook throws instead of starting it. A server killed at teardown no
+longer logs `exit code null`, and a server that exits with code 0 before
 printing a URL now fails `beforeAll` at once instead of at the 60 s timeout.
 
 ## 0.35.0 (2026-11-04)
