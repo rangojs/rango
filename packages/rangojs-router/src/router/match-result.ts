@@ -116,10 +116,7 @@ import { isPlaceholder } from "../types/segments.js";
 import { interceptMatched } from "../browser/intercept-utils.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { appendMetric } from "./metrics.js";
-import {
-  collectInterceptTargetNames,
-  interceptSegmentIds,
-} from "./intercept-resolution.js";
+import { collectInterceptTargetNames } from "./intercept-resolution.js";
 
 export async function collectSegments(
   generator: AsyncGenerator<ResolvedSegment>,
@@ -156,17 +153,14 @@ export function buildMatchResult<TEnv>(
       }
     }
   } else {
-    allIds = ctx.interceptResult
-      ? ctx.clientSegmentIds.length > 0
-        ? interceptMatched(
-            ctx.clientSegmentIds,
-            interceptSegmentIds(
-              ctx.interceptResult.entry,
-              ctx.interceptResult.intercept,
-            ),
-          )
-        : allSegments.map((s) => s.id)
-      : [...state.matchedIds, ...state.interceptSegments.map((s) => s.id)];
+    // An intercept the client resolves over its page lists that page by the
+    // ids the client holds, then the slot's, in one order for a prefetch, its
+    // fill and an action (R6): the walk also renders the target chain's
+    // layouts below the declaring entry, which are not on the page.
+    allIds =
+      ctx.interceptResult && ctx.clientSegmentIds.length > 0
+        ? interceptMatched(ctx.clientSegmentIds, state.interceptMatchedIds)
+        : [...state.matchedIds, ...state.interceptMatchedIds];
 
     allIds = [...new Set(allIds)];
 

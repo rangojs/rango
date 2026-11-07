@@ -16,7 +16,10 @@ async function hit(slot: ResolvedSegment) {
     namespace: "intercept:item",
     loaderId: "a",
   });
-  const resolveInterceptLoadersOnly = vi.fn(async () => [loaderSegment]);
+  const resolveInterceptLoadersOnly = vi.fn(async () => ({
+    segments: [loaderSegment],
+    matchedIds: ["L0.@modal", "L0.@modalD0.a"],
+  }));
   const ctx = {
     isFullMatch: false,
     isIntercept: true,
@@ -63,6 +66,7 @@ describe("withInterceptResolution on a cache hit", () => {
       "L0.@modalD0.a",
     ]);
     expect(state.interceptSegments).toEqual([slot, loaderSegment]);
+    expect(state.interceptMatchedIds).toEqual(["L0.@modal", "L0.@modalD0.a"]);
     expect(state.slots["@modal"]?.segments).toEqual([slot, loaderSegment]);
   });
 

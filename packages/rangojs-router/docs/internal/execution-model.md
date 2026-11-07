@@ -93,10 +93,13 @@ loader segments back onto the slot before it builds the tree
 keeps its element tree.
 
 The page under an intercept never renders on an intercept request: the
-route entry is skipped (`router/segment-resolution/revalidation.ts`), and
-`matched` lists it only from the ids the request held (`interceptMatched`,
-`browser/intercept-utils.ts`). A request that held no segments gets the
-layouts and the slot back. That is what every redirect followed as a
+route entry is skipped and not listed (`resolveAllSegments`,
+`router/segment-resolution/revalidation.ts`), and `matched` lists the page
+only from the ids the request held (`interceptMatched`,
+`browser/intercept-utils.ts`), then the slot's ids as the funnel returns them
+(`resolveInterceptEntry`'s `matchedIds`: the slot, then every loader segment,
+run or not). A request that held no segments gets the layouts and the slot
+back, listed by the same walk. That is what every redirect followed as a
 navigation sends (an action's, a navigation's, a `prefetch: false` fill's),
 and a Back/Forward revalidation of an entry whose handles were pending, a
 retry, and the dev HMR refetch. The browser keeps the page
@@ -257,7 +260,10 @@ flagged loaders (on an intent prefetch, those marked `false`) and nothing of
 the target chain: its plan's
 scope is built from the intercept entry alone. Its fill names the intercept's source, as a
 request from the open modal does, and skips every target-chain entry the
-client does not hold. A flagged `loading()` inside `intercept()` defers
+client does not hold: the walks skip it by entry id, so its handler and
+loaders never run, and the match pipeline's last step (`withInterceptFill`)
+drops any segment outside the slot that the client lacks, from whichever
+source, a stored one included. A flagged `loading()` inside `intercept()` defers
 nothing.
 
 Every other request kind is untouched by the flag: a document request, a navigation with no prefetch to adopt, an action revalidation, back/forward, a

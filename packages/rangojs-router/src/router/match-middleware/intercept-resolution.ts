@@ -108,13 +108,37 @@ import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog } from "../logging.js";
 import { isInterceptSegment } from "../../browser/intercept-utils.js";
+import {
+  interceptFillSkips,
+  isInterceptFill,
+} from "../segment-resolution/prefetch-deferral.js";
+
+/**
+ * A fill that resolves an intercept sends only what the client lacks of the
+ * intercept (interceptFillSkips): a segment outside the slot that the client
+ * does not hold is outside the intercept's `matched`, and the browser merges
+ * a fill's loader segments into the held tree (fillHoles), so one outside
+ * `matched` would land there. The match pipeline's last step, so it holds for
+ * every segment source, a new one included. Any other request gets the
+ * source itself, with no generator in between.
+ */
+export function withInterceptFill<TEnv>(
+  ctx: MatchContext<TEnv>,
+): GeneratorMiddleware<ResolvedSegment> {
+  if (!isInterceptFill(ctx)) return (source) => source;
+  return async function* (source) {
+    for await (const segment of source) {
+      if (!interceptFillSkips(ctx, segment)) yield segment;
+    }
+  };
+}
 
 /**
  * Creates intercept resolution middleware
  *
  * If ctx.interceptResult exists and we're not in a cache-hit-with-intercept scenario:
  * - Resolves intercept segments
- * - Updates state.interceptSegments
+ * - Updates state.interceptSegments and state.interceptMatchedIds
  * - Updates state.slots with the intercept slot
  * - Yields intercept segments after main segments
  */
@@ -174,7 +198,7 @@ export function withInterceptResolution<TEnv>(
     });
 
     const Store = ctx.Store;
-    const interceptSegments = await Store.run(() =>
+    const { segments: interceptSegments, matchedIds } = await Store.run(() =>
       resolveInterceptEntry(
         interceptPassInput(ctx),
         ctx.interceptResult!.intercept,
@@ -184,6 +208,7 @@ export function withInterceptResolution<TEnv>(
     );
 
     state.interceptSegments = interceptSegments;
+    state.interceptMatchedIds = matchedIds;
     state.slots[slotName] = {
       active: true,
       segments: interceptSegments,
@@ -229,7 +254,7 @@ async function handleCacheHitIntercept<TEnv>(
     delete slot.loaderIds;
   }
 
-  const loaderSegments = resolveInterceptLoadersOnly
+  const { segments: loaderSegments, matchedIds } = resolveInterceptLoadersOnly
     ? await ctx.Store.run(() =>
         resolveInterceptLoadersOnly(
           interceptPassInput(ctx),
@@ -238,9 +263,10 @@ async function handleCacheHitIntercept<TEnv>(
           true, // belongsToRoute
         ),
       )
-    : [];
+    : { segments: [], matchedIds: cachedSlot.map((s) => s.id) };
   const interceptSegments = [...cachedSlot, ...loaderSegments];
   state.interceptSegments = interceptSegments;
+  state.interceptMatchedIds = matchedIds;
   state.slots[slotName] = {
     active: true,
     segments: interceptSegments,

@@ -59,6 +59,7 @@ import {
   fillSends,
   interceptFillSkips,
   isFillRequest,
+  isInterceptFill,
   recordUse,
 } from "../segment-resolution/prefetch-deferral.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
@@ -409,6 +410,19 @@ function storedEntrySends<TEnv>(
 }
 
 /**
+ * `sends`, except that a segment an intercept's fill drops (withInterceptFill,
+ * the pipeline's last step) is not sent here either: none of its handle
+ * values is replayed, and no rule or trace decides it.
+ */
+function exceptInterceptFillDrops<TEnv>(
+  ctx: MatchContext<TEnv>,
+  sends: (segment: ResolvedSegment) => boolean | Promise<boolean>,
+): (segment: ResolvedSegment) => boolean | Promise<boolean> {
+  if (!isInterceptFill(ctx)) return sends;
+  return (segment) => !interceptFillSkips(ctx, segment) && sends(segment);
+}
+
+/**
  * Serve a stored match from the first source that answers (the order is in
  * the module header), or pass `upstream` through when none does. Every
  * StoredSegmentSource serves here: the stored segments, minus the ones the
@@ -518,12 +532,16 @@ async function* serveStoredSegments<TEnv>(
   const source: StoredSegmentSource = stored;
 
   const fromCache = source.kind === "segment-cache";
-  const storedSends = fromCache
-    ? undefined
-    : storedEntrySends(ctx, source.kind === "prerender-overlay", router);
+  // Decided once, before the prerender entry's handle replay asks.
+  const sends = exceptInterceptFillDrops(
+    ctx,
+    fromCache
+      ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
+      : storedEntrySends(ctx, source.kind === "prerender-overlay", router),
+  );
   const segments = fromCache
     ? source.segments
-    : await decodeStoredEntry(source.entry, ctx, reqCtx, storedSends!);
+    : await decodeStoredEntry(source.entry, ctx, reqCtx, sends);
 
   // Entries above the cache() boundary are not in the record: resolve them
   // fresh, exactly as an uncached render of this request would.
@@ -587,16 +605,12 @@ async function* serveStoredSegments<TEnv>(
   const cachedMatchedIds = [...liveMatchedIds, ...segments.map((s) => s.id)];
   state.cachedMatchedIds = cachedMatchedIds;
 
-  const sends = fromCache
-    ? cachedSegmentSends(ctx, source.shouldRevalidate, reqCtx, router)
-    : storedSends!;
   const restoreHandles = fromCache ? source.restoreHandles : undefined;
   const sentIds = restoreHandles && new Set<string>();
 
   yield* liveSegments;
 
   for (const segment of segments) {
-    if (interceptFillSkips(ctx, segment)) continue;
     let send = sends(segment);
     if (typeof send !== "boolean") {
       // A cache() record segment's revalidate() rules decided. Awaited here,

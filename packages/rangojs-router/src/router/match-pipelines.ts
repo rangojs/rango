@@ -30,14 +30,15 @@
  *   +------------------+
  *         |
  *         v
- *   ==================== PIPELINE EXECUTION ====================
- *   |                                                          |
- *   |  empty() ─────> [1] ─────> [2] ─────> [3] ─────> [4] ───>|───> segments
- *   |    |            |          |          |          |       |
- *   |    |    cache   |  segment |intercept | cache   | bg     |
- *   |    |   lookup   | resolve  | resolve  | store   | reval  |
- *   |                                                          |
- *   ============================================================
+ *   ======================== PIPELINE EXECUTION ========================
+ *   |                                                                  |
+ *   |  empty() ──> [1] ──> [2] ──> [3] ──> [4] ──> [5] ──> [6] ────────|──> segments
+ *   |              |      |      |      |      |      |                |
+ *   |            cache  segment inter- cache  bg     inter-            |
+ *   |            lookup resolve cept   store  reval  cept              |
+ *   |                           resolve              fill              |
+ *   |                                                                  |
+ *   ====================================================================
  *         |
  *         v
  *   +------------------+
@@ -58,7 +59,9 @@
  * For the partial match pipeline:
  *
  *   compose(
- *     withBackgroundRevalidation,  // [5] Outermost - triggers SWR
+ *     withInterceptFill,           // [6] Outermost - an intercept's fill
+ *                                  //     sends only what the client lacks
+ *     withBackgroundRevalidation,  // [5] Triggers SWR
  *     withCacheStore,              // [4] Stores segments in cache
  *     withInterceptResolution,     // [3] Resolves intercept segments
  *     withSegmentResolution,       // [2] Resolves on cache miss
@@ -73,6 +76,8 @@
  *     -> [3] intercept-resolution: resolves intercepts, yields them
  *     -> [4] cache-store: observes all, stores in cache
  *     -> [5] bg-revalidation: no-op (wasn't stale)
+ *     -> [6] intercept-fill: drops, on an intercept's fill, a segment outside
+ *            the slot the client lacks (not a layer on any other request)
  *     -> output: all segments
  *
  * Execution flow for cache HIT (stale):
@@ -83,7 +88,13 @@
  *     -> [3] intercept-resolution: extracts intercepts from cache
  *     -> [4] cache-store: sees cacheHit=true, skips
  *     -> [5] bg-revalidation: triggers waitUntil() to revalidate
+ *     -> [6] intercept-fill: as on a MISS (a fill never revalidates a record,
+ *            so on a fill [5] is a no-op)
  *     -> output: cached segments + fresh loader data
+ *
+ * Every segment source answers to [6]: only this layer drops a segment from
+ * an intercept's fill. A walk skips an entry the fill drops only so as not to
+ * run its handler and loaders.
  *
  *
  * PIPELINE VARIANT
@@ -102,6 +113,7 @@ import {
   withBackgroundRevalidation,
   withCacheLookup,
   withCacheStore,
+  withInterceptFill,
   withInterceptResolution,
   withSegmentResolution,
 } from "./match-middleware/index.js";
@@ -127,6 +139,7 @@ export function createMatchPartialPipeline<TEnv>(
   state: MatchPipelineState,
 ): AsyncGenerator<ResolvedSegment> {
   const pipeline = compose<ResolvedSegment>(
+    withInterceptFill(ctx),
     withBackgroundRevalidation(ctx, state),
     withCacheStore(ctx, state),
     withInterceptResolution(ctx, state),
