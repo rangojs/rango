@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Fixed: in dev, editing a `clientUrls()` `revalidate()` predicate no longer answers requests with 500 "has no server registration"
+### Fixed: in dev, editing a `clientUrls()` `revalidate()` predicate no longer answers requests with 500 "has no server registration" ([#1412](https://github.com/rangojs/rango/pull/1412))
 
 **Before.** On the Node dev server, saving a change to a `revalidate()`
 predicate in a `clientUrls()` group (or in a component's `.use`) gave the
