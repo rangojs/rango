@@ -518,6 +518,7 @@ rango({ prerender: { onError: "warn" } }); // default is "fail"
 | `throw new Skip("reason")`  | Skip entry, log SKIP, continue               | Skip entry, log SKIP, continue   |
 | `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
 | A child component throws    | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
+| `return redirect(url)`      | Log FAIL, stop ALL pre-rendering, fail build | Log WARN, skip the URL, continue |
 
 The last row covers a handler that returns fine but whose tree holds an async
 server component that throws while the page is rendered at build, for example
@@ -532,6 +533,34 @@ depends on the rest of the build, and a skipped `Static()` handler's evicted cod
 surface as an error. For DEFINED runtime behavior reach for `Passthrough()` (a live
 fallback) or `throw new Skip()` (an intentional skip — works in the render fn, not
 only `getParams()`); otherwise prefer the default `"fail"`.
+
+### A page that redirects
+
+A `Prerender()` handler may return (or throw) `redirect()`, as a `path()`
+handler may; its type takes a `Response`. A build cannot bake one: the
+artifact holds Flight segments only. A redirect from the handler, a layout
+inside the route or an async child fails the build with an error that names
+the URL, the target and the status (`The prerender of /articles/old redirected
+to /articles/new (308). A build cannot store a redirect or other Response.
+...`), or, under `"warn"`, skips the URL with that message. `onError` gets the
+same message, with the `Response` as `error.cause`.
+
+So keep a param that redirects out of the build, and redirect at request time:
+
+- leave it out of `getParams()`, or `throw new Skip()` for it;
+- redirect from middleware, which runs on every request to a prerendered
+  route, or from the live handler of a `Passthrough()` route, which answers
+  every param the build did not bake.
+
+In dev the prerender endpoint logs the same message and the request falls
+through to the live render, which answers the redirect like any handler's
+(not under `loading()`, which streams the handler), so a redirect that works
+in dev can still fail the build when `getParams()` lists its param. An
+on-demand refresh (`router.prerender()`) that meets a redirect reports
+`render-failed` and keeps the stored page. A `Static()` handler that returns
+or throws a redirect fails the build the same way. An intercept over the
+route whose handler or layout returns or throws a redirect is not baked: the
+build warns that it renders live, and the page is still baked.
 
 Both `Skip` and hard errors propagate to the router's `onError` callback with phase
 `"prerender"` or `"static"`; skipped entries (a `Skip`, or an error under
