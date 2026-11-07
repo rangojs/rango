@@ -2612,15 +2612,21 @@ time its component pushes.
 The receiver is what a caller can lose, so the child owns `use` too
 (`withSegmentScope`): `const { use } = ctx`, `use` passed on as a callback, or
 `{ ...ctx }` reaches the shared implementation without a receiver, and the
-child's own `use` supplies it. It reads the base ctx's `use` at call time,
-because `loader-cache.ts` swaps that for its override interceptor.
+child's own `use` supplies it. A receiver that names a segment of its own
+(a copy, a nested scope) keeps it; one that names none — `use` borrowed onto
+another object or handed on as a prop, so `props.use(Handle)` arrives with
+`props` as the receiver — gets the child, because `props` would otherwise
+resolve the push off the shared pin. It reads the base ctx's `use` at call
+time, because `loader-cache.ts` swaps that for its override interceptor.
 
-The other readers take `segmentPinOf(ctx)`, the innermost scope's segment
-else the ctx's pin, and pass no carried segment: a started loader's owning
-segment (`loaderOwner`, after a prefetch-deferred loader's registered owner)
-and the caller segment a `"use cache"` call records and replays under
-(`cache-runtime.ts`). They are handed the request's one ctx, so they keep
-reading its pin.
+A loader the ctx starts (`ctx.use(loader)`) belongs to the segment that ctx
+carries too: `loaderOwner` (`segment-resolution/prefetch-deferral.ts`) takes
+the calling ctx from the same receiver and reads its carried segment, so a
+loader a layout's ctx starts from the layout's component — after the walker
+moved the pin on — files its body's pushes under the layout, not the route.
+The one remaining reader that takes `segmentPinOf(ctx)` with no carried
+segment is the caller segment a `"use cache"` call records and replays under
+(`cache-runtime.ts`), which keeps reading the pin.
 
 You might worry about runtimes that lose async context. The fallback is the
 ctx's own segment, else the pin, the behaviour before this scope: a lost
@@ -2643,11 +2649,12 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-segment.rsc-test.tsx` (the
 segment a `LateHandlePushError` names for a component a route, a layout and a
-slot handed the ctx to, through `ctx.use` and through a destructured `use`,
-and for a route whose slot resolves after its handler) and
-`server/__tests__/segment-pin.test.ts`. The e2e `handles-after-await`
-(test-app and cloudflare-basic, dev and production) checks the message on the
-page.
+slot handed the ctx to, through `ctx.use`, through a destructured `use` and
+through a `use` borrowed onto a props object, and for a route whose slot
+resolves after its handler; a loader a layout's ctx starts from the component
+the handler rendered) and `server/__tests__/segment-pin.test.ts`. The e2e
+`handles-after-await` (test-app and cloudflare-basic, dev and production)
+checks the message on the page.
 
 ### Cache-safety contract for context variables
 

@@ -656,6 +656,16 @@ describe("createReverseFunction", () => {
       };
       copy.use("copied");
       expect(seen[1]!.receiver._handleSegmentId).toBe("M0L0L0R0");
+
+      // Borrowed onto another object (a props bag) the wrapper still
+      // supplies the child: that object names no segment of its own, so
+      // forwarding it would resolve the push off the shared pin.
+      const props = { use: scoped.use } as unknown as {
+        use: (item: string) => string;
+      };
+      props.use("borrowed");
+      expect(seen[2]!.item).toBe("swapped:borrowed");
+      expect(seen[2]!.receiver._handleSegmentId).toBe("M0L0L0R0");
       // The shared ctx keeps the record it had.
       expect((ctx as any).use).toBe(swapped);
     });

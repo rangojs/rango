@@ -11,15 +11,19 @@ rejected — by design, the `.defer()` path is the mitigation — and the dev
 request's shared segment id when it was called, and by then the walker had
 moved it on. A layout's or a slot's push named the child route's segment; a
 route's named the slot or orphan layout resolved after it. A component that
-held only `use` (`const { use } = ctx`) or a copy (`{ ...ctx }`) read the
-shared id too, whichever handler handed it the ctx.
+held only `use` (`const { use } = ctx`), a copy (`{ ...ctx }`) or a `use` it
+borrowed onto another object (`props.use(Handle)`) read the shared id too,
+whichever handler handed it the ctx. A loader the layout's ctx started from
+that component filed its body's pushes under the route as well.
 
 **Now.** The message names the segment whose ctx the push went through, the
 route's, the layout's or the slot's:
 `Handle "meta" for segment "M0L0L0" was pushed after handle collection completed.`
 Each handler's ctx carries its own segment, and its own `use` keeps it when a
-component calls it detached from the ctx. The push is still rejected, at the
-same moment, and production still shows no message.
+component calls it detached from the ctx, copied off it, or borrowed onto
+another object. A loader the ctx starts reads the same carried segment, so
+its pushes land in the layout's or the slot's bucket. The push is still
+rejected, at the same moment, and production still shows no message.
 
 ## 0.35.0 (2026-11-04)
 

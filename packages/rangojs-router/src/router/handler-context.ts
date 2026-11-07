@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  carriedSegmentOf,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -224,7 +225,11 @@ function createPrerenderPassthroughFn(
  * ctx`, `use` passed as a callback, `{ ...ctx }` — would file under the pin
  * the walker moved on. The wrapper supplies the child as the receiver, and
  * reads the base's `use` at call time because loader-cache.ts swaps it for
- * its override interceptor after the child exists.
+ * its override interceptor after the child exists. A receiver that names a
+ * segment of its own (a copy, a nested scope) keeps it; one that names none —
+ * `use` borrowed onto another object or handed on as a prop — gets the child,
+ * since that object would otherwise resolve the push off the shared pin
+ * (carriedSegmentOf, server/context.ts).
  *
  * With a ReverseScope the child also owns `reverse`, so `.name` resolves in
  * the module that declared the segment (`_reverseScope` keys a "use cache"
@@ -245,9 +250,12 @@ export function withSegmentScope<C>(
   };
   scoped._handleSegmentId = segmentId;
   scoped.use = function (this: unknown, ...args: unknown[]) {
-    // `this` when a caller supplies one (a copy, a nested scope), else the
-    // child: either way a detached call still files under this segment.
-    return Reflect.apply(base.use, this ?? scoped, args);
+    const receiver =
+      carriedSegmentOf(this as { _handleSegmentId?: string } | undefined) ===
+      undefined
+        ? scoped
+        : this;
+    return Reflect.apply(base.use, receiver, args);
   };
   if (scope !== undefined) {
     scoped.reverse = scopeReverse(base.reverse, scope);

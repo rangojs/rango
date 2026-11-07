@@ -71,6 +71,7 @@ import {
   runInsideLoaderBodyScope,
   runInsideLoaderRun,
   runAsSegment,
+  carriedSegmentOf,
   segmentPinOf,
   isInsidePushCallbackScope,
   runInsidePushCallbackScope,
@@ -116,18 +117,18 @@ export type LoaderErrorCallback = (
  * fields for a "use cache" call, and its components push after the route's
  * slots and orphan layouts were pinned.
  *
- * Any other receiver reads the ctx `use` was installed on, whose
- * `_currentSegmentId` the walker pins — a handler that built a smaller ctx
- * with `use` copied onto it (a Prerender handler forwarding to a shared page
- * handler) included.
+ * Any other receiver carries none (carriedSegmentOf) and reads the ctx `use`
+ * was installed on, whose `_currentSegmentId` the walker pins — a handler
+ * that built a smaller ctx with `use` copied onto it (a Prerender handler
+ * forwarding to a shared page handler) included.
  */
 function handlePushSegment(
   receiver: unknown,
   installed: HandlerContext<any, any>,
 ): string | undefined {
   const carried =
-    (receiver as { _handleSegmentId?: string } | undefined)?._handleSegmentId ??
-    (installed as { _pushSegmentId?: string })._pushSegmentId;
+    carriedSegmentOf(receiver as { _handleSegmentId?: string } | undefined) ??
+    carriedSegmentOf(installed as { _pushSegmentId?: string });
   return segmentPinOf(installed as { _currentSegmentId?: string }, carried);
 }
 
@@ -521,6 +522,9 @@ function createLoaderExecutor<TEnv>(
 ): (
   loader: LoaderDefinition<any, any>,
   callerLoaderId: string | null,
+  /** The ctx `ctx.use(loader)` was called on, when a caller names one: its
+   *  carried segment owns the loader's pushes (loaderOwner). */
+  callerCtx?: object,
 ) => Promise<any> {
   // Capture RequestContext eagerly for cookie access (ALS protection on Cloudflare)
   const reqCtxRef = _getRequestContext();
@@ -539,6 +543,7 @@ function createLoaderExecutor<TEnv>(
   function useLoader(
     loader: LoaderDefinition<any, any>,
     callerLoaderId: string | null,
+    callerCtx?: object,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -636,7 +641,7 @@ function createLoaderExecutor<TEnv>(
     // pushes the same granularity handler pushes have (segmentOrder-correct
     // for breadcrumb accumulation). A loader a prefetch deferred and a reader
     // starts anyway keeps the segment that registers it (loaderOwner).
-    const owningSegmentId = loaderOwner(ctx, loader.$$id);
+    const owningSegmentId = loaderOwner(ctx, loader.$$id, callerCtx);
 
     let renderedResolved = false;
     let renderedPromise: Promise<void> | null = null;
@@ -1082,7 +1087,7 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    return useLoader(loader, null);
+    return useLoader(loader, null, this);
   } as typeof ctx.use;
 }
 

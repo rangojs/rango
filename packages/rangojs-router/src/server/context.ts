@@ -1758,6 +1758,25 @@ export function segmentPinOf(
   return segmentPinALS.getStore() ?? carried ?? ctx._currentSegmentId;
 }
 
+/**
+ * The segment the ctx a caller was invoked on belongs to: a layout's or
+ * parallel slot's ctx its own (`_handleSegmentId`, withSegmentScope), the
+ * request's one handler ctx the route's (`_pushSegmentId`,
+ * revalidation.ts resolveEntryHandler). A `{ ...ctx }` copy of either carries
+ * it too, and `Object.create` reaches it through the prototype chain.
+ *
+ * Anything else carries none: a loader's ctx, a middleware ctx, or a foreign
+ * object `ctx.use` was borrowed onto. That is the difference a reader makes
+ * between asking the receiver and asking the frame (handlePushSegment and the
+ * loader kickoff in router/loader-resolution.ts, loaderOwner in
+ * segment-resolution/prefetch-deferral.ts).
+ */
+export function carriedSegmentOf(
+  ctx: { _handleSegmentId?: string; _pushSegmentId?: string } | undefined,
+): string | undefined {
+  return ctx?._handleSegmentId ?? ctx?._pushSegmentId;
+}
+
 // Scope for handle PUSH CALLBACKS (push(() => ...), including async ones).
 // A push callback's value is stored as-is; if it is a promise it is NOT tracked
 // by handleStore.settled and does not block segment resolution, so a

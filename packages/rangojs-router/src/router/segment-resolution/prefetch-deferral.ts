@@ -555,15 +555,32 @@ export function startDeferredLoader(
  * The segment a run of `loaderId` files its handle pushes under: the one
  * that registers it when it is registered (registerDeferredLoader), else the
  * segment whose code starts it (segmentPinOf).
+ *
+ * `callerCtx` is the ctx `ctx.use(loader)` was called on, when a caller names
+ * one. Its own segment beats the pin: the walker moves the pin on while a
+ * component the handler handed its ctx to renders, so a loader a layout's or
+ * a slot's ctx starts from that component would otherwise file under the
+ * route the walker pinned since.
+ *
+ * Only `_handleSegmentId` counts here, never the route's `_pushSegmentId`
+ * (carriedSegmentOf): the walker starts a DSL loader through the same shared
+ * ctx (`executeLoaderData` → `ctx.use(loader)`), with the pin set to the
+ * entry that declares it — an orphan layout's loader must keep filing under
+ * the orphan, not under the route the handler's ctx carries. A route's own
+ * ctx therefore keeps reading the pin, as before. The registration is read
+ * off `ctx`, the request's one handler ctx.
  */
 export function loaderOwner(
   ctx: HandlerContext<any, any>,
   loaderId: string,
+  callerCtx?: object,
 ): string | undefined {
   const internal = ctx as InternalHandlerContext<any, any>;
-  return (
-    internal._deferredLoaders?.get(loaderId)?.owner ?? segmentPinOf(internal)
-  );
+  const owner = internal._deferredLoaders?.get(loaderId)?.owner;
+  if (owner !== undefined) return owner;
+  if (callerCtx === undefined) return segmentPinOf(internal);
+  const caller = callerCtx as InternalHandlerContext<any, any>;
+  return segmentPinOf(caller, caller._handleSegmentId);
 }
 
 /**

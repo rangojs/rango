@@ -271,7 +271,9 @@ shape, and a `Handle` only carries `$$id` so the runtime can't tell them apart.
 (`_handleSegmentId` on a layout's or slot's `withSegmentScope` child, the
 route's `_pushSegmentId` on the request's one ctx; `router/handler-context.ts`,
 `resolveEntryHandler`) for a push from a component the handler handed that ctx
-to, its own `use` keeping the segment when the call lost the receiver; see
+to, its own `use` keeping the segment when the call lost the receiver, and for
+a loader the ctx starts (`loaderOwner`, `segment-resolution/prefetch-deferral.ts`,
+reads the same carried segment — `carriedSegmentOf`, `server/context.ts`); see
 execution-model.md "A streamed handler keeps its segment".
 
 ---
