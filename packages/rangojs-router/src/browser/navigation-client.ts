@@ -218,8 +218,7 @@ export function createNavigationClient(
 
       // An in-flight prefetch that started before the latest action is a miss
       // for a navigation that never revalidates, decided before its headers
-      // arrive, so this navigation fetches without waiting on it (the lookup
-      // discards it: consumeInflightPrefetch).
+      // arrive, so this navigation fetches without waiting on it.
       let inflightEntryPromise: Promise<DecodedPrefetch | null> | null = null;
       if (canUsePrefetch && !cachedEntry) {
         const inflightOptions = { acceptStale: acceptStalePrefetch };

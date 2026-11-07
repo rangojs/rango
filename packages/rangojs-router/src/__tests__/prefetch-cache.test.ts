@@ -216,45 +216,19 @@ describe("prefetch cache", () => {
       expect(result).toBe(entry);
     });
 
-    it("consumeInflightPrefetch adopts one started before markPrefetchesStale only with acceptStale", () => {
+    it("consumeInflightPrefetch treats one started before markPrefetchesStale as a miss unless acceptStale, without consuming it", () => {
       const key = "http://localhost/\0/products";
       const promise = Promise.resolve(makeEntry());
       markPrefetchInflight(key);
       setInflightPromise(key, promise, currentPrefetchEpoch());
       markPrefetchesStale();
 
+      expect(consumeInflightPrefetch(key)).toBe(null);
+      expect(consumeInflightPrefetch(key, { acceptStale: false })).toBe(null);
+      // Left in flight for a caller that takes a stale one.
+      expect(hasPrefetch(key)).toBe(true);
       expect(consumeInflightPrefetch(key, { acceptStale: true })).toBe(promise);
       expect(consumeInflightPrefetch(key, { acceptStale: true })).toBe(null);
-    });
-
-    it("consumeInflightPrefetch discards one started before markPrefetchesStale for a caller without acceptStale: null at once, never stored, disposed when it lands", async () => {
-      const key = "http://localhost/\0/products";
-      const gen = currentGeneration();
-      const entry = makeEntry();
-      const dispose = vi.fn();
-      entry.dispose = dispose;
-      let land!: (entry: DecodedPrefetch) => void;
-      const promise = new Promise<DecodedPrefetch>((resolve) => {
-        land = resolve;
-      });
-      markPrefetchInflight(key);
-      setInflightPromise(key, promise, entry.epoch);
-      markPrefetchesStale();
-
-      expect(consumeInflightPrefetch(key)).toBe(null);
-      // Consumed: a click finds nothing in flight either.
-      expect(consumeInflightPrefetch(key, { acceptStale: true })).toBe(null);
-      // Still downloading: no duplicate prefetch starts over it.
-      expect(hasPrefetch(key)).toBe(true);
-
-      // It lands (fetch.ts stores it, then resolves): not kept, and released.
-      storePrefetch(key, entry, gen);
-      land(entry);
-      await promise;
-      await Promise.resolve();
-      expect(dispose).toHaveBeenCalledOnce();
-      clearPrefetchInflight(key);
-      expect(consumePrefetch(key, { acceptStale: true })).toBe(null);
     });
 
     it("consumeInflightPrefetch returns null when nothing is in-flight", () => {

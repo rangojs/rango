@@ -449,14 +449,13 @@ export function consumePrefetch(
  * during the handoff window. The inflight flag is cleaned up naturally
  * by `clearPrefetchInflight()` in the fetch's `.finally()`.
  *
- * A fetch that started before the latest `markPrefetchesStale()` is adopted
- * only by a caller that passes `acceptStale` (a click), as `consumePrefetch`
- * serves a stale stored entry. Any other caller gets null at once, so it
- * fetches without first waiting for headers it would drop, and the fetch is
- * discarded as an adoption would take it: consumed under every alias, never
- * stored, its entry disposed when it lands (never aborted). The caller is
- * fetching the same page fresh; storing the stale one would let a later click
- * show data older than what that fetch showed.
+ * A fetch that started before the latest `markPrefetchesStale()` follows
+ * `consumePrefetch`'s rule for a stale stored entry: adopted only by a caller
+ * that passes `acceptStale` (a click), and for any other caller a miss that
+ * stays where it is. The miss is decided from the epoch recorded at
+ * registration, so that caller fetches without first waiting for headers it
+ * would drop. Nothing is consumed: the fetch lands stored stale, and a
+ * wildcard alias another source page's navigation could adopt is untouched.
  */
 export function consumeInflightPrefetch(
   key: string,
@@ -464,7 +463,7 @@ export function consumeInflightPrefetch(
 ): Promise<DecodedPrefetch | null> | null {
   const inflightPrefetch = inflightPromises.get(key);
   if (!inflightPrefetch) return null;
-  const discard = isPrefetchStale(inflightPrefetch) && !options?.acceptStale;
+  if (isPrefetchStale(inflightPrefetch) && !options?.acceptStale) return null;
   // Remove the promise under every alias so a second consumer cannot
   // adopt the same stream and race on the body, and mark every alias as
   // adopted so the pending `storePrefetch` (which resolves later, after this
@@ -476,13 +475,6 @@ export function consumeInflightPrefetch(
     inflightPromises.delete(k);
     adoptedKeys.add(k);
   });
-  if (discard) {
-    void inflightPrefetch.promise.then(
-      (entry) => entry?.dispose?.(),
-      () => {},
-    );
-    return null;
-  }
   return inflightPrefetch.promise;
 }
 

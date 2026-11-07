@@ -196,22 +196,16 @@ describe("a prefetch a server action marked stale", () => {
     expect(result.stalePrefetch).toBe(false);
     await expect(restOf(result)).resolves.toBe("head;fresh");
 
-    // The skipped prefetch finishes and is discarded, not stored: a click
-    // fetches fresh rather than show data older than the navigation's.
+    // The skipped prefetch finishes and is stored stale: a click takes it
+    // once, and revalidates.
     responses[0]!.respond();
     responses[0]!.push("prefetched");
     responses[0]!.end();
     await vi.advanceTimersByTimeAsync(10);
-    expect(consumePrefetch(blogKey(), { acceptStale: true })).toBeNull();
-    const clicking = navigateToBlog(true);
-    await vi.advanceTimersByTimeAsync(10);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    responses[2]!.respond();
-    responses[2]!.push("fresh");
-    responses[2]!.end();
-    const click = await clicking;
-    expect(click.stalePrefetch).toBe(false);
-    await expect(restOf(click)).resolves.toBe("head;fresh");
+    const click = await navigateToBlog(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(click.stalePrefetch).toBe(true);
+    await expect(restOf(click)).resolves.toBe("head;prefetched");
   });
 
   it("in flight, is adopted by a click before its headers arrive", async () => {

@@ -228,7 +228,7 @@ const ActionStaleBasket: Handler = async (ctx) => {
 // evicted entry after an action must not be answered by that prefetch, which
 // the action made stale). Prefetching last keeps the prefetch inside the
 // test-app's 60 s prefetchCacheTTL however slow the hops are. It also links,
-// prefetched on hover, to the basket answering after 1500 ms: a prefetch of it
+// prefetched on hover, to the basket answering after 3000 ms: a prefetch of it
 // is still in flight when an action lands and Back reaches that entry.
 const BARE_HOP_PREFETCHING = 22;
 
@@ -327,11 +327,11 @@ const ActionStaleBareHop: Handler = (ctx) => {
       )}
       {n === BARE_HOP_PREFETCHING && (
         <Link
-          to="/action-stale/bare/basket?delay=1500"
+          to="/action-stale/bare/basket?delay=3000"
           prefetch="hover"
           data-testid="as-hop-to-slow-basket-prefetched"
         >
-          Basket, answering after 1500 ms, prefetched on hover
+          Basket, answering after 3000 ms, prefetched on hover
         </Link>
       )}
     </div>
