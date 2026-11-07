@@ -388,6 +388,114 @@ describe("intercept handler lanes left unchanged", () => {
     );
   });
 
+  describe("an action awaits a loading() handler instead of streaming it", () => {
+    const parentEntry = {
+      type: "layout",
+      shortCode: "L9",
+      id: "action-layout",
+      parent: null,
+      errorBoundary: [LayoutError],
+      notFoundBoundary: [],
+    } as any;
+
+    async function resolveOnAction(
+      handler: () => Promise<unknown>,
+      loaders: unknown[] = [],
+    ) {
+      const interceptEntry = {
+        slotName: "@modal",
+        routeName: "act",
+        handler,
+        loading: <div>modal-loading</div>,
+        loader: loaders,
+        when: [],
+      } as any;
+      const deps = {
+        wrapLoaderPromise: vi.fn((p) => p),
+        trackHandler: vi.fn((p) => p),
+        findNearestErrorBoundary: vi.fn(() => LayoutError),
+        findNearestNotFoundBoundary: vi.fn(() => null),
+        callOnError: vi.fn(),
+      } as any;
+      const context = {
+        request: new Request("https://example.com/act/1", { method: "POST" }),
+        url: new URL("https://example.com/act/1"),
+        env: {},
+        params: {},
+        pathname: "/act/1",
+        use: vi.fn(),
+      } as any;
+      const reqCtx = createRequestContext({
+        env: {},
+        request: context.request,
+        url: context.url,
+        variables: {},
+      } as any);
+      const segments = await runWithRequestContext(reqCtx, () =>
+        resolveInterceptEntry(
+          {
+            ...heldNothingPassInput(context, interceptEntry.routeName, {}),
+            deps,
+            actionContext: { actionId: "src/a.ts#act" },
+          },
+          interceptEntry,
+          parentEntry,
+          true,
+        ),
+      );
+      return { slot: segments.find((s: any) => s.slot === "@modal")!, deps };
+    }
+
+    it.each([
+      [
+        "returned",
+        async () =>
+          new Response(null, { status: 302, headers: { Location: "/x" } }),
+      ],
+      [
+        "thrown",
+        async () => {
+          throw new Response(null, {
+            status: 302,
+            headers: { Location: "/x" },
+          });
+        },
+      ],
+    ])(
+      "a %s Response rejects the resolution, so the action redirects",
+      async (_, handler) => {
+        await expect(resolveOnAction(handler)).rejects.toSatisfy(
+          (r: unknown) =>
+            r instanceof Response && r.headers.get("Location") === "/x",
+        );
+      },
+    );
+
+    it("with loaders too", async () => {
+      await expect(
+        resolveOnAction(
+          async () =>
+            new Response(null, { status: 302, headers: { Location: "/x" } }),
+          [{ loader: OkLoader }],
+        ),
+      ).rejects.toBeInstanceOf(Response);
+    });
+
+    it("its content is settled, not a streamed promise", async () => {
+      const { slot, deps } = await resolveOnAction(async () => "modal body");
+      expect(slot.component).toBe("modal body");
+      expect(deps.trackHandler).not.toHaveBeenCalled();
+    });
+
+    it("an error renders the declaring layout's boundary at once", async () => {
+      const { slot, deps } = await resolveOnAction(async () => {
+        throw new Error("action modal failed");
+      });
+      expect(slot.component).toBe(LayoutError);
+      expect(deps.callOnError).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("the background re-render of a streamed handler rejects and records nothing", async () => {
     const parentEntry = {
       type: "layout",

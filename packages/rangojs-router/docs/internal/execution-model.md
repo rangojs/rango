@@ -1017,8 +1017,24 @@ not awaited at the resolution boundary (`resolveEntryHandler` in
 during RSC serialization, where it is rendered into the stream via React's
 error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
 return on a `loading()` route still throws synchronously and redirects correctly;
-only the async/Promise sub-branch is affected. Parallel slots with `loading()`
-share this behavior.
+only the async/Promise sub-branch is affected. Parallel slots and intercepts with
+`loading()` share this behavior: a slot handler's result goes through the same
+`handleHandlerResult`, so a slot's returned `Response` throws exactly as a
+route's does, and an intercept handler's is rethrown by
+`renderInterceptHandlerError` (`router/intercept-resolution.ts`).
+
+A server action's revalidation never streams a handler. It awaits every handler
+before it answers, so an async handler's redirect is the action's response
+(`204` + `X-RSC-Redirect`) whatever `loading()` says. The route, parallel slot
+and intercept lanes all ask one predicate for this, `streamsUnderLoading`
+(`segment-resolution/resolution-pass.ts`). When each lane decided on its own, the
+intercept and slot lanes streamed on an action while the route awaited, and an
+action from an open modal answered `200` with the `Response` inside its payload.
+
+The browser's `router.refresh()` does not yet follow a redirect it receives
+(it reports "Unprocessable refresh response: ServerRedirect"), for every handler
+kind: the server's `204` + `X-RSC-Redirect` is correct, the client half is
+`refresh()` in `browser/navigation-bridge.ts`.
 
 To redirect from a `loading()` route, issue the redirect from middleware, a
 loader, or a synchronous handler return. In development, `warnOnStreamedResponse`

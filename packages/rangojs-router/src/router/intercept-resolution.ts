@@ -25,7 +25,10 @@ import {
   resolveOwnerLoaders,
 } from "./segment-resolution/revalidation.js";
 import { fillSends } from "./segment-resolution/prefetch-deferral.js";
-import type { ResolutionPass } from "./segment-resolution/resolution-pass.js";
+import {
+  streamsUnderLoading,
+  type ResolutionPass,
+} from "./segment-resolution/resolution-pass.js";
 import { getRouterContext, type InterceptResult } from "./router-context.js";
 import { runInSegmentTagScope } from "../cache/cache-tag.js";
 import {
@@ -433,6 +436,27 @@ export async function resolveInterceptEntry<TEnv>(
       layoutElement = layoutResult;
     } else {
       layoutElement = layout;
+    }
+  }
+
+  // A pass that does not stream (an action) settles the handler here, so its
+  // redirect reaches the response, and the result takes the branches below
+  // as a sync handler's does.
+  if (
+    interceptEntry.loading &&
+    !streamsUnderLoading(pass) &&
+    handlerResult instanceof Promise
+  ) {
+    try {
+      handlerResult = await handlerResult;
+    } catch (error) {
+      handlerResult = renderInterceptHandlerError(
+        pass,
+        error,
+        parentEntry,
+        slotSegmentId,
+        options?.background,
+      );
     }
   }
 

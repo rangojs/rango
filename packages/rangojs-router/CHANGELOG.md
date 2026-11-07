@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `redirect()` from an intercept or parallel slot handler redirects as a route handler's does
+
+**Before.** An `intercept()` or `parallel()` slot handler that declares
+`loading()` and returns or throws `redirect()` from an async handler did not
+redirect when a server action's revalidation re-rendered it: the action
+answered `200` with the `Response` inside its payload, where a route handler
+under `loading()` answers `204` with `X-RSC-Redirect`. A parallel slot
+handler that _returned_ `redirect()` (rather than threw it) never redirected
+at all: on a document request, a client navigation, an action or a refresh
+the `Response` was rendered as the slot's content, and the render failed
+("Only plain objects ... can be passed to Client Components").
+
+**Now.** Both answer exactly as a route handler does. A redirect from any
+of them is the request's answer: a `302` for a document, `204` with
+`X-RSC-Redirect` for a navigation, an action or a refresh. The one
+exception is unchanged and the same for all three: an async handler under
+`loading()` streams on a document request, a navigation or a refresh, so its
+redirect lands inside the `200` it already started (the dev warning says
+so). An action awaits every handler before it answers, so there the
+redirect always wins.
+
+```tsx
+intercept(
+  "@modal",
+  ".item",
+  async (ctx) => {
+    const item = await getItem(ctx.params.id);
+    if (!item) return redirect("/items"); // now redirects after an action too
+    return <ItemModal item={item} />;
+  },
+  () => [loading(<ModalSkeleton />)],
+);
+
+parallel({
+  "@side": (ctx) => (signedIn(ctx) ? <Side /> : redirect("/login")), // now redirects
+});
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
