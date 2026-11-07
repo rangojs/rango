@@ -2629,6 +2629,11 @@ export const pageMeta: PageMeta[] = [
       },
       {
         "depth": 2,
+        "id": "animating-suspense-reveals",
+        "text": "Animating Suspense reveals"
+      },
+      {
+        "depth": 2,
         "id": "conditional-transitions-with-when",
         "text": "Conditional transitions with when"
       },

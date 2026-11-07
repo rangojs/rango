@@ -140,6 +140,15 @@ A server component that pushes after an `await` throws `LateHandlePushError`:
 reserve the slot in the handler with `ctx.use(Handle).defer()` and resolve it
 from the component (`/breadcrumbs`, "Deferred content").
 
+**Read a handle where it is shown.** Don't pass a `useHandle` value as a
+context provider's value around `<Suspense>` sections. A loader's push that
+lands after the page has committed is set in an urgent update, and a
+provider fed by it re-renders the suspended sections that read its context in
+that urgent render: a section whose data is there reveals in it, and a
+`<ViewTransition>` meant to animate that reveal does not run
+(`/view-transitions`, "Animating Suspense reveals"). Call `useHandle` in the
+component that shows the value.
+
 On a document load `useHandle` hydrates with the handle data its HTML was
 rendered from, wherever the reader sits; late loader pushes reach every reader
 once the document has finished streaming and every boundary has hydrated (see

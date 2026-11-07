@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Docs: animating Suspense reveals with `<ViewTransition>` and the router's transition kinds ([#1215](https://github.com/rangojs/rango/issues/1215))
+
+The `/view-transitions` and `/client-urls` skills and the View Transitions
+guide now show how to animate the fallback-to-content swap of a `<Suspense>`
+above a `useLoader` read. Every commit the router runs in a transition
+carries its kind (`push`, `replace`, `pop`, `action`, `revalidate`), and a
+reveal that commits on its own carries none, so a class map that sets every
+`TransitionWhenKind` to `"none"` and puts the animation on `default` animates
+the reveal and no navigation, action or refresh. The skills list what
+animates per navigation kind, measured in dev and production, and the
+`/hooks` skill adds a rule: don't pass a `useHandle` value as a context
+provider's value around Suspense sections, because a late handle value
+re-renders them in an urgent render, where they reveal with no view
+transition.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
