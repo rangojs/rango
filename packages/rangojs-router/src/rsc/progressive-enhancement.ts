@@ -24,6 +24,7 @@ import { payloadInitialTheme, payloadLocation } from "./full-payload.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import type { RscPayload, ReactFormState } from "./types.js";
 import type { MatchResult } from "../types.js";
+import type { HandleData } from "../server/handle-store.js";
 import {
   actionRenderRequest,
   attachLocationStateIfPresent,
@@ -48,6 +49,7 @@ import {
   warnNonRedirectPeResponse,
 } from "./runtime-warnings.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
+import { matchCutAtBoundary, noHandles } from "./server-action.js";
 
 export interface PeRouteMiddlewareInfo {
   routeMiddleware?: Array<{
@@ -315,20 +317,7 @@ async function rerenderAfterFormAction<TEnv>(
   // cookies set by route middleware are available during re-render — matching
   // the behavior of JS-enabled requests.
   const renderPage = async (): Promise<Response> => {
-    // Preserve the original POST request's headers (Authorization, Cookie,
-    // custom headers) so loaders that read request headers/cookies behave
-    // identically under PE and the JS action path. Drop body-framing headers
-    // from the bodyless GET and force the HTML accept.
-    const headers = bodylessHeaders(request);
-    headers.set("accept", "text/html");
-    const renderRequest = new Request(url.toString(), {
-      method: "GET",
-      headers,
-    });
-    // A new Request: keep the visitor's telemetry id.
-    if (ctx.router.telemetry) {
-      setRequestId(renderRequest, getRequestId(request));
-    }
+    const renderRequest = peRenderRequest(input);
 
     // JS/PE parity: this is an action's revalidation render, so mark it BEFORE
     // matching — a stale `foregroundOnAction` cache entry must re-execute in the
@@ -354,7 +343,7 @@ async function rerenderAfterFormAction<TEnv>(
 
   const boundary = failure?.boundary;
   const render = boundary
-    ? () => renderPeErrorBoundary(input, failure?.actionId, boundary)
+    ? () => renderPeErrorBoundary(input, failure, boundary)
     : renderPage;
 
   // Execute route middleware wrapping the render, if any.
@@ -374,6 +363,30 @@ async function rerenderAfterFormAction<TEnv>(
   }
 
   return render();
+}
+
+/**
+ * The bodyless GET mirror of the form post that the re-render matches. It
+ * keeps the POST's headers (Authorization, Cookie, custom headers) so loaders
+ * that read them behave as on the JS action path, drops the body-framing
+ * ones and asks for HTML.
+ */
+function peRenderRequest<TEnv>({
+  ctx,
+  request,
+  url,
+}: PeRequestInput<TEnv>): Request {
+  const headers = bodylessHeaders(request);
+  headers.set("accept", "text/html");
+  const renderRequest = new Request(url.toString(), {
+    method: "GET",
+    headers,
+  });
+  // A new Request: keep the visitor's telemetry id.
+  if (ctx.router.telemetry) {
+    setRequestId(renderRequest, getRequestId(request));
+  }
+  return renderRequest;
 }
 
 interface PeRenderInput<TEnv> extends FormActionOutcome {
@@ -559,22 +572,59 @@ async function matchPeFailure<TEnv>(
 /** Render a failed PE post's boundary, inside route middleware. */
 function renderPeErrorBoundary<TEnv>(
   input: PeRequestInput<TEnv>,
-  actionId: string | null | undefined,
+  failure: PeFailure,
   boundary: MatchResult,
 ): Promise<Response> {
-  return runRoutine(
-    step("render", () => renderPeErrorResponse(input, actionId, boundary)),
-    { trace: input.trace, owner: getRequestContext() },
+  return runRoutine(peErrorBoundaryPlan(input, failure, boundary), {
+    trace: input.trace,
+    owner: getRequestContext(),
+  });
+}
+
+/**
+ * A failed PE post's document: the page matched whole, as a document request,
+ * and cut at the boundary (ActionContext.boundary), so the layouts above the
+ * boundary render around it with fresh loaders, as the JS path's boundary
+ * response re-runs them above the boundary. Nothing at or below the
+ * boundary's outlet runs.
+ */
+function* peErrorBoundaryPlan<TEnv>(
+  input: PeRequestInput<TEnv>,
+  failure: PeFailure,
+  boundary: MatchResult,
+): RoutinePlan<Response> {
+  const { ctx, env, url, handleStore } = input;
+  const actionId = failure.actionId ?? undefined;
+  const errorResult = yield* step("match", () =>
+    matchCutAtBoundary(boundary, actionId, getRequestContext(), (segment) =>
+      ctx.router.match(
+        peRenderRequest(input),
+        { env },
+        {
+          actionId,
+          actionUrl: new URL(url),
+          actionResult: failure.error,
+          boundary: segment,
+        },
+      ),
+    ),
+  );
+  // matchError's result alone: the abandoned walk's pushes are not the page's.
+  const handles =
+    errorResult === boundary ? noHandles() : resolvedHandleStream(handleStore);
+  return yield* step("render", () =>
+    renderPeErrorResponse(input, actionId, errorResult, handles),
   );
 }
 
 /** Render the matched PE error boundary as a full HTML document. */
 function renderPeErrorResponse<TEnv>(
   input: PeRequestInput<TEnv>,
-  actionId: string | null | undefined,
+  actionId: string | undefined,
   errorResult: MatchResult,
+  handles: AsyncGenerator<HandleData, void, unknown>,
 ): Promise<Response> {
-  const { ctx, request, env, url, handleStore, nonce } = input;
+  const { ctx, request, env, url, nonce } = input;
 
   setRequestContextParams(errorResult.params, errorResult.routeName);
 
@@ -591,8 +641,7 @@ function renderPeErrorResponse<TEnv>(
       isPartial: false,
       isError: true,
       rootLayout: ctx.router.rootLayout,
-      // PE error-boundary full render: resolve deferred handle values server-side.
-      handles: resolvedHandleStream(handleStore),
+      handles,
       version: ctx.version,
       stateCookieName: ctx.router.resolvedStateCookieName,
       themeConfig: ctx.router.themeConfig,
@@ -607,7 +656,7 @@ function renderPeErrorResponse<TEnv>(
   const stageTracking = {
     mode: "progressive-enhancement-error" as const,
     routeKey: getRequestContext()._routeName,
-    actionId: actionId ?? undefined,
+    actionId,
     onEvent: trace && createRenderStageTraceBridge(trace),
   };
   return renderRscResponse(

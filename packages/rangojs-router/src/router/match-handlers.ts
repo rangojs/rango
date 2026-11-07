@@ -171,7 +171,11 @@ export interface MatchHandlerDeps<TEnv = any> {
 }
 
 export interface MatchHandlers<TEnv = any> {
-  match: (request: Request, env: TEnv) => Promise<MatchResult>;
+  match: (
+    request: Request,
+    env: TEnv,
+    actionContext?: ActionContext,
+  ) => Promise<MatchResult>;
   matchPartial: (
     request: Request,
     context: TEnv,
@@ -241,12 +245,14 @@ export function createMatchHandlers<TEnv = any>(
   async function createMatchContextForFull(
     request: Request,
     env: TEnv,
+    actionContext?: ActionContext,
   ): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
     return _createMatchContextForFull(
       request,
       env,
       matchApiDeps,
       findInterceptForRoute,
+      actionContext,
     );
   }
 
@@ -264,7 +270,11 @@ export function createMatchHandlers<TEnv = any>(
     );
   }
 
-  async function match(request: Request, env: TEnv): Promise<MatchResult> {
+  async function match(
+    request: Request,
+    env: TEnv,
+    actionContext?: ActionContext,
+  ): Promise<MatchResult> {
     // Silence telemetry for the PPR background shell capture: it re-runs match()
     // under a derived request context with _shellCaptureState (shell-capture.ts
     // attemptCapture), re-using the foreground Request — a second request.start/
@@ -299,7 +309,11 @@ export function createMatchHandlers<TEnv = any>(
           emitter.start();
 
           const ctxBuildStart = INTERNAL_RANGO_DEBUG ? performance.now() : 0;
-          const result = await createMatchContextForFull(request, env);
+          const result = await createMatchContextForFull(
+            request,
+            env,
+            actionContext,
+          );
           if (INTERNAL_RANGO_DEBUG) {
             console.log(
               `[Server][match] context built +${Math.round(performance.now() - ctxBuildStart)}ms (abs ${Math.round(performance.now())})`,
@@ -354,14 +368,16 @@ export function createMatchHandlers<TEnv = any>(
             // handler layer: a serve-path signal serveShellHit degrades, not a
             // routing error (the record's decode failure was already reported).
             if (error instanceof ShellRecordUnavailableError) throw error;
+            const phase = actionContext ? "action" : "routing";
             emitter.error(
               error instanceof Error ? error : new Error(String(error)),
-              "routing",
+              phase,
             );
-            callOnError(error, "routing", {
+            callOnError(error, phase, {
               request,
               url: ctx.url,
               env,
+              actionId: actionContext?.actionId,
               isPartial: false,
               handledByBoundary: false,
             });

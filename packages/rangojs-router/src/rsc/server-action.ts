@@ -52,7 +52,7 @@ import {
 } from "./routine-plan.js";
 import { warnNonRedirectActionResponse } from "./runtime-warnings.js";
 import type { HandlerContext } from "./handler-context.js";
-import type { MatchResult } from "../types.js";
+import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { HandleData } from "../server/handle-store.js";
 import { isRedirectResponse } from "../response-utils.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
@@ -528,39 +528,63 @@ async function matchBoundaryRevalidation<TEnv>(
   { ctx, request, env, continuation, reqCtx }: ActionRevalidationInput<TEnv>,
   errorBoundary: MatchResult,
 ): Promise<MatchResult> {
-  // matchError returns the error segment alone.
-  const boundary = errorBoundary.segments[0]!;
-  if (!getInterceptSourceHeader(request)) {
-    let failure: string | undefined;
-    try {
-      const matchResult = await matchPartialAndRecord(ctx, request, env, {
+  if (getInterceptSourceHeader(request)) {
+    setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
+    return errorBoundary;
+  }
+  return matchCutAtBoundary(
+    errorBoundary,
+    continuation.actionContext.actionId,
+    reqCtx,
+    (boundary) =>
+      matchPartialAndRecord(ctx, request, env, {
         ...continuation.actionContext,
         boundary,
-      });
-      if (
-        matchResult?.segments.some(
-          (s) => s.id === boundary.id && s.type === "error",
-        )
-      ) {
-        return matchResult;
-      }
-      if (matchResult) failure = "did not reach the boundary";
-    } catch (error) {
-      // Redirects as from a success's revalidation (handler.ts
-      // executeRenderWithMiddleware). matchError's 500 was the boundary's.
-      if (error instanceof Response && isRedirectResponse(error)) {
-        reqCtx._setStatus(200);
-        throw error;
-      }
-      failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
+      }),
+  );
+}
+
+/**
+ * A thrown action's page cut at its error boundary: `match` resolves it with
+ * matchError's segment as ActionContext.boundary. The JS action's
+ * revalidation and the no-JS form post's document share this. matchError's
+ * result alone when the cut match returns null, misses the boundary or throws
+ * anything but a redirect, which redirects as from a success's render.
+ */
+export async function matchCutAtBoundary(
+  errorBoundary: MatchResult,
+  actionId: string | null | undefined,
+  reqCtx: ReturnType<typeof getRequestContext>,
+  match: (boundary: ResolvedSegment) => Promise<MatchResult | null>,
+): Promise<MatchResult> {
+  // matchError returns the error segment alone.
+  const boundary = errorBoundary.segments[0]!;
+  let failure: string | undefined;
+  try {
+    const matchResult = await match(boundary);
+    if (
+      matchResult?.segments.some(
+        (s) => s.id === boundary.id && s.type === "error",
+      )
+    ) {
+      return matchResult;
     }
-    if (failure && process.env.NODE_ENV !== "production") {
-      console.warn(
-        `[@rangojs/router] Server action "${continuation.actionContext.actionId}" ` +
-          `threw into an error boundary whose revalidation ${failure}. The ` +
-          `response carries the error segment alone, without the loaders above it.`,
-      );
+    if (matchResult) failure = "did not reach the boundary";
+  } catch (error) {
+    // Redirects as from a success's render (handler.ts
+    // executeRenderWithMiddleware). matchError's 500 was the boundary's.
+    if (error instanceof Response && isRedirectResponse(error)) {
+      reqCtx._setStatus(200);
+      throw error;
     }
+    failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
+  }
+  if (failure && process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[@rangojs/router] Server action "${actionId}" threw into an error ` +
+        `boundary whose revalidation ${failure}. The response carries the ` +
+        `error segment alone, without the segments above it.`,
+    );
   }
   setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
   return errorBoundary;
@@ -635,5 +659,5 @@ function renderActionResponse<TEnv>(
   });
 }
 
-/** The handle stream of matchBoundaryRevalidation's fallback. */
-async function* noHandles(): AsyncGenerator<HandleData, void, unknown> {}
+/** The handle stream of matchCutAtBoundary's fallback. */
+export async function* noHandles(): AsyncGenerator<HandleData, void, unknown> {}

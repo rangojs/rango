@@ -1210,9 +1210,13 @@ export function createRouter<TEnv = any>(
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
 
-    match: (request: Request, input: RouterRequestInput<TEnv> = {}) => {
+    match: (
+      request: Request,
+      input: RouterRequestInput<TEnv> = {},
+      actionContext?: Parameters<typeof match>[2],
+    ) => {
       const env = input.env ?? ({} as TEnv);
-      return match(request, env);
+      return match(request, env, actionContext);
     },
     matchForPrerender,
     renderStaticSegment,

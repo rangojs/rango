@@ -95,6 +95,7 @@ export function freshPassInput<TEnv>(
     skipLoaders?: boolean;
     throwOnError?: boolean;
     partialRequest?: boolean;
+    actionContext?: ActionContext;
   },
 ): ResolutionPassInput<TEnv> {
   let request: Request | undefined;
