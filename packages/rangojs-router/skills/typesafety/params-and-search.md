@@ -121,7 +121,9 @@ checks, not modules to read:
   auto-wired globally — `Handler<"name">` and `ctx.reverse("name")` already
   see it. Importing its `NamedRoutes` value is an escape hatch (global names
   in `useReverse`, an absolute-path map for `/api-client`); on the client it
-  ships every route name and pattern in the app.
+  ships every route name and pattern in the app. Its paths are absolute and
+  `useReverse` joins the mount, so it is correct only at the root mount
+  (`/links`, "Links into another module").
 - **Per-module `*.gen.ts` imports are fine** — they are the opt-in local-route
   pattern for `useReverse(routes)` and explicit local handler typing
   (`Handler<".name", routes>`). See `/links`.
