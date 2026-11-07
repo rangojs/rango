@@ -8,9 +8,9 @@
  * cart count) shows it beside the boundary.
  *
  * A redirect thrown in that revalidation redirects, as on a success. An
- * action sent from an intercept, and one whose revalidation returns null or
- * throws anything else, gets the error segment alone (matchError,
- * router/match-api.ts).
+ * action whose revalidation returns null or throws anything else gets the
+ * error segment alone (matchError, router/match-api.ts). An action from an
+ * open intercept: action-intercept-boundary.rsc-test.tsx.
  *
  * An earlier action's follow-up, owed to the page that shows the boundary,
  * holds it (`partial.boundary` beside `stale`): it re-renders every segment
@@ -302,6 +302,11 @@ const FROM_INTERCEPT = {
   headers: { "X-RSC-Router-Intercept-Source": "http://localhost/plain" },
 };
 
+/** No previous URL the revalidation can diff against: it returns null. */
+const NO_PREVIOUS_URL = {
+  headers: { "X-RSC-Router-Client-Path": "http://[" },
+};
+
 beforeEach(async () => {
   cart = 0;
   cartRuns = 0;
@@ -405,9 +410,9 @@ describe("an action that throws into an errorBoundary()", () => {
     expect(await sent(answer, CartLoader)).toBeUndefined();
 
     // The response the router sent before (the error segment alone), which
-    // an action from an intercept still gets.
+    // a revalidation that returns null still gets.
     const before = await readAnswer(
-      await throwOn("/plain", page, FROM_INTERCEPT),
+      await throwOn("/plain", page, NO_PREVIOUS_URL),
     );
     expect(answer.segments.map((s) => s.id)).toEqual(
       before.answer.segments.map((s) => s.id),
@@ -526,41 +531,57 @@ describe("a redirect thrown in a thrown action's revalidation", () => {
   });
 });
 
-describe("a thrown action that keeps the error segment alone", () => {
-  it("an action sent from an intercept", async () => {
+describe("a thrown action that names an intercept source while no intercept is open", () => {
+  it("is cut at the boundary, as its success renders the page", async () => {
     const page = await documentOf("/product/1");
+    const before = { ...runs };
     const result = await throwOn("/product/1", page, FROM_INTERCEPT);
 
     expect(result.response.status).toBe(500);
     expect(result.flight).toContain("product failed");
     const { answer } = await readAnswer(result);
-    expect(answer.segments.map((s) => s.type)).toEqual(["error"]);
-    expect(await sent(answer, CartLoader)).toBeUndefined();
+    expect(errorIds(answer)).toEqual([idOf(page, (s) => s.type === "route")]);
+    expect(await sent(answer, CartLoader)).toBe(1);
+    expect(runs).toEqual(before);
   });
+});
 
+describe("a thrown action that keeps the error segment alone", () => {
   it("an action whose revalidation returns null: matchError's response, without a warning", async () => {
     // The rsc project runs as production; the warning is development-only.
     vi.stubEnv("NODE_ENV", "development");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const page = await documentOf("/product/1");
-    const before = await readAnswer(
-      await throwOn("/product/1", page, FROM_INTERCEPT),
-    );
-    // No previous URL the revalidation can diff against.
-    const result = await throwOn("/product/1", page, {
-      headers: { "X-RSC-Router-Client-Path": "http://[" },
-    });
+    const route = idOf(page, (s) => s.type === "route");
+    const result = await throwOn("/product/1", page, NO_PREVIOUS_URL);
 
     expect(result.response.status).toBe(500);
     expect(result.flight).toContain("product failed");
     const { answer } = await readAnswer(result);
-    const shape = ({ segments, matched, diff, resolvedIds }: Answer) => ({
-      segments: segments.map((s) => [s.id, s.type]),
-      matched,
-      diff,
-      resolvedIds,
+    // matchError's: the error at the route, and the chain above it with its
+    // loaders (each entry's id before its loaders'), which leaves out the
+    // layout's slot.
+    const layout = loaderParentId(
+      idOf(page, (s) => s.loaderId === CartLoader.$$id),
+    );
+    expect({
+      segments: answer.segments.map((s) => [s.id, s.type]),
+      matched: answer.matched,
+      diff: answer.diff,
+      resolvedIds: answer.resolvedIds,
+    }).toEqual({
+      segments: [[route, "error"]],
+      matched: [
+        page.matched[0],
+        layout,
+        idOf(page, (s) => s.loaderId === CartLoader.$$id),
+        idOf(page, (s) => s.loaderId === RatesLoader.$$id),
+        route,
+        idOf(page, (s) => s.loaderId === ProductLoader.$$id),
+      ],
+      diff: [route],
+      resolvedIds: [route],
     });
-    expect(shape(answer)).toEqual(shape(before.answer));
     expect(warn.mock.calls.flat().join("\n")).not.toContain("revalidation");
   });
 

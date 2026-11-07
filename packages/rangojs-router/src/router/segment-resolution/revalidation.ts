@@ -1655,7 +1655,8 @@ function boundaryResult(seg: ResolvedSegment): SegmentRevalidationResult {
  * Resolve all segments for a route: a partial match (matchPartial), a full
  * match with a FRESH pass, or the FRESH pass of an intercept record's
  * background re-render (rerenderAndCacheRoute). A thrown action's pass is cut
- * at its error boundary (ActionContext.boundary).
+ * at its error boundary (ActionContext.boundary), unless it resolves an
+ * intercept: then the walk is a success's and the boundary fills the slot.
  */
 export async function resolveAllSegments<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -1695,7 +1696,10 @@ export async function resolveAllSegments<TEnv>(
     clientSegmentSet: pass.client,
   };
 
-  const boundary = pass.actionContext?.boundary;
+  // An intercept's action boundary fills its slot (intercept-resolution.ts
+  // resolveInterceptEntry), not the place matchError gave it on the target
+  // route's chain, which the response does not render.
+  const boundary = interceptResult ? undefined : pass.actionContext?.boundary;
   const cutId = boundary?.id ?? pass.heldBoundary;
   let cut = false;
   for (const entry of entries) {

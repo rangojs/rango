@@ -25,7 +25,6 @@ import { printServerError } from "../server/print-server-error.js";
 import { runActionBody } from "../server/cookie-store.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { resolveActionRefId } from "../router/is-action.js";
-import { getInterceptSourceHeader } from "../router/navigation-snapshot.js";
 import type { ActionContext } from "../router/types.js";
 import type { TraceSpan } from "../router/tracing.js";
 import { attachTransitionWhen } from "./attach-transition-when.js";
@@ -519,10 +518,10 @@ async function matchPartialAndRecord<TEnv>(
 
 /**
  * A thrown action's boundary response: its revalidation, cut at the boundary
- * (ActionContext.boundary). matchError's result alone, which streams no
- * handle values, for an action sent from an intercept, and when the cut
- * revalidation returns null, misses the boundary or throws anything but a
- * redirect.
+ * (ActionContext.boundary), or, from an open intercept, with the boundary in
+ * the intercept's slot. matchError's result alone, which streams no handle
+ * values, when that revalidation returns null, misses the boundary or throws
+ * anything but a redirect.
  */
 async function matchBoundaryRevalidation<TEnv>(
   { ctx, request, env, continuation, reqCtx }: ActionRevalidationInput<TEnv>,
@@ -530,37 +529,40 @@ async function matchBoundaryRevalidation<TEnv>(
 ): Promise<MatchResult> {
   // matchError returns the error segment alone.
   const boundary = errorBoundary.segments[0]!;
-  if (!getInterceptSourceHeader(request)) {
-    let failure: string | undefined;
-    try {
-      const matchResult = await matchPartialAndRecord(ctx, request, env, {
-        ...continuation.actionContext,
-        boundary,
-      });
-      if (
-        matchResult?.segments.some(
-          (s) => s.id === boundary.id && s.type === "error",
-        )
-      ) {
-        return matchResult;
-      }
-      if (matchResult) failure = "did not reach the boundary";
-    } catch (error) {
-      // Redirects as from a success's revalidation (handler.ts
-      // executeRenderWithMiddleware). matchError's 500 was the boundary's.
-      if (error instanceof Response && isRedirectResponse(error)) {
-        reqCtx._setStatus(200);
-        throw error;
-      }
-      failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
+  let failure: string | undefined;
+  try {
+    const matchResult = await matchPartialAndRecord(ctx, request, env, {
+      ...continuation.actionContext,
+      boundary,
+    });
+    // The cut emits the error segment itself; from an open intercept, the
+    // slot carries the error (intercept-resolution.ts resolveInterceptEntry),
+    // the only parallel segment ever given an `error`.
+    if (
+      matchResult?.segments.some((s) =>
+        s.type === "error"
+          ? s.id === boundary.id
+          : s.type === "parallel" && s.error !== undefined,
+      )
+    ) {
+      return matchResult;
     }
-    if (failure && process.env.NODE_ENV !== "production") {
-      console.warn(
-        `[@rangojs/router] Server action "${continuation.actionContext.actionId}" ` +
-          `threw into an error boundary whose revalidation ${failure}. The ` +
-          `response carries the error segment alone, without the loaders above it.`,
-      );
+    if (matchResult) failure = "did not reach the boundary";
+  } catch (error) {
+    // Redirects as from a success's revalidation (handler.ts
+    // executeRenderWithMiddleware). matchError's 500 was the boundary's.
+    if (error instanceof Response && isRedirectResponse(error)) {
+      reqCtx._setStatus(200);
+      throw error;
     }
+    failure = `threw ${error instanceof Response ? `a ${error.status} Response` : String(error)}`;
+  }
+  if (failure && process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[@rangojs/router] Server action "${continuation.actionContext.actionId}" ` +
+        `threw into an error boundary whose revalidation ${failure}. The ` +
+        `response carries the error segment alone, without the loaders above it.`,
+    );
   }
   setRequestContextParams(errorBoundary.params, errorBoundary.routeName);
   return errorBoundary;
