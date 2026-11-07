@@ -22,7 +22,7 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
-  withReverseScope,
+  withSegmentScope,
 } from "../handler-context";
 import { scopeReverse, type ReverseScope } from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
@@ -537,7 +537,7 @@ describe("createReverseFunction", () => {
     });
   });
 
-  describe("segment reverse scope (withReverseScope)", () => {
+  describe("segment reverse scope (withSegmentScope)", () => {
     // include("/:accountId", account, { name: "account" }) containing
     // include("/:projectId", project, { name: "project" }).
     const nestedMap: Record<string, string> = {
@@ -589,24 +589,39 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+    it("withSegmentScope: the scope and the segment ride the ctx", () => {
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
-      const scoped = withReverseScope(ctx, scope);
+      const scoped = withSegmentScope(ctx, "L0", scope);
       // Destructured and called later, as a component handed the ctx does.
       const { reverse } = scoped;
+      // The walker moves the shared pin on to the next segment.
       ctx._currentSegmentId = "L1";
       expect(reverse(".settings")).toBe("/acme/settings");
-      expect(scoped._currentSegmentId).toBe("L1");
+      expect(scoped._currentSegmentId).toBe("L0");
+      expect(ctx._currentSegmentId).toBe("L1");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
       // The shared ctx keeps the route's resolution.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
-      expect(withReverseScope(ctx, undefined)).toBe(ctx);
+    });
+
+    it("a segment without a reverse scope still carries its segment", () => {
+      const ctx = {
+        params,
+        reverse: routeReverse(),
+        _currentSegmentId: "R0",
+      } as unknown as InternalHandlerContext<any, any>;
+      const scoped = withSegmentScope(ctx, "L0", undefined);
+      ctx._currentSegmentId = "R0.@side";
+      expect(scoped._currentSegmentId).toBe("L0");
+      expect(scoped._reverseScope).toBeUndefined();
+      // No scope: `.name` resolves from the matched route, as the parent's does.
+      expect(scoped.reverse(".settings")).toBe("/acme/web/settings");
     });
   });
 

@@ -421,16 +421,18 @@ export function runHandlesAfterAwaitTests(
       name: "route handler",
       path: "/component",
       link: "haa-link-component",
-      observed: "",
+      // The segment the handler that handed the ctx out ran for: the route's
+      // (an id ending in R<n>), the layout's (one ending in L<n>).
+      segment: "R\\d+",
     },
     {
       name: "layout handler",
       path: "/component-layout",
       link: "haa-link-component-layout",
-      observed: " (observed: the dev message names the child route's segment)",
+      segment: "L\\d+",
     },
   ]) {
-    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation${variant.observed}`, async ({
+    test(`an async component given the ${variant.name}'s ctx that pushes after await wait(1000) throws LateHandlePushError on the document and on a navigation`, async ({
       page,
     }) => {
       test.setTimeout(TEST_TIMEOUT);
@@ -460,13 +462,17 @@ export function runHandlesAfterAwaitTests(
       } else {
         await expect(page.getByText(LATE_PUSH_MESSAGE).first()).toBeVisible();
         await expect(page.getByText(DEFER_HINT).first()).toBeVisible();
-        // The message names a route segment (an id ending in R<n>; a
-        // layout's ends in L<n>). For the layout variant that is the child
-        // route's, not the layout's: ctx.use(Handle) reads the request's one
-        // ctx's _currentSegmentId when it is called, after the await, by
-        // which time the route handler has run.
+        // The message names the segment whose handler handed the ctx out, not
+        // wherever the walker's shared pin is when the component pushes after
+        // its await: the layout's ctx carries the layout's segment.
         await expect(
-          page.getByText(/for segment "\w*R\d+" was pushed after/).first(),
+          page
+            .getByText(
+              new RegExp(
+                `for segment "\\w*${variant.segment}" was pushed after`,
+              ),
+            )
+            .first(),
         ).toBeVisible();
       }
 

@@ -456,7 +456,12 @@ export type InternalHandlerContext<
   _variables: Record<string, any>;
   /** Prerender-only control flow helper, attached when the runtime context supports it. */
   passthrough?: () => unknown;
-  /** Current segment ID for handle data attribution. */
+  /**
+   * Current segment ID for handle data attribution: the walker's shared pin
+   * on the request's one handler ctx, and the segment's own on the ctx a
+   * layout's or parallel slot's handler gets (withSegmentScope), which holds
+   * when the handler's component pushes after the walk moved the shared one.
+   */
   _currentSegmentId?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
@@ -464,7 +469,7 @@ export type InternalHandlerContext<
   _routeName?: string;
   /**
    * The segment's ReverseScope on a layout's / parallel's ctx and its
-   * loaders' (withReverseScope): keys a "use cache" call taking the ctx.
+   * loaders' (withSegmentScope): keys a "use cache" call taking the ctx.
    */
   _reverseScope?: import("../server/context.js").ReverseScope;
   /**
