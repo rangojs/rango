@@ -64,6 +64,9 @@ const projectLayout = staticReverse("project-layout", ".settings");
 const projectSlot = staticReverse("project-slot", ".settings");
 // A path() Static in the account module: a route, not a structural segment.
 const accountPage = staticReverse("account-page", ".settings");
+// A layout inside an UNNAMED include: its prefix is the include's position
+// path ("$prefix_0"), a scope shape of its own.
+const unnamedLayout = staticReverse("unnamed-layout", ".settings");
 
 const projectPatterns = urls(({ path, layout, parallel }) => [
   layout(projectLayout, () => [
@@ -77,10 +80,17 @@ const projectPatterns = urls(({ path, layout, parallel }) => [
   ]),
 ]);
 
+const unnamedPatterns = urls(({ path, layout }) => [
+  layout(unnamedLayout, () => [
+    path("/settings", () => null, { name: "settings" }),
+  ]),
+]);
+
 const accountPatterns = urls(({ path, layout, include }) => [
   layout(accountLayout, () => [
     path("/settings", () => null, { name: "settings" }),
     path("/page", accountPage, { name: "page" }),
+    include("/anon", unnamedPatterns),
     include("/web", projectPatterns, { name: "project" }),
   ]),
 ]);
@@ -103,6 +113,8 @@ const router = createRouter({
     "account.page": "/acme/page",
     "account.project.settings": "/acme/web/settings",
     "account.project.issues": "/acme/web/issues",
+    // An unnamed include's hidden name segment is its position path.
+    "account.$prefix_0.settings": "/acme/anon/settings",
   },
 }).routes(patterns) as unknown as RangoInternal<any, any>;
 
@@ -131,6 +143,7 @@ describe("Static() bake: ctx.reverse('.name') resolves in the declaring module",
       projectLayout,
       projectSlot,
       accountPage,
+      unnamedLayout,
     ]) {
       await bake(def);
     }
@@ -164,6 +177,11 @@ describe("Static() bake: ctx.reverse('.name') resolves in the declaring module",
     expect(resolved["account-page"]).toBe("/acme/settings");
   });
 
+  it("a layout in an unnamed include resolves in its own hidden scope", () => {
+    expect(reverseErrors["unnamed-layout"]).toBeUndefined();
+    expect(resolved["unnamed-layout"]).toBe("/acme/anon/settings");
+  });
+
   it("stamps the DSL position's scope on the def", () => {
     expect((rootLayout as any).$$reverseScope).toEqual({
       prefix: undefined,
@@ -179,6 +197,10 @@ describe("Static() bake: ctx.reverse('.name') resolves in the declaring module",
     });
     expect((projectSlot as any).$$reverseScope).toEqual({
       prefix: "account.project",
+      rootScoped: false,
+    });
+    expect((unnamedLayout as any).$$reverseScope).toEqual({
+      prefix: "account.$prefix_0",
       rootScoped: false,
     });
     // A route also carries its full name, which the bake keeps resolving from.
