@@ -27,8 +27,8 @@ redirect payload when it carries location state). A declared `errorBoundary()`
 is not consulted: a redirect is control flow, not a failure, so it reports no
 `onError` either. The response is built after the redirect is answered, so the
 cookies and `onResponse` callbacks a request registered are on it, as on a
-handler's throw. An action's revalidation render and the not-found tree answer
-it the same way.
+handler's throw. An action's revalidation render, a no-JS form post's re-render
+and the not-found tree answer it the same way.
 
 ```tsx
 function AccountPage() {

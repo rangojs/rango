@@ -42,7 +42,10 @@ import {
   urls,
   type Middleware,
 } from "../../index.rsc.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
+import {
+  createDocumentCacheMiddleware,
+  MemorySegmentCacheStore,
+} from "../../cache/index.js";
 
 /** A page component: React renders it, so its throw never reaches a handler. */
 function SyncRedirectPage(): React.ReactNode {
@@ -89,6 +92,18 @@ async function AsyncRedirectPage(): Promise<React.ReactNode> {
 async function StreamedRedirectPage(): Promise<React.ReactNode> {
   await new Promise((resolve) => setTimeout(resolve, 5));
   throw redirect("/target");
+}
+
+/** A page whose redirect is streamed after the shell, behind a cache header. */
+function CachedStreamedRedirectPage(ctx: {
+  headers: Headers;
+}): React.ReactNode {
+  ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
+  return (
+    <React.Suspense fallback={<p>pending</p>}>
+      <StreamedRedirectPage />
+    </React.Suspense>
+  );
 }
 
 /** A page that redirects on the re-render after a no-JS form post. */
@@ -241,6 +256,25 @@ describe("a component's redirect (serveShellRequest)", () => {
     const res = await documentRequest("/app/sync", "/app");
     expect(res.response.status).toBe(302);
     expect(res.response.headers.get("Location")).toBe("/app/target");
+  });
+
+  it("strictMode: the double render still answers it on both lanes", async () => {
+    // React renders twice under strict mode: the first throw wins, so the
+    // second render's copy neither overwrites nor consumes it.
+    const router = createRouter({ strictMode: true }).routes(patterns);
+    const document = await serveShellRequest(router, "/sync", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(document.response.status).toBe(302);
+    expect(document.response.headers.get("Location")).toBe("/target");
+    const nav = await serveShellRequest(router, "/sync", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(nav.response.status).toBe(204);
+    expect(nav.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
   });
 
   it("document: a declared errorBoundary does not intercept it", async () => {
@@ -400,6 +434,25 @@ describe("a component's redirect (serveShellRequest)", () => {
     );
   });
 
+  it("intercept: a component's redirect answers 204 + X-RSC-Redirect", async () => {
+    const router = createRouter({}).routes(
+      urls(({ path, intercept }) => [
+        path("/list", () => <ul>list</ul>, { name: "list" }),
+        path("/photo/:id", () => <figure>photo</figure>, { name: "photo" }),
+        intercept("@modal", ".photo", () => <SyncRedirectPage />),
+        path("/target", () => <p>target-page</p>, { name: "target" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/photo/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/list" },
+    });
+    expect(res.response.status).toBe(204);
+    expect(res.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
   it("not-found component: a document request answers its redirect, not a 500", async () => {
     const router = createRouter({
       notFound: () => <SyncRedirectPage />,
@@ -466,6 +519,53 @@ describe("a component's redirect (serveShellRequest)", () => {
     });
     expect(res.response.status).toBe(302);
     expect(res.response.headers.get("Location")).toBe("/target");
+  });
+
+  it("never stored: a streamed redirect's 200 is refused by both caches", async () => {
+    // The response committed before the throw, so the 200 it answers carries
+    // the error row: the document cache and the shell capture must refuse it
+    // (the Response stays in _renderErrors), or every later HIT serves it.
+    const store = new MemorySegmentCacheStore();
+    const router = createRouter({})
+      .use(createDocumentCacheMiddleware())
+      .routes(
+        urls(({ path }) => [
+          path("/cached-streamed", CachedStreamedRedirectPage, {
+            name: "cachedStreamed",
+          }),
+          path(
+            "/shelled-streamed",
+            () => (
+              <React.Suspense fallback={<p>pending</p>}>
+                <StreamedRedirectPage />
+              </React.Suspense>
+            ),
+            { name: "shelledStreamed", ppr: true },
+          ),
+          path("/target", () => <p>target-page</p>, { name: "target" }),
+        ]),
+      );
+    const cachedFirst = await serveShellRequest(router, "/cached-streamed", {
+      cacheStore: store,
+    });
+    const cachedSecond = await serveShellRequest(router, "/cached-streamed", {
+      cacheStore: store,
+    });
+    expect(cachedFirst.response.status).toBe(200);
+    expect(cachedSecond.response.headers.get("x-document-cache-status")).toBe(
+      "MISS",
+    );
+    expect(await cachedSecond.readEntry()).toBeNull();
+
+    const shelledFirst = await serveShellRequest(router, "/shelled-streamed", {
+      cacheStore: store,
+    });
+    const shelledSecond = await serveShellRequest(router, "/shelled-streamed", {
+      cacheStore: store,
+    });
+    expect(shelledFirst.shellStatus).toBe("MISS");
+    expect(shelledSecond.shellStatus).toBe("MISS");
+    expect(await shelledFirst.readEntry()).toBeNull();
   });
 
   it("limit: a redirect streamed after the shell (inline Suspense) is out of time", async () => {

@@ -1063,9 +1063,19 @@ Throwing the recorded `Response` from there is deliberate: it lands in the lanes
 that already answer a handler's throw (`rsc/handler.ts`'s
 `interceptRedirectForPartial`, then `finalizeRequestResponse`'s open-redirect
 guard and location-state cookie), so a component's redirect cannot drift from a
-handler's. The not-found tree is one of those lanes: its render runs inside the
-404 catch, so `handler.ts` answers a thrown `Response` there rather than let it
-escape the handler.
+handler's. Two lanes sit outside that funnel and answer it themselves:
+
+- the not-found tree, whose render runs inside the 404 catch: `handler.ts`
+  answers a thrown `Response` there rather than let it escape, and takes the
+  partial lane (`204` + `X-RSC-Redirect`) whenever the answer is a Flight
+  response — a client navigation to an unmatched route is one, even though its
+  plan mode is not `partial-render`, and the browser follows a raw 3xx into a
+  document it cannot decode as Flight;
+- a **no-JS form post's re-render** (`rsc/progressive-enhancement.ts`), which
+  answers the document's 3xx inside the render so route middleware's stub
+  headers and cookies merge into it as they do for a handler's throw.
+  `handleProgressiveEnhancement` returns its result straight out of the
+  handler's dispatch, so a `Response` escaping there escaped the handler.
 
 **The limit.** An async component is a task of its own, so its error row lands
 in a later chunk, after the status committed. Closing that gap means buffering
@@ -1075,7 +1085,9 @@ every loader settled). So on a **client navigation** an async component's
 `redirect()` still renders the boundary; a **document request** answers it,
 because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
-content, on a document whose shell is out — is out of time the same way.
+content, on a document whose shell is out — is out of time the same way, and so
+is one thrown in a PPR shell HIT's tail (`renderRscFlightStage` is never held:
+the response committed when the shell was served).
 
 A redirect is never a rendering error: `printServerError` treats a thrown
 `Response` as control flow, and the Flight `onError` now skips `callOnError` for
@@ -1088,10 +1100,13 @@ document cache and of every shell capture.
 Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
 the document and navigation lanes, the state cookie, the external opt-in, a
 basename, a declared `errorBoundary()`, a prefetch, the cookie and `onResponse`
-stamps, no `onError`, an action's revalidation render, the not-found tree, and
-the async limit) and `e2e/component-redirect.test.ts` in both apps, dev and
-production (the async limit included, and a document request for the same async
-route landing on the target).
+stamps, no `onError`, an action's revalidation render, a no-JS form post's
+re-render and its error-boundary render, the not-found tree on a document and on
+a navigation, the async limit, the streamed-after-shell limit, and that a
+streamed redirect's 200 is refused by the document cache and by a PPR shell
+capture) and `e2e/component-redirect.test.ts` in both apps, dev and production
+(the async limit included, and a document request for the same async route
+landing on the target).
 
 ### Streamed handler rejections render the declared boundary
 
