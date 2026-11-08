@@ -63,6 +63,12 @@ Contract for any coding agent in this repo (CLAUDE.md symlinks here). **Hard rul
          - late and pending handle values;
          - every reader shape: selectors, the full state, and components that read several hooks.
     - The owner decides every such change. A defect reproduced only in internal harnesses is recorded and never fixed on its own.
+11. **Check a report against the written contracts before you fix it.** A bug report or review finding says what someone expected, not what the router promises.
+    - Before you plan, write the expected behaviour as one sentence, then `git grep` the contracts for the feature's identifiers and for limitation, not supported, belongs to, never, only, by design. Quote every line that bears on it.
+    - The contracts: this file, `packages/rangojs-router/docs/internal/execution-model.md` (its "Limitation:" sections included), `packages/rangojs-router/e2e/semantic-matrix.test.ts`, `docs/internal/feature-map.md`, the design docs listed below, and the skills under `packages/rangojs-router/skills/` with their limits and "belongs to" lines.
+    - When a contract rules out what the report expects, the report is the owner's decision, not a bug as filed. Never build the reported behaviour against it. Ask the owner with the conflict in one line, the quoted contract line and your recommendation; meanwhile build only the outcome that keeps the contract, plus the smallest change that helps the user who hit it (a clear error, a dev warning, a doc line).
+    - Changing a contract is an owner decision made first, then the contract text, then the code, in that order. A diff that deletes or rewrites a contract line to make a fix fit is building against it.
+    - Your PR or finish lists, under "Contracts checked", each line you quoted and what it decided.
 
 ## Definition of done (shipping a feature)
 
