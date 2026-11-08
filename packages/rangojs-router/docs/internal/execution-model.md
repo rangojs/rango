@@ -2550,20 +2550,22 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - Every segment's ctx is a different object from the request's one handler
-  ctx. It takes that ctx's own enumerable fields as own properties, the `_`
-  fields and symbols (the NOCACHE brand among them) included, so `{ ...ctx }`
-  from a handler still carries `params`, `url` and the rest, and a copy handed
-  to a `"use cache"` call keys the entry the same way the ctx does
-  (`_routeName`, `_responseType`, `_reverseScope`; `cache/cache-runtime.ts`).
-  The public fields are values; a `_` field and an own getter are forwarded
-  (`copyRequestFields`), read off the request's ctx on each access. The walker
-  moves `_currentSegmentId` as it resolves, the loader cache installs
-  `_loaderCacheOverrides` and `_loaderCacheOriginalUse` and prefetch deferral
-  `_deferredLoaders` after handlers already hold a ctx, and a pre-render or
-  static ctx refuses `request` from its getter: reading any of them to copy
-  would freeze a stale value or refuse every build handler. A getter keyed by
-  its holder resolves through the prototype chain (`rewrittenFrom`,
-  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
+  ctx. It takes that ctx's own enumerable data fields as own properties, the
+  `_` fields and symbols (the NOCACHE brand among them) included, so
+  `{ ...ctx }` from a handler still carries `params`, `url` and the rest, and
+  a copy handed to a `"use cache"` call keys the entry the same way the ctx
+  does (`_routeName`, `_responseType`, `_reverseScope`;
+  `cache/cache-runtime.ts`). A public field is a value; a `_` field is
+  forwarded (`copyRequestFields`), read off the request's ctx on each access,
+  because the walker moves `_currentSegmentId` as it resolves and the loader
+  cache and prefetch deferral install `_loaderCacheOverrides`,
+  `_loaderCacheOriginalUse` and `_deferredLoaders` after handlers already hold
+  a ctx. A getter is left to the prototype, never read to copy it: a
+  pre-render or static ctx refuses `request` from its getter, so reading it
+  would refuse every build handler and a spread copy of such a ctx must not
+  throw. A getter keyed by its holder resolves through the prototype chain
+  (`rewrittenFrom`, `server/rewrite-trail.ts`); `theme` reads a symbol the
+  child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a

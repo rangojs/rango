@@ -216,15 +216,15 @@ function createPrerenderPassthroughFn(
  * where the shared `_currentSegmentId` the walker moves has already named a
  * later segment (segmentPinOf).
  *
- * The request's own fields are copied as own properties, so `{ ...ctx }` from
- * a handler carries what it carried when every handler shared the one ctx (a
- * spread copies own enumerable keys only, the NOCACHE symbol included, and
+ * The request's own data fields are copied as own properties, so `{ ...ctx }`
+ * from a handler carries what it carried when every handler shared the one ctx
+ * (a spread copies own enumerable keys only, the NOCACHE symbol included, and
  * the `_` fields cache-runtime.ts keys a "use cache" entry by). The public
- * fields are values, as the request ctx holds them; its own `_` fields and its
- * getters are forwarded (copyRequestFields), because the walker moves
- * `_currentSegmentId` and the loader cache and prefetch deferral install
- * fields after a handler already has its ctx. `_reverseScope` keys a "use
- * cache" call that takes this ctx (cache-runtime.ts).
+ * fields are values, as the request ctx holds them; its own `_` fields are
+ * forwarded (copyRequestFields), because the walker moves `_currentSegmentId`
+ * and the loader cache and prefetch deferral install fields after a handler
+ * already has its ctx. `_reverseScope` keys a "use cache" call that takes this
+ * ctx (cache-runtime.ts).
  */
 export function withSegmentContext<C>(
   ctx: C,
@@ -266,18 +266,21 @@ const COPY_FIELDS = Symbol("rango:segment-ctx-fields");
 type CopiedField = { key: PropertyKey; forward?: PropertyDescriptor };
 
 /**
- * Copy the request ctx's own enumerable fields (and its symbols, the NOCACHE
- * brand among them) onto a segment's ctx, so `{ ...ctx }` from a handler
- * carries what it carried when every handler shared the one ctx: the `_`
- * fields included, since cache-runtime.ts reads `_routeName`, `_responseType`
- * and `_claimLoaderPushes` off a copy a handler hands a "use cache" call.
+ * Copy the request ctx's own enumerable data fields (and its symbols, the
+ * NOCACHE brand among them) onto a segment's ctx, so `{ ...ctx }` from a
+ * handler carries what it carried when every handler shared the one ctx: the
+ * `_` fields included, since cache-runtime.ts reads `_routeName`,
+ * `_responseType` and `_claimLoaderPushes` off a copy a handler hands a "use
+ * cache" call.
  *
- * A `_` field or a getter is forwarded, never snapshotted: the walker moves
- * `_currentSegmentId`, the loader cache and prefetch deferral install
+ * A `_` field is forwarded, never snapshotted: the walker moves
+ * `_currentSegmentId` and the loader cache and prefetch deferral install
  * `_loaderCacheOverrides`, `_loaderCacheOriginalUse` and `_deferredLoaders`
- * after handlers already hold a ctx, and reading a pre-render or static ctx's
- * `request` getter here would refuse every build handler. The descriptor is
- * built once per request ctx and shared by every segment's ctx.
+ * after handlers already hold a ctx. The descriptor is built once per request
+ * ctx and shared by every segment's ctx. A getter is left to the prototype: a
+ * pre-render or static ctx refuses `request` from its getter, so reading it
+ * here would refuse every build handler, and the copy a handler spreads must
+ * not throw on one.
  */
 function copyRequestFields(
   target: Record<PropertyKey, unknown>,
@@ -288,22 +291,22 @@ function copyRequestFields(
     fields = [];
     for (const key of Reflect.ownKeys(source)) {
       const descriptor = Object.getOwnPropertyDescriptor(source, key);
-      if (descriptor?.enumerable !== true) continue;
-      const forward =
-        !("value" in descriptor) ||
-        (typeof key === "string" && key.startsWith("_"));
+      if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+        continue;
+      }
       fields.push({
         key,
-        forward: forward
-          ? {
-              get: () => source[key],
-              set: (value: unknown) => {
-                source[key] = value;
-              },
-              enumerable: true,
-              configurable: true,
-            }
-          : undefined,
+        forward:
+          typeof key === "string" && key.startsWith("_")
+            ? {
+                get: () => source[key],
+                set: (value: unknown) => {
+                  source[key] = value;
+                },
+                enumerable: true,
+                configurable: true,
+              }
+            : undefined,
       });
     }
     Object.defineProperty(source, COPY_FIELDS, { value: fields });

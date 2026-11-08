@@ -674,7 +674,7 @@ describe("createReverseFunction", () => {
       expect(copy._loaderCacheOverrides).toBeUndefined();
     });
 
-    it("forwards a getter instead of reading it, so a pre-render ctx still builds", () => {
+    it("never reads a getter: a pre-render ctx still builds, and a spread copy does not throw", () => {
       const ctx = createPrerenderContext(
         { id: "7" },
         "/p/7",
@@ -683,14 +683,15 @@ describe("createReverseFunction", () => {
       );
       const scoped = withSegmentContext(ctx, "M0L0L0", undefined);
       expect(scoped.params).toEqual({ id: "7" });
+      expect(scoped._routeName).toBe("p");
+      // The getter stays on the prototype: reading it refuses, spreading the
+      // ctx does not, and the copy carries what can be read.
       expect(() => (scoped as any).request).toThrow(
         'Property "request" is not available during pre-rendering.',
       );
-      // The copy carries the same getter, so a spread refuses it as the
-      // request ctx's own spread does.
-      expect(() => ({ ...scoped })).toThrow(
-        'Property "request" is not available during pre-rendering.',
-      );
+      const copy = { ...scoped } as any;
+      expect(copy.params).toEqual({ id: "7" });
+      expect(Object.hasOwn(copy, "request")).toBe(false);
     });
   });
 
