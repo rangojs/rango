@@ -14,7 +14,8 @@ returns that status, for a route that has no page in the prerender store.
 
 **Shipped in v1:** the `prerender` router option, `router.prerender()` /
 `.many()` / `.remove()` / `.markStale()`, the "removed" marker that takes a
-page out of service (see "Removing A Page"), the
+page out of service (see "Removing A Page"), the stored redirect that answers
+for a page that moved (see "A Page That Moved"), the
 `Prerender(..., { onDemand })` opt-in and
 `od` trie flag, per-request store resolution, the writable durable overlay read
 path (GETs and plain-route action re-renders) with deduplicated
@@ -378,7 +379,9 @@ type PrerenderResult =
       // "removed": the "removed" marker is stored in place of the page, by
       // remove(), by a render that hit notFound(), or found fresh by
       // onlyIfStale. ok: true, so a sweep counts it.
-      status: "rendered" | "already-fresh" | "removed";
+      // "redirected": the render threw redirect(), and the redirect is
+      // stored in place of the page (or found fresh by onlyIfStale).
+      status: "rendered" | "already-fresh" | "removed" | "redirected";
       target: string;
       routeName: string;
       // opaque, for debugging and logs only -- not a stable format
@@ -510,6 +513,11 @@ recognizes the error across realms by name), unless something else failed in
 the same render, and the trigger stores the "removed" marker and returns
 `removed`. See "Removing A Page".
 
+Nor is a `redirect()` that a route or layout handler throws. It is the
+answer a request gets, so the producer reports it as an outcome and the
+trigger stores it in place of the page, returning `redirected`. See "A Page
+That Moved".
+
 ## Stored Payload
 
 The payload the serve path reads is the same shape it already knows:
@@ -602,10 +610,15 @@ interface StoredEnvelope {
 
 type PrerenderStoredEntry =
   | (StoredEnvelope & { entry: PrerenderEntry }) // a refreshed page
-  | (StoredEnvelope & { removed: true }); // the page was removed: no entry
+  | (StoredEnvelope & { removed: true }) // the page was removed: no entry
+  | (StoredEnvelope & {
+      // the page moved: no entry
+      redirect: { location: string; status: number; external?: true };
+    });
 ```
 
 The second variant is the "removed" marker; "Removing A Page" has its rules.
+The third is the stored redirect; "A Page That Moved" has its rules.
 
 Two rules follow from the envelope:
 
@@ -927,6 +940,111 @@ support use cases like user-generated content getting removed by its author.
 Note, `notFound` follows the same `revalidate` behavior described here."
 (nextjs.org/docs/pages/api-reference/functions/get-static-props)
 
+## A Page That Moved
+
+A product's slug changes, and its old URL should redirect to the new one. The
+handler says so: `throw redirect("/products/new-slug", 301)`. A refresh of
+the old URL used to come back `render-failed`, because the producer runs with
+`throwOnError` and a thrown Response is a throw like any other. The trigger
+kept the old entry, and the old page kept serving until the next deploy: the
+redirect never took effect for a URL that had been prerendered before it was
+added.
+
+So a redirect is an outcome, as `notFound()` is. The question was what to
+store for it, and there were two candidates.
+
+**The "removed" marker.** No new envelope: the redirect would be a third
+writer of the marker, beside `remove()` and `notFound()`. What a visitor sees
+then depends on the route, and on the route this feature is mostly for, it
+is wrong. A request that finds the marker goes to the route's handler, and a
+plain `Prerender(..., { onDemand })` route has no live handler: its gated
+producer answers 404 (`gateOnDemandProducer`). The old URL would stop serving
+the old page and start answering 404, not the redirect the handler asked for.
+Only a `Passthrough` route would redirect, and only when its live handler
+makes the same decision as its build handler.
+
+**A stored redirect.** The refresh stores the redirect itself in place of the
+page, and a request that finds it is answered with it. That is what a live
+render of the same handler answers, on every route kind, in dev and
+production. It costs a third envelope variant and a branch on the serve path.
+
+The stored redirect is what shipped. The comparison, from the visitor's seat:
+
+|                                  | the "removed" marker                          | the stored redirect                                |
+| -------------------------------- | --------------------------------------------- | -------------------------------------------------- |
+| plain on-demand route            | 404                                           | the redirect                                       |
+| `Passthrough` route              | whatever the live handler answers             | the redirect; the live handler does not run        |
+| a param the build baked          | 404 (plain), the live handler (`Passthrough`) | the redirect; the build-time entry is not served   |
+| a client navigation, an action   | the same as a document request                | the soft redirect, as for a handler's `redirect()` |
+| the next refresh, still moved    | the marker again                              | the redirect again                                 |
+| the next refresh, moved back     | renders the page over the marker              | renders the page over the redirect                 |
+| a refresh that hits `notFound()` | the marker again                              | the marker replaces the redirect                   |
+
+### How it works
+
+- **The producer** (`matchForPrerender`, `prerender-match.ts`) catches a
+  redirect Response the segment walk rethrows (`resolveWithErrorBoundary`
+  rethrows every Response) and returns
+  `{ redirect: { location, status, external? }, onDemandConfig }` instead of
+  segments. Only the walk's: a Response that reaches the render through
+  Flight (a handler whose result streams behind `loading()`, a server
+  component) is rendered into the stream as an error on a request, and stays
+  `render-failed` here. A Response that is not a redirect (a `200` JSON body,
+  a `410`) stays `render-failed` too: the store holds pages, markers and
+  redirects, not arbitrary responses.
+- **The trigger** (`renderOnDemand`, `create-prerender-trigger.ts`) stores it
+  with `composeStoredRedirect` (`writable-store.ts`), whose `meta` is a
+  page's: the route's `ttl` and `tags`, `storedAt` the render's start. It
+  re-reads the key before the write as for a page, so a `remove()` that
+  landed during the render wins. No warm follows: the warm request would only
+  be answered with the stored redirect. Two refreshes in flight are two
+  writes, as for pages: an older render's page written after a newer
+  render's redirect replaces it, until the next refresh.
+- **The serve path** (`readPrerenderSource`, `cache-lookup.ts`) schedules
+  `onRevalidate` for a stale one first, as for any envelope, then throws a
+  fresh redirect Response built from it (`storedRedirectResponse`). From
+  there it takes the path a handler's thrown redirect takes: `match()` and
+  `matchPartial()` rethrow it, and the RSC handler answers a document with
+  the 3xx and a navigation or an action with the soft redirect
+  (`interceptRedirectForPartial`). The outgoing guard
+  (`rsc/redirect-guard.ts`) judges its `Location` as it judges a live one.
+  Where the overlay is not read, the redirect is not either: a `Passthrough`
+  route's action re-render and stale navigation render live, as they do over
+  a stored page, and an HMR re-render skips the overlay in dev.
+
+### The rules, and why
+
+- **What is stored.** The `Location`, the status, and `external: true` for
+  `redirect(url, { external: true })`. That opt-in is an out-of-band brand on
+  the Response object (`markExternalRedirect`, `redirect-origin.ts`), so the
+  store keeps it as a field and the serve path brands the rebuilt Response
+  again. Without it, an off-host `Location` lands on the app root, as a live
+  one does.
+- **The basename.** The producer's request context carries the router's
+  `_basename` (`PrerenderMatchDeps.basename`), so a root-relative
+  `redirect("/products/b")` stores `/shop/products/b` under a `/shop`
+  basename, as a request's `redirect()` would send it.
+- **Location state is not stored.** `redirect(url, { state })` sets the
+  state on the request context, and the producer's context drops it (its
+  `setLocationState` does nothing). Location state belongs to one visitor's
+  navigation, and a refresh has no visitor to give it to.
+- **Verified like a page.** Same version and params checks
+  (`isStoredEntryValidFor`), and a redirect that is not whole (an empty
+  `Location`, a status outside 300-399, an `external` that is not `true`) is
+  a miss, never the page an envelope might also hold. A router from before
+  it reads it as malformed, as it reads the marker: a miss
+  (`validatorBeforeTheRemovedMarker` pins it).
+- **Rechecked like a page.** A stale one schedules `onRevalidate` and still
+  answers; `onlyIfStale` leaves a fresh one and reports `redirected`;
+  `markStale(tags)` reaches it through its tags.
+- **Intercepted navigations do not see it**, for the reason they do not see
+  the marker: they do not read the overlay.
+- **The runtime caches around the route** are where they are after a
+  removal: no warm follows, and a document cache serves its stored document
+  until it runs out. A redirect has no body, so the document cache never
+  stores one, and the order that is right for a removal (refresh first, then
+  `updateTag()`) is right here too.
+
 ## Build-time Durable Seeding
 
 The first implementation can keep the existing bundled manifest as the build
@@ -975,6 +1093,11 @@ lookup durable overlay by versioned key; verify the answer
   |                        A stale one schedules onRevalidate first, as a
   |                        stale hit does
   |
+  +-- stored redirect --> the request is answered with the redirect, as a
+  |                       handler's thrown redirect is; neither the bundled
+  |                       manifest nor the handler is reached. A stale one
+  |                       schedules onRevalidate first
+  |
   v
 lookup bundled manifest
   |
@@ -1017,15 +1140,17 @@ action that awaits `router.prerender()` for the page shows the new entry in
 its own re-render. The immutable bundled manifest keeps the client's copy as
 before.
 
-| Request finds                     | `Prerender(..., { onDemand })`                             | `Passthrough(def, live)`                   |
-| --------------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
-| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)      | same                                       |
-| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured  | same                                       |
-| "removed" marker                  | 404 (dev and production); the build entry is not served    | the live handler (dev and production)      |
-| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured       | the live handler; `onRevalidate` likewise  |
-| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render | same                                       |
-| no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint    | the live handler (dev and production)      |
-| server action re-render           | overlay, then build entry, then 404, as above              | the live handler (the overlay is not read) |
+| Request finds                     | `Prerender(..., { onDemand })`                                   | `Passthrough(def, live)`                    |
+| --------------------------------- | ---------------------------------------------------------------- | ------------------------------------------- |
+| fresh overlay entry               | the overlay entry, loaders fresh (dev and production)            | same                                        |
+| stale overlay entry               | the overlay entry; `onRevalidate` scheduled if configured        | same                                        |
+| "removed" marker                  | 404 (dev and production); the build entry is not served          | the live handler (dev and production)       |
+| stale "removed" marker            | the same 404; `onRevalidate` scheduled if configured             | the live handler; `onRevalidate` likewise   |
+| stored redirect                   | the redirect (dev and production); the build entry is not served | the redirect; the live handler does not run |
+| stale stored redirect             | the same redirect; `onRevalidate` scheduled if configured        | same                                        |
+| no overlay entry, param baked     | production: the build entry; dev: the dev prerender render       | same                                        |
+| no overlay entry, param not baked | production: 404; dev: rendered through the dev endpoint          | the live handler (dev and production)       |
+| server action re-render           | overlay, then build entry, then 404, as above                    | the live handler (the overlay is not read)  |
 
 ### Refreshing
 
@@ -1059,6 +1184,9 @@ run requestless prerender producer
   |                       route's ttl and tags --> removed (no warm)
   +-- ctx.passthrough() --> write the same marker --> skipped-passthrough,
   |                         then the warm request below
+  +-- redirect() thrown by a handler --> write the redirect, stamped with
+  |                                      the route's ttl and tags
+  |                                      --> redirected (no warm)
   |
   v
 write durable entry
@@ -1290,6 +1418,18 @@ behavior. Coverage should include:
   browser, dev and production in both apps, a baked and an unbaked param
   removed both ways, the recheck through `markStale` and `onlyIfStale`, an
   action on a removed page, and a `Passthrough` route (`expectRemoved*` in
+  `tests/shared-e2e`).
+- A page that moved: the envelope and its validation, the frozen pre-marker
+  validator included (`memory-prerender-store.test.ts`); the write stamped
+  like a page, the recheck, a `remove()` racing it, no warm and a failed
+  write (`create-prerender-trigger.test.ts`); the serve path's throw for a
+  document, a `Passthrough` route, an action and a navigation, the external
+  brand and a stale one (`cache-lookup-prerender-removed.test.ts`); the
+  userland flow, a baked page, a layout's redirect, a streamed handler's and
+  a non-redirect Response staying `render-failed`, the external opt-in and
+  the basename (`testing/__tests__/on-demand-prerender-redirect.rsc-test.tsx`);
+  and in a browser, dev and production in both apps, an unbaked and a baked
+  param, an action on a moved page and the recheck (`expectMoved*` in
   `tests/shared-e2e`).
 - E2E tests in both dev and production for the e2e test app and the Cloudflare
   basic app.

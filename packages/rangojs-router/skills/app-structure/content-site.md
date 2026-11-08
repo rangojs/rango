@@ -218,13 +218,14 @@ export const blogPatterns = urls(({ path }) => [
 ]);
 ```
 
-| Request for                | Served from                                                                      |
-| -------------------------- | -------------------------------------------------------------------------------- |
-| A post the build baked     | its build payload, until a refresh stores a newer one                            |
-| A refreshed post           | the refreshed entry, read before the build payload                               |
-| Any other post             | the `Passthrough` live handler                                                   |
-| A draft                    | not listed by `getParams`; the live handler answers 404                          |
-| A post moved back to draft | its refresh hits `notFound()` and stores a removal; the live handler answers 404 |
+| Request for                | Served from                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| A post the build baked     | its build payload, until a refresh stores a newer one                                  |
+| A refreshed post           | the refreshed entry, read before the build payload                                     |
+| Any other post             | the `Passthrough` live handler                                                         |
+| A draft                    | not listed by `getParams`; the live handler answers 404                                |
+| A post moved back to draft | its refresh hits `notFound()` and stores a removal; the live handler answers 404       |
+| A post whose slug changed  | its refresh throws `redirect()` to the new slug and stores it; requests are redirected |
 
 `throw new Skip()` leaves one entry out of a build without failing it, but
 in a refresh it reports `render-failed` and keeps the previous entry: a
@@ -277,8 +278,9 @@ export default {
 ```
 
 A refresh renders with route params and env only, no request, and returns a
-status (`rendered`, `removed` when the render hit `notFound()`,
-`render-failed`, …); every failure keeps the previous entry. A deleted post
+status (`rendered`, `removed` when the render hit `notFound()`, `redirected`
+when a handler threw `redirect()`, `render-failed`, …); every failure keeps
+the previous entry. A deleted post
 is `prerender.remove("/blog/<slug>")`. Thousands of pages belong in a queue,
 one batch per message, and `onRevalidate` in the `prerender` option can
 schedule a refresh when a request finds a stale entry.
