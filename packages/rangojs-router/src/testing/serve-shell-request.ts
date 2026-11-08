@@ -77,6 +77,7 @@ import {
   type ShellStatus,
 } from "./shell-status.js";
 import { writePartialParams } from "../browser/wire-protocol.js";
+import { peekOpeningChunk } from "../rsc/render-redirect.js";
 
 /** Options for {@link serveShellRequest}. */
 export interface ServeShellRequestOptions<TEnv = any> {
@@ -190,6 +191,14 @@ export interface ShellRequestHandles {
   late: HandleData[];
 }
 
+/** A payload's `metadata.redirect`, as the browser reads it. */
+export interface ShellRequestRedirect {
+  /** The target, resolved server-side (same-origin, or the external opt-in). */
+  url: string;
+  /** An explicit off-host opt-in: the browser does a hard navigation. */
+  external?: boolean;
+}
+
 /**
  * An `action` request's answer, as browser/server-action-bridge.ts reads it.
  */
@@ -282,6 +291,14 @@ export interface ServeShellRequestResult {
    */
   readLocationState(): Promise<Record<string, unknown> | undefined>;
   /**
+   * The redirect the payload answers with (`metadata.redirect`), as
+   * browser/partial-update.ts reads it: a navigation's redirect that carries
+   * location state or an `{ external: true }` opt-in travels as this payload
+   * instead of a `X-RSC-Redirect` header. Undefined when the payload carries
+   * none (or no Flight was rendered).
+   */
+  readRedirect(): Promise<ShellRequestRedirect | undefined>;
+  /**
    * For an `action` request, the call's answer as the browser reads it: its
    * result and the `revalidationError` its loaders' reruns report.
    * Undefined when no Flight was rendered or the payload carries no action
@@ -329,7 +346,13 @@ const SSR_STUB: SSRModule = {
       recorder.formState = options?.formState ?? undefined;
     }
     recordShellKey(recorder);
-    return rscStream;
+    // The real shell cannot be ready before the Flight render's opening flush:
+    // Fizz reads the payload it needs, so a component that throws redirect()
+    // synchronously has already reported it when renderHTML resolves. Awaiting
+    // the flush keeps that window, so the serve path answers a component's
+    // redirect as production does (rsc/render-redirect.ts). The chunk goes back
+    // in front of the body: the document is still its whole Flight payload.
+    return peekOpeningChunk(rscStream);
   },
   async captureShellHTML(rscStream, options) {
     const reader = rscStream.getReader();
@@ -824,6 +847,13 @@ export async function serveShellRequest<TEnv = any>(
         metadata?: { locationState?: Record<string, unknown> };
       }>(flight);
       return payload.metadata?.locationState;
+    },
+    async readRedirect() {
+      if (!flight) return undefined;
+      const payload = await decodePayload<{
+        metadata?: { redirect?: ShellRequestRedirect };
+      }>(flight);
+      return payload.metadata?.redirect;
     },
     async readAction() {
       return flight ? decodeAction(flight) : undefined;

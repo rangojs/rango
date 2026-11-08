@@ -6,6 +6,14 @@ import { printServerError } from "../server/print-server-error.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
+import {
+  createCommittedRenderRedirectWindow,
+  createRenderRedirectWindow,
+  holdOpeningRedirect,
+  isRenderRedirect,
+  recordRenderRedirect,
+  type RenderRedirectWindow,
+} from "./render-redirect.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
@@ -81,6 +89,13 @@ export interface RscFlightStageInput<TEnv> {
   temporaryReferences?: unknown;
   recordSerializeMetric?: boolean;
   tracking?: RscRenderStageTracking;
+  /**
+   * The render's response committed before it started (a PPR shell HIT's
+   * tail): a redirect a component throws cannot answer anything, so it renders
+   * the boundary and the render reports it as a rendering error
+   * (rsc/render-redirect.ts). Unset for a render that answers a response.
+   */
+  redirectsCannotAnswer?: boolean;
 }
 
 export interface RscFlightStage {
@@ -88,6 +103,8 @@ export interface RscFlightStage {
   payload: RscPayload;
   stream: ReadableStream<Uint8Array>;
   init: ResponseInit;
+  /** This render's redirect window; the lane that commits the status closes it. */
+  window: RenderRedirectWindow;
 }
 
 export interface RscPreparedHtmlRender {
@@ -103,7 +120,13 @@ export interface RscRenderOptions {
 
 interface RscFlightCommand<TEnv> {
   type: "flight";
-  execute: () => RscFlightStage;
+  /**
+   * May return a promise: a Flight response is held until the render's opening
+   * flush, so a component's redirect can answer it before the status commits
+   * (rsc/render-redirect.ts). A document's stage stays synchronous; its html
+   * step is where that window lives.
+   */
+  execute: () => RscFlightStage | Promise<RscFlightStage>;
   recordSerializeMetric: boolean;
 }
 
@@ -159,9 +182,21 @@ function createFlightStage<TEnv>(
   // Read once here: onError can fire outside the ALS frame.
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
+  // The window opens with the render: the lane that commits this response's
+  // status closes it, and until then a redirect a component throws answers the
+  // response (rsc/render-redirect.ts). A render whose response already
+  // committed opens a closed one, so a redirect it reports is reported as the
+  // rendering failure it is.
+  const window = input.redirectsCannotAnswer
+    ? createCommittedRenderRedirectWindow()
+    : createRenderRedirectWindow();
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      // Recorded before React writes the error row that carries it. A redirect
+      // the response can no longer answer is out of time: its error row renders
+      // the boundary, so it is a rendering failure and reported as one.
+      const late = recordRenderRedirect(window, error);
       renderErrors?.push(error);
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
@@ -169,14 +204,35 @@ function createFlightStage<TEnv>(
         { label: "Rendering error", pathname: input.url.pathname },
         requestContext,
       );
-      input.ctx.callOnError(error, "rendering", {
-        request: input.request,
-        url: input.url,
-        env: input.env,
-      });
+      // A redirect the response answers is control flow, as a handler's is: it
+      // never reports as a rendering failure.
+      if (!isRenderRedirect(error) || late) {
+        input.ctx.callOnError(error, "rendering", {
+          request: input.request,
+          url: input.url,
+          env: input.env,
+        });
+      }
     },
   });
-  return { type: "flight", payload: input.payload, stream, init };
+  return { type: "flight", payload: input.payload, stream, init, window };
+}
+
+/**
+ * A Flight response's window: create the stage, wait for the render's opening
+ * flush, and close the window there, which throws the redirect a component
+ * reported in it, so the lanes that answer a handler's throw answer it too
+ * (rsc/handler.ts). The response is not built yet, so the request's cookies,
+ * headers and onResponse callbacks are still on the stub when the redirect
+ * response is. A document's stage skips this: its html step waits for the
+ * shell, which closes the same window.
+ */
+async function holdFlightOpening<TEnv>(
+  input: RscRenderInput<TEnv>,
+): Promise<RscFlightStage> {
+  const stage = createFlightStage(input, input.init);
+  const stream = await holdOpeningRedirect(stage.window, stage.stream);
+  return { ...stage, stream };
 }
 
 function expectCommandResult(
@@ -210,7 +266,7 @@ function expectCommandResult(
  * docs/design/render-stage-driver.md).
  */
 function* flightStep<TEnv>(
-  execute: () => RscFlightStage,
+  execute: () => RscFlightStage | Promise<RscFlightStage>,
   recordSerializeMetric: boolean,
 ): Generator<RscRenderCommand<TEnv>, RscFlightStage, RscRenderCommandResult> {
   return expectCommandResult(
@@ -241,7 +297,9 @@ export function* createRscRenderPlan<TEnv>(
   options: RscRenderOptions = {},
 ): RscRenderPlan<TEnv> {
   const flight = yield* flightStep<TEnv>(
-    () => createFlightStage(input, input.init),
+    options.html
+      ? () => createFlightStage(input, input.init)
+      : () => holdFlightOpening(input),
     input.recordSerializeMetric ?? true,
   );
 
@@ -427,7 +485,7 @@ export async function driveRscRenderPlan<TEnv>(
           const body = await observePhase(PHASES.ssr, prepared.render);
           commandValue = { body, init: prepared.init };
         } else {
-          commandValue = command.execute();
+          commandValue = await command.execute();
         }
         const durationMs = measured ? performance.now() - phaseStartedAt : 0;
         appendSerializeMetric(

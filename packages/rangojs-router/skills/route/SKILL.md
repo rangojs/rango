@@ -584,7 +584,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
-Return it from a handler or middleware, or throw it from a loader.
+Return it from a handler or middleware, throw it from a loader, or throw it
+from a server component (a page, a layout, a parallel slot) while it renders.
 
 ### Basic redirect
 
@@ -615,6 +616,45 @@ path(
   { name: "login" },
 );
 ```
+
+### Throwing it from a component
+
+A component is not a handler, so its throw never reaches one: React catches it
+and would render the nearest error boundary. The render answers it instead, as
+it answers a handler's throw — the document gets the 3xx, a client navigation
+gets 204 + `X-RSC-Redirect` — while the response's status is still open.
+
+```typescript
+import { redirect } from "@rangojs/router";
+
+function AccountPage() {
+  if (!session()) throw redirect("/login");
+  return <Account />;
+}
+```
+
+A redirect answered this way is control flow, not a failure: no `onError` call,
+no `errorBoundary()`. A declared boundary does not catch it.
+
+A redirect thrown from inside an `errorBoundary()` fallback is answered only in
+the lanes where the render reaches that fallback: a failure in a handler, a
+loader or an action, a no-JS form post's boundary render, and a component the
+router invokes itself — a page passed to `path()` directly, a layout body, a
+slot body. A component React renders (the element a handler returned, a child
+element) is not one of them: no error segment is built for its throw, so the
+declared fallback never renders for it and the browser shows the root error page
+instead. A streamed handler's failure is out of time: its fallback renders, but
+the redirect it throws is only reported to `onError`. Do not put control flow in
+a fallback.
+
+> **The async limit:** a component that `await`s before it throws is a task of
+> its own, so on a **client navigation** the throw lands after the response's
+> status has committed. That navigation renders the nearest error boundary and
+> reports the throw to `onError` as a rendering error; a document request still
+> answers the redirect, because the shell waits for the components it needs.
+> When a component has to redirect on a navigation, throw before its first
+> `await` (or redirect from middleware, a handler or a loader). See
+> `/loader` → "Loader Authority" for the loader's own rules.
 
 > **Redirecting from a route with `loading()`:** an `async` handler that returns
 > a `Response`/`redirect()` on a route that also declares `loading()` is streamed,

@@ -16,7 +16,7 @@ function pluginRscMock() {
   return {
     renderToReadableStream: (payload: unknown) => {
       renderToReadableStreamSpy(payload);
-      return new ReadableStream();
+      return emptyFlightStream();
     },
     decodeReply: vi.fn(),
     createTemporaryReferenceSet: vi.fn(() => new Set()),
@@ -50,6 +50,7 @@ vi.mock("../../router/router-context.js", async () =>
 import { createRSCHandler } from "../handler.js";
 import { RouteNotFoundError } from "../../errors.js";
 import type { RangoInternal } from "../../router/router-interfaces.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 
 function createNotFoundRouter(): RangoInternal<unknown, any> {
   const notFoundError = new RouteNotFoundError("No route matched for /missing");

@@ -368,6 +368,7 @@ import { heldBoundaryPatterns } from "./pages/held-boundary.js";
 import { parallelLoaderInheritPatterns } from "./pages/parallel-loader-inherit.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { documentLocationStatePatterns } from "./pages/document-location-state.js";
+import { componentRedirectPatterns } from "./pages/component-redirect.js";
 import { suspenseCasesPatterns } from "./pages/suspense-cases.js";
 import { txWhenPatterns } from "./pages/tx-when.js";
 import { transitionKindsPatterns } from "./pages/transition-kinds.js";
@@ -3274,6 +3275,9 @@ export const urlpatterns = urls(
         // pushes when the response re-renders part of it.
         include("/", historyHandlesPatterns, { name: "" }),
         include("/", peFormStatePatterns, { name: "" }),
+        // A component that throws redirect(): answered while the status is open
+        // (e2e/component-redirect.test.ts).
+        include("/", componentRedirectPatterns, { name: "" }),
         include("/", documentLocationStatePatterns, { name: "" }),
         include("/", suspenseCasesPatterns, { name: "sc" }),
         // prefetch: false on loader() and loading(): one page per case with

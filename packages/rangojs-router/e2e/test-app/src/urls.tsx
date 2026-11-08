@@ -12,6 +12,7 @@ import { actionStalePatterns } from "./urls/action-stale.js";
 import { heldBoundaryPatterns } from "./urls/held-boundary.js";
 import { peFormStatePatterns } from "./urls/pe-form-state.js";
 import { documentLocationStatePatterns } from "./urls/document-location-state.js";
+import { componentRedirectPatterns } from "./urls/component-redirect.js";
 import { suspenseCasesPatterns } from "./urls/suspense-cases.js";
 import { deferredHandleNavPatterns } from "./urls/deferred-handle-nav.js";
 import { conditionalTransitionPatterns } from "./urls/conditional-transition.js";
@@ -1258,6 +1259,9 @@ export const urlpatterns = urls(
       include("/", actionStalePatterns),
       include("/", peFormStatePatterns, { name: "" }),
       include("/", documentLocationStatePatterns, { name: "" }),
+      // A component that throws redirect(): answered while the status is open
+      // (e2e/component-redirect.test.ts).
+      include("/", componentRedirectPatterns, { name: "" }),
       include("/", suspenseCasesPatterns, { name: "sc" }),
 
       // Deferred-handle navigation contract + history-cache fixes (#622 follow-ups)

@@ -26,6 +26,20 @@ export function routeMapBuilderMock(): Record<string, unknown> {
   };
 }
 
+/**
+ * A stubbed render's Flight stream: it rendered nothing and is over. Closed,
+ * not open — a Flight response is held until the render's opening flush so a
+ * component's redirect can answer it (rsc/render-redirect.ts), and a stream
+ * that never flushes would hold the response forever.
+ */
+export function emptyFlightStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
+
 // Minimal @vitejs/plugin-rsc stub; register for BOTH /rsc/server and
 // /rsc/client (segment-codec imports from both entries), so the shape is the
 // union of both: the last three names are the real /rsc/client surface
@@ -34,7 +48,7 @@ export function routeMapBuilderMock(): Record<string, unknown> {
 // link error instead of a meaningful assertion.
 export function pluginRscMock(): Record<string, unknown> {
   return {
-    renderToReadableStream: () => new ReadableStream(),
+    renderToReadableStream: () => emptyFlightStream(),
     decodeReply: vi.fn(),
     createTemporaryReferenceSet: vi.fn(() => new Set()),
     loadServerAction: vi.fn(),

@@ -1025,6 +1025,154 @@ loader, or a synchronous handler return. In development, `warnOnStreamedResponse
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
 or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
+### A component that throws redirect() redirects, if the render says so in time
+
+A page, a layout, a parallel slot — any server component the render tree
+reaches: `throw redirect(...)` from one of them is control flow, and it answers
+the response the way the same throw from a handler does — a document request
+with the redirect's 3xx (`Location`, the state cookie), a client navigation with
+204 + `X-RSC-Redirect`, or the redirect payload when it carries location state
+or the `{ external: true }` opt-in. Before, React caught the throw, wrote an
+error row, and the nearest boundary rendered instead: the visitor got an error
+page where a handler's redirect would have taken them somewhere.
+
+The catch: React catches it, so nothing reaches the handler, and the only thing
+the render can do is look at what it reported. That only helps while the
+response's status is still open. `createFlightStage` opens a
+`RenderRedirectWindow` when the render starts (`rsc/render-redirect.ts`),
+`recordRenderRedirect` keeps the first redirect the Flight `onError` hands over
+while that window is open, and the two serve paths close it where the status
+commits:
+
+- a **document** answers it once its shell is ready: a throw that failed the
+  shell, and one the Flight render's opening flush carried, are both known by
+  then (`createSsrHtmlStage` in `rsc/ssr-setup.ts`, success and shell-error path
+  alike, so dev's rethrow to Vite's overlay does not swallow it);
+- a **Flight response** (a client navigation, a prefetch, an action's
+  revalidation render) has no shell, so its window is the render's opening
+  flush: `holdOpeningRedirect` reads the first chunk and puts it back in front
+  of the body, and the plan's flight step does not complete until it has
+  (`createRscRenderPlan`, which is why the command may return a promise).
+
+The response is therefore built **after** the redirect is answered, never
+before it: the request's stub — the cookies middleware and `cookies().set`
+wrote, the `onResponse` callbacks registered before the render — is still
+untouched when `createSimpleRedirectResponse` merges it, exactly as on a
+handler's throw. (Building the Flight response first and replacing it after the
+peek lost the `Set-Cookie` and skipped every callback.)
+
+Throwing the recorded `Response` from there is deliberate: it lands in the lanes
+that already answer a handler's throw (`rsc/handler.ts`'s
+`interceptRedirectForPartial`, then `finalizeRequestResponse`'s open-redirect
+guard and location-state cookie), so a component's redirect cannot drift from a
+handler's. Two lanes sit outside that funnel and answer it themselves:
+
+- the not-found tree, whose render runs inside the 404 catch: `handler.ts`
+  answers a thrown `Response` there rather than let it escape, and takes the
+  partial lane (`204` + `X-RSC-Redirect`) whenever the answer is a Flight
+  response — a client navigation to an unmatched route is one, even though its
+  plan mode is not `partial-render`, and the browser follows a raw 3xx into a
+  document it cannot decode as Flight;
+- a **no-JS form post's re-render** (`rsc/progressive-enhancement.ts`), which
+  answers the document's 3xx inside the render so route middleware's stub
+  headers and cookies merge into it as they do for a handler's throw.
+  `handleProgressiveEnhancement` returns its result straight out of the
+  handler's dispatch, so a `Response` escaping there escaped the handler.
+
+**The limit.** An async component is a task of its own, so its error row lands
+in a later chunk, after the status committed. Closing that gap means buffering
+the whole render before the status commits, which is the one thing the streaming
+contract forbids (a navigation would show no fallback and no early paint until
+every loader settled). So on a **client navigation** an async component's
+`redirect()` still renders the boundary; a **document request** answers it,
+because the shell render waits for the component the shell needs. A redirect a
+component throws after its route already streamed — from a `<Suspense>`'s
+content, on a document whose shell is out — is out of time the same way.
+
+**A declared `errorBoundary()` fallback renders in every lane where the render
+reaches an error — and a component React renders is not one of them.** Which
+lane it is decides whether a redirect thrown from inside the fallback can be
+answered:
+
+- a component **the segment walk invokes** — a page passed to `path()` directly,
+  a layout body, a slot body — throws an error while resolving, so
+  `catchSegmentError` (`router/segment-resolution/helpers.ts`) builds an error
+  segment and the nearest declared fallback renders. A `Response` is re-thrown
+  before that (`resolveWithErrorBoundary`), so a redirect from the same
+  component is answered, never turned into an error segment;
+- a **handler's** failure builds an error segment the same way (`matchError` ->
+  `createErrorSegment`, `rsc/progressive-enhancement.ts`,
+  `rsc/server-action.ts`), and a **loader's** renders its fallback directly
+  through `renderErrorFallback` (`router/loader-resolution.ts`). A thrown
+  action's boundary response and a no-JS form post's boundary render are those
+  lanes too;
+- a **streamed handler's** rejection renders its fallback in
+  `router/segment-resolution/streamed-handler-boundary.ts`, after the response
+  started.
+
+The window above decides each one: every lane but the last answers the fallback's
+redirect while the status is still open — a document gets the 3xx, a client
+navigation gets `X-RSC-Redirect` beside the error lane's own `500`, which
+`setResponseStatus` already wrote. The streamed handler's failure is out of
+time, so its fallback's redirect is answered by nobody and reported as a
+rendering error.
+
+A component **React renders** — the element a handler returned, a child element
+— is the one lane with no fallback at all: its throw is an error row and nothing
+else, no error segment is built for it, so the declared fallback never renders
+(a counter in `testing/__tests__/component-redirect.rsc-test.tsx` reads 0) and
+the client shows `RootErrorBoundary`'s page (`e2e/error-boundary.test.ts`,
+"should show error boundary for server component error", a route that declares
+no boundary). Nothing throws from a fallback there, so nothing is answered and
+nothing is reported.
+
+What a late redirect is, and is not: the render reports nothing for a redirect
+the response answers — `printServerError` prints nothing for it and the Flight
+`onError` skips `callOnError` (a handler's redirect reports nothing either). A
+redirect that lands after its window closed answered nothing, though: its error
+row renders the boundary, so the visitor is shown an error page and the render
+reports it to the consumer's `onError` as a rendering error, like any other
+failure. A **PPR shell HIT's tail** is that same case from the first byte: the
+prelude committed when the shell was served, so its render opens a closed
+window (`renderRscFlightStage` with `redirectsCannotAnswer`) and a component's
+redirect there is reported, never answered. It is never stored either way: the
+response is a 3xx/204, and the redirect stays in `_renderErrors`, which keeps a
+late one's 200 out of the document cache and of every shell capture. That list
+is also why a writer that refuses a redirect's 200 reports the refusal as
+`cache-write` (the lane that owns the write), beside the rendering report a
+late one gets.
+
+A **PPR shell capture** is the one render that owns no response of its own: it
+leaves its window open, so a redirect during a capture records nothing and
+reports nothing, and the capture's refusal is the report (`cache-write`). A
+document re-validation is not that: its re-run renders through the same html
+stage, so its redirect is thrown where the document cache's revalidation catches
+it and reports the refused refresh. A background route re-validation renders no
+Flight at all.
+
+Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
+the document and navigation lanes, a page, a layout and a parallel slot
+component, an intercept, the state cookie, the external opt-in, a basename, a
+declared `errorBoundary()`, strict mode, a prefetch, the cookie and `onResponse`
+stamps, no `onError` for an answered redirect, an action's revalidation render,
+a no-JS form post's re-render and its error-boundary render, the not-found tree
+on a document and on a navigation, the async limit and its `onError` report, the
+streamed-after-shell limit and its `onError` report, the error-boundary fallback
+in every lane that can render one — a component React renders gets none of it;
+a page the walk invokes, a layout body, a slot body, and a handler's, a loader's
+or an action's error answer its redirect; a streamed handler's is out of time
+and reports it — and that a streamed redirect's 200 is refused by the document
+cache and by a PPR shell capture),
+`rsc/__tests__/render-pipeline.test.ts` (the stage's two outcomes: a redirect in
+the opening flush is thrown into the answering lanes and reported by nobody, and
+one reported by a render whose response already committed — the PPR shell HIT
+tail — is reported as a rendering error) and `e2e/component-redirect.test.ts` in
+both apps, dev and production (the async limit included, and a document request
+for the same async route landing on the target). The PPR tail's own path is not
+exercised by a test: a shell capture in the userland kit reads the whole stream,
+so no tail segment re-renders there, and neither e2e app has a ppr route whose
+component redirects.
+
 ### Streamed handler rejections render the declared boundary
 
 The same non-awaited promise carries failures. `trackStreamedHandler`

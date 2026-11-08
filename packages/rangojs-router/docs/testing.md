@@ -1504,14 +1504,17 @@ Options: `cacheStore` (replaces the store your `cache` config returns; its
 decision is `replayStatus`. `key` is the shell key the serve path resolved
 for a document, request partition included (a route whose `cache({ key })`
 or store `keyGenerator` partitions its record partitions its shell too). Result: `{ response, body, shellStatus,
-replayStatus, prelude, flight, key, readEntry, readHandles }`. `readEntry()` reads the stored
+replayStatus, prelude, flight, key, readEntry, readHandles, readRedirect }`. `readEntry()` reads the stored
 document entry through a passive `getShell`, which warms a shell memo like any
 read, so call it after the reads you count. `readHandles()` decodes the
 response's handle data as the browser reads it: `hydration` (what the document
 hydrates with, which on a HIT is what the stored shell was rendered from) and
-`late` (the states that arrive after hydration). A HIT's tail carries replayed
-segments as Flight fragments inside JSON strings, with escaped quotes, so match
-plain text. To evict by tag, call `updateTag()` through
+`late` (the states that arrive after hydration). `readRedirect()` decodes the
+`metadata.redirect` a navigation was answered with — a redirect that carries
+location state or an `{ external: true }` opt-in travels as that payload instead
+of a `X-RSC-Redirect` header; `undefined` when it carries none. A HIT's tail
+carries replayed segments as Flight fragments inside JSON strings, with escaped
+quotes, so match plain text. To evict by tag, call `updateTag()` through
 `runInRequestContext(fn, { cacheStore })` or your app's own endpoint via
 `dispatch`, then request again. A store refuses a capture that starts in the
 invalidation's millisecond, so each `serveShellRequest` starts its request in
@@ -1853,7 +1856,8 @@ renderHandler(handler, opts?: { request?, params?, env?, vars?, loaders?, routeM
 serveShellRequest(router, url: string | URL, opts?: { cacheStore?, env?, headers?, partial?: true | { from?, segments? }, form?, action?: { ref, id, args?, segments? } }):
   Promise<{ response, body, shellStatus, replayStatus, prelude, flight, key, readEntry(): Promise<ShellCacheEntry | null>,
     readHandles(): Promise<{ hydration: HandleData, late: HandleData[] } | undefined>,
-    readLocationState(): Promise<Record<string, unknown> | undefined> }>;
+    readLocationState(): Promise<Record<string, unknown> | undefined>,
+    readRedirect(): Promise<{ url: string, external?: boolean } | undefined> }>;
 // One GET through the router's production handler, background capture settled. HTML step stubbed:
 // prelude = the capture's Flight text, flight = this request's Flight (a HIT's tail).
 resetShellTestState(): Promise<void>; // beforeEach: capture backoff/guards + CFCacheStore isolate memos

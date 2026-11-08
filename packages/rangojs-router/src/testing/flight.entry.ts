@@ -69,4 +69,5 @@ export type {
   ServeShellRequestResult,
   ShellRequestAction,
   ShellRequestHandles,
+  ShellRequestRedirect,
 } from "./serve-shell-request.js";

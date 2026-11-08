@@ -5,6 +5,7 @@ import {
   runWithRequestContext,
 } from "../../server/request-context.js";
 import { handleRscRendering } from "../rsc-rendering.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 import {
   revalidateAfterAction,
   type ActionContinuation,
@@ -47,7 +48,7 @@ function createHandlerContext(matchResult = createMatchResult()) {
       prefetchCacheTTL: 300_000,
     },
     version: "test-version",
-    renderToReadableStream: vi.fn(() => new ReadableStream()),
+    renderToReadableStream: vi.fn(() => emptyFlightStream()),
   } as any;
 }
 
