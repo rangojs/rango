@@ -1025,6 +1025,60 @@ loader, or a synchronous handler return. In development, `warnOnStreamedResponse
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
 or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
+### A component that throws redirect() redirects, if the render says so in time
+
+A page, a layout, any server component React renders: `throw redirect(...)` from
+one of them is control flow, and it answers the response the way the same throw
+from a handler does — a document request with the redirect's 3xx (`Location`,
+the state cookie), a client navigation with 204 + `X-RSC-Redirect`, or the
+redirect payload when it carries location state or the `{ external: true }`
+opt-in. Before, React caught the throw, wrote an error row, and the nearest
+boundary rendered instead: the visitor got an error page where a handler's
+redirect would have taken them somewhere.
+
+The catch: React catches it, so nothing reaches the handler, and the only thing
+the render can do is look at what it reported. That only helps while the
+response's status is still open. `recordRenderRedirect`
+(`rsc/render-redirect.ts`) keeps the first redirect the Flight `onError` hands
+over, and the two serve paths answer it where the status commits:
+
+- a **document** answers it once its shell is ready: a throw that failed the
+  shell, and one the Flight render's opening flush carried, are both known by
+  then (`createSsrHtmlStage` in `rsc/ssr-setup.ts`, success and shell-error path
+  alike, so dev's rethrow to Vite's overlay does not swallow it);
+- a **Flight response** (a client navigation, a prefetch) has no shell, so its
+  window is the render's opening flush: `holdOpeningRedirect` reads the first
+  chunk, puts it back in front of the body, and the response is built after it
+  (`rsc/rsc-rendering.ts`).
+
+Throwing the recorded `Response` from there is deliberate: it lands in the lanes
+that already answer a handler's throw (`rsc/handler.ts`'s
+`interceptRedirectForPartial`, then `finalizeRequestResponse`'s open-redirect
+guard and location-state cookie), so a component's redirect cannot drift from a
+handler's.
+
+**The limit.** An async component is a task of its own, so its error row lands
+in a later chunk, after the status committed. Closing that gap means buffering
+the whole render before the status commits, which is the one thing the streaming
+contract forbids (a navigation would show no fallback and no early paint until
+every loader settled). So on a **client navigation** an async component's
+`redirect()` still renders the boundary; a **document request** answers it,
+because the shell render waits for the component the shell needs. A redirect a
+component throws after its route already streamed — from a `<Suspense>`'s
+content, on a document whose shell is out — is out of time the same way.
+
+A redirect is never a rendering error: `printServerError` already treats a
+thrown `Response` as control flow, so nothing is printed, and it is never stored
+(the response is a 3xx/204, and `_renderErrors` keeps it out of the document
+cache and shell captures).
+
+Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
+the document and navigation lanes, the state cookie, the external opt-in, a
+basename, a declared `errorBoundary()`, a prefetch, and the async limit) and
+`e2e/component-redirect.test.ts` in both apps, dev and production (the async
+limit included, and a document request for the same async route landing on the
+target).
+
 ### Streamed handler rejections render the declared boundary
 
 The same non-awaited promise carries failures. `trackStreamedHandler`

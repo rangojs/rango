@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a component that throws `redirect()` answers the redirect instead of the error page
+
+**Before.** A handler, a loader or middleware that threw `redirect()` answered
+the redirect: a document request got its 3xx, a client navigation got 204 +
+`X-RSC-Redirect`. A **component** that threw one did not. React caught the
+throw, wrote an error row, and the nearest boundary rendered, so a page that
+decided mid-render that the visitor belonged elsewhere showed "Internal Server
+Error" instead of taking them there.
+
+```tsx
+function AccountPage() {
+  const user = getUser();
+  if (!user) throw redirect("/login"); // rendered the error page
+  return <Dashboard user={user} />;
+}
+```
+
+**Now.** The render answers it the way the handler lane does, while the
+response's status is still open: a document request answers the redirect's 3xx
+(`Location`, the location-state cookie, the `{ external: true }` opt-in, the
+basename), and a client navigation answers 204 + `X-RSC-Redirect` (or the
+redirect payload when it carries location state). A declared `errorBoundary()`
+is not consulted: a redirect is control flow, not a failure.
+
+```tsx
+function AccountPage() {
+  const user = getUser();
+  if (!user) throw redirect("/login"); // answers the redirect
+  return <Dashboard user={user} />;
+}
+```
+
+One limit stands, and it is the streaming contract's: an **async** component's
+throw is reported after a Flight response's opening flush, so on a **client
+navigation** it still renders the boundary. A document request answers it,
+because the shell render waits for the component the shell needs. Buffer the
+whole render to close the gap and no navigation streams at all
+(`docs/internal/execution-model.md`, "A component that throws redirect()
+redirects, if the render says so in time").
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
