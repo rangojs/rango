@@ -637,12 +637,13 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       hasStaticSlot = true;
       unwrappedSlots[slotName] = slotHandler.handler;
       if (slotHandler.$$id) {
-        staticSlotIds[slotName] = slotHandler.$$id;
         // Capture namespace prefix for build-time reverse() resolution
+        // (the last-mount identity the collector falls back to).
         if (ctx.namePrefix) {
           (slotHandler as any).$$routePrefix = ctx.namePrefix;
         }
-        stampStaticDefScope(slotHandler);
+        // One artifact per (definition, mount scope), keyed at the DSL position.
+        staticSlotIds[slotName] = stampStaticDefScope(slotHandler);
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -1169,6 +1170,17 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const isStatic = isStaticHandler(handler);
   const unwrappedHandler = isStatic ? handler.handler : handler;
 
+  // One artifact per (definition, mount scope): record this mount's bake scope
+  // (staticArtifactKey) for the entry, plus the namespace prefix the collector
+  // falls back to for a definition no DSL position mounted.
+  let staticArtifactId: string | undefined;
+  if (isStatic && handler.$$id) {
+    if (ctx.namePrefix) {
+      (handler as any).$$routePrefix = ctx.namePrefix;
+    }
+    staticArtifactId = stampStaticDefScope(handler);
+  }
+
   const urlPrefix = getUrlPrefix();
   const entry = {
     ...emptySegmentBase(),
@@ -1182,18 +1194,10 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     ...(isStatic
       ? {
           isStaticPrerender: true as const,
-          ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}),
+          ...(staticArtifactId ? { staticHandlerId: staticArtifactId } : {}),
         }
       : {}),
   } satisfies EntryData;
-
-  // Capture namespace prefix on static handler for build-time reverse() resolution
-  if (isStatic && handler.$$id) {
-    if (ctx.namePrefix) {
-      (handler as any).$$routePrefix = ctx.namePrefix;
-    }
-    stampStaticDefScope(handler);
-  }
 
   // Merge handler.use defaults with explicit use
   const handlerUseFn = resolveHandlerUse(handler);

@@ -37,6 +37,7 @@ import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { StaticBuildContext } from "./prerender.js";
 import type { UseItems, HandlerUseItem } from "./route-types.js";
+import type { ReverseScope } from "./server/context.js";
 import { isCachedFunction } from "./cache/taint.js";
 import { isUnderTestRunner } from "./runtime-env.js";
 
@@ -76,6 +77,89 @@ export interface StaticHandlerDefinition<
   options?: StaticHandlerOptions;
   /** Composable default DSL items merged when the handler is mounted. */
   use?: () => UseItems<HandlerUseItem>;
+  /**
+   * Every DSL position this definition is mounted at, recorded by
+   * stampStaticDefScope (server/context.ts) as the mount is evaluated.
+   * The build collector bakes one artifact per entry here.
+   */
+  $$staticMounts?: StaticMount[];
+}
+
+/**
+ * One DSL mount of a Static() definition: the inputs the bake collector
+ * (vite/discovery/prerender-collection.ts) renders that mount with, plus the
+ * key its artifact is stored under.
+ */
+export interface StaticMount {
+  /** Static-manifest key of this mount's artifact (staticArtifactKey). */
+  key: string;
+  /**
+   * The collector's bake route name: a path() mount's full route name, else the
+   * include name prefix (a layout's or slot's `ctx.routeName` at bake).
+   * undefined only for a definition no DSL position mounted.
+   */
+  routeName: string | undefined;
+  /**
+   * The dot-local resolution scope of a layout() or parallel() mount: the DSL
+   * position's include scope (`getReverseScope()`), the same value the live
+   * entry carries in `reverseScope` and its handler receives through
+   * `withReverseScope`. The bake resolves `.name` through it, so a mount in a
+   * nested include (`a.b`) links into `a.b` and one at root scope links into
+   * the root map — without it the bake read the prefix as a route name and
+   * dropped its last segment (or had no prefix at all at root).
+   *
+   * undefined for a path() mount, whose live handler resolves dot names from
+   * the route name (`createHandlerContext`), and for a definition no DSL
+   * position mounted.
+   */
+  reverseScope: ReverseScope | undefined;
+  /**
+   * getRootScoped() where the mount sits. Reaches the bake's synthetic request
+   * context (`renderStaticSegment`'s `reverse`) for a mount with no
+   * `reverseScope`, and stays out of `staticArtifactKey`.
+   */
+  rootScoped: boolean | undefined;
+  /** The mounting router, whose route map the bake resolves against. */
+  routerId: string | undefined;
+}
+
+/**
+ * Static-manifest key for one mount of a Static() definition.
+ *
+ * A definition mounted twice renders differently per mount: its `.name` links
+ * resolve in the mount's include scope, exactly as the live handler's do. The
+ * store used to be keyed by the definition's `$$id` alone, so both mounts read
+ * the ONE artifact the last mount baked and the other mount's links pointed
+ * into the last mount's module. Keying by (definition, mount scope) gives each
+ * mount its own artifact: `entry.staticHandlerId` carries this key at runtime
+ * and the collector writes the manifest entry under it.
+ *
+ * Only the owning router and the mount's route name compose the key, because
+ * both sides must compute the SAME key from different stores: build discovery
+ * stamps it under the router's own evaluation store, and the runtime rebuilds
+ * the route's entries per request (router/manifest.ts), where the include's
+ * name prefix is the value both paths reproduce exactly. The mount's root scope
+ * stays out because the two paths disagree about it: build discovery evaluates
+ * each include from a root store, so a named include under a transparent one is
+ * stamped scoped, while the request-time rebuild restores the captured parent
+ * scope and stamps it root. Two mounts that share a key therefore share one
+ * artifact — as every mount of a definition did before, so this never regresses
+ * one — and the artifact's links come from `StaticMount.reverseScope`, which the
+ * bake reads and the key does not need to carry.
+ *
+ * Every value is percent-encoded, so a route name or router id containing "::"
+ * cannot compose another mount's key (a collision would serve the wrong
+ * artifact silently).
+ */
+export function staticArtifactKey(
+  handlerId: string,
+  mount: Pick<StaticMount, "routeName" | "routerId">,
+): string {
+  return [
+    handlerId,
+    encodeURIComponent(mount.routerId ?? ""),
+    encodeURIComponent(mount.routeName ?? ""),
+  ].join("::");
 }
 
 // Process-stable fallback id counter (mirrors createHandle/createLoader/Prerender).

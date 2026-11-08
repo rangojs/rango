@@ -503,14 +503,29 @@ export function createPrerenderContext<TEnv>(
  *
  * Returns an InternalHandlerContext where only reverse and use(handle) work.
  * Static handlers have no URL, no params, no pathname — everything else throws.
+ *
+ * `reverseScope` is the layout()/parallel() mount's dot-local scope
+ * (StaticMount.reverseScope), the value the live handler gets through
+ * withReverseScope. A path() mount passes none and keeps route-name resolution,
+ * which is what its live handler does.
  */
 export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
   routeName?: string,
   buildEnv?: TEnv,
   devMode?: boolean,
+  reverseScope?: ReverseScope,
 ): InternalHandlerContext<any, TEnv> {
   const variables: Record<string, any> = {};
+  const unscopedReverse = createReverseFunction(
+    routeMap,
+    routeName,
+    undefined,
+    reverseScope?.rootScoped ??
+      (routeName
+        ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
+        : undefined),
+  );
 
   function throwUnavailable(prop: string): never {
     throw new Error(
@@ -581,14 +596,9 @@ export function createStaticContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: createReverseFunction(
-      routeMap,
-      routeName,
-      undefined,
-      routeName
-        ? isRouteRootScoped(routeName, _getRequestContext()?._routerId)
-        : undefined,
-    ),
+    reverse: reverseScope
+      ? scopeReverse(unscopedReverse, reverseScope)
+      : unscopedReverse,
     _routeName: routeName,
   } as InternalHandlerContext<any, TEnv>;
 }

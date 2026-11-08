@@ -12,6 +12,7 @@ import type { SerializedSegmentData } from "../cache/types.js";
 import type { MiddlewareEntry, MiddlewareFn } from "./middleware.js";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import type { LiveIntercept } from "./prerender-match.js";
+import type { ReverseScope } from "../server/context.js";
 import type { ExtractParams } from "../types/route-config.js";
 import { RSC_ROUTER_BRAND } from "./router-registry.js";
 import type { RangoOptions, RootLayoutProps } from "./router-options.js";
@@ -563,6 +564,7 @@ export interface RangoInternal<
     buildEnv?: any,
     devMode?: boolean,
     rootScoped?: boolean,
+    reverseScope?: ReverseScope,
   ): Promise<{ encoded: string; handles: string } | null>;
 
   /**
