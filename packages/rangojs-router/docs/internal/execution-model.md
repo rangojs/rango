@@ -1047,6 +1047,12 @@ and two router-owned consumers read it back — `error.digest` on the browser.
 The same funnel covers an async handler under `loading()` (its `Response`
 surfaces during serialization too) and a streamed handler's rejection.
 
+`state` has to be JSON-carryable, as the document lane's one-shot cookie
+already requires. The encoder runs inside `onError`, where a throw never
+settles the row and the request hangs instead of answering, so a value JSON
+cannot encode (a BigInt, a cycle, a throwing `toJSON`) is dropped: the target
+still wins.
+
 A redirect is control flow wherever it is seen: the render funnel does not print
 it or report it to `onError`, and neither do `reportRenderError`
 (`ssr/index.tsx`) nor `reportCacheError` (`cache/cache-error.ts`), which

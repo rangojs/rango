@@ -51,9 +51,31 @@ export interface RedirectSignal {
 /**
  * Encode a signal as the digest `onError` returns. `encodeURIComponent` keeps
  * the digest plain ASCII inside the row's JSON string, whatever the URL holds.
+ *
+ * Total by construction: this runs inside React's `onError`, and an `onError`
+ * that throws never settles the row it was called for (the request hangs
+ * instead of answering). `state` is the one field holding app data, so a value
+ * JSON cannot carry (a BigInt, a cycle, a throwing `toJSON`) is dropped rather
+ * than thrown: the target still wins, and the state a document request carries
+ * is JSON-only for the same reason (see `redirect()`'s cookie note).
  */
 export function encodeRedirectDigest(signal: RedirectSignal): string {
-  return REDIRECT_DIGEST_PREFIX + encodeURIComponent(JSON.stringify(signal));
+  let jsonSafe: RedirectSignal = signal;
+  if (signal.state !== undefined) {
+    try {
+      jsonSafe = {
+        ...signal,
+        state: JSON.parse(JSON.stringify(signal.state)) as Record<
+          string,
+          unknown
+        >,
+      };
+    } catch {
+      const { state: _dropped, ...rest } = signal;
+      jsonSafe = rest;
+    }
+  }
+  return REDIRECT_DIGEST_PREFIX + encodeURIComponent(JSON.stringify(jsonSafe));
 }
 
 /** Decode a digest into its signal, or undefined for any other digest. */

@@ -90,6 +90,18 @@ function RawResponseGate(): React.ReactNode {
   throw new Response("raw", { status: 200 });
 }
 
+/**
+ * A state JSON cannot carry (a BigInt here; a cycle or a throwing `toJSON` is
+ * the same): the digest is JSON, and `encodeRedirectDigest` runs inside React's
+ * `onError`, where a throw never settles the row and the request hangs instead
+ * of answering.
+ */
+const BigState = createLocationState<{ n: bigint }>();
+
+function BigStateGate(): React.ReactNode {
+  throw redirect("/login", { state: BigState({ n: 1n }) });
+}
+
 const reported: OnErrorContext[] = [];
 
 function makeRouter(opts: { basename?: string } = {}): Rango<any, any> {
@@ -143,6 +155,15 @@ function makeRouter(opts: { basename?: string } = {}): Rango<any, any> {
           </main>
         ),
         { name: "raw" },
+      ),
+      path(
+        "/big-state",
+        () => (
+          <main>
+            <BigStateGate />
+          </main>
+        ),
+        { name: "bigState" },
       ),
       // A loading() route whose async HANDLER throws the redirect: the
       // handler result is streamed, so the throw reaches the same render
@@ -306,6 +327,18 @@ describe("a component's throw redirect() on a client navigation", () => {
     // Nothing reached the console as a cache failure.
     expect(console.error).not.toHaveBeenCalled();
     expect(reported.map((ctx) => ctx.phase)).not.toContain("cache");
+  });
+
+  it("drops a state JSON cannot carry instead of failing the render", async () => {
+    // JSON.stringify throws on a BigInt, and a throw inside onError hangs the
+    // request: the target must still win.
+    const answer = await serveShellRequest(router, "/big-state", {
+      partial: { from: "/", segments: [] },
+    });
+
+    expect(signalsIn(answer.flight)).toEqual([
+      { to: "http://localhost/login", status: 302 },
+    ]);
   });
 
   it("leaves a Response that is not a redirect an error", async () => {
