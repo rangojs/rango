@@ -1027,14 +1027,14 @@ or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
 ### A component that throws redirect() redirects, if the render says so in time
 
-A page, a layout, any server component React renders: `throw redirect(...)` from
-one of them is control flow, and it answers the response the way the same throw
-from a handler does — a document request with the redirect's 3xx (`Location`,
-the state cookie), a client navigation with 204 + `X-RSC-Redirect`, or the
-redirect payload when it carries location state or the `{ external: true }`
-opt-in. Before, React caught the throw, wrote an error row, and the nearest
-boundary rendered instead: the visitor got an error page where a handler's
-redirect would have taken them somewhere.
+A page, a layout, a parallel slot — any server component the render tree
+reaches: `throw redirect(...)` from one of them is control flow, and it answers
+the response the way the same throw from a handler does — a document request
+with the redirect's 3xx (`Location`, the state cookie), a client navigation with
+204 + `X-RSC-Redirect`, or the redirect payload when it carries location state
+or the `{ external: true }` opt-in. Before, React caught the throw, wrote an
+error row, and the nearest boundary rendered instead: the visitor got an error
+page where a handler's redirect would have taken them somewhere.
 
 The catch: React catches it, so nothing reaches the handler, and the only thing
 the render can do is look at what it reported. That only helps while the
@@ -1089,6 +1089,25 @@ because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
 content, on a document whose shell is out — is out of time the same way.
 
+**An `errorBoundary()` fallback is not in a component's render.** The render
+reaches a declared fallback only where it renders an error segment: a handler's
+or a loader's failure, a thrown action's boundary response, and a no-JS form
+post's boundary render (`matchError` -> `createErrorSegment`,
+`rsc/progressive-enhancement.ts`, `rsc/server-action.ts`). A component's own
+throw is an error row and nothing else — no error segment is built for it, so
+the declared fallback never renders for it and the client shows
+`RootErrorBoundary`'s page instead
+(`e2e/error-boundary.test.ts`, "should show error boundary for server component
+error"). A redirect thrown by a component inside a fallback therefore only ever
+happens in those error-segment lanes, where the window above decides it: a no-JS
+form post answers it, a handler's, a loader's or an action's error segment
+answers it while the document's status is still open (a client navigation gets
+`X-RSC-Redirect`), and a streamed handler's error segment — whose response
+started before the failure — is out of time and reports it as a rendering
+error. There is no lane in which the render renders a fallback after a
+component's own throw: nothing throws from it there, so nothing is answered and
+nothing is reported.
+
 What a late redirect is, and is not: the render reports nothing for a redirect
 the response answers — `printServerError` prints nothing for it and the Flight
 `onError` skips `callOnError` (a handler's redirect reports nothing either). A
@@ -1120,8 +1139,12 @@ declared `errorBoundary()`, strict mode, a prefetch, the cookie and `onResponse`
 stamps, no `onError` for an answered redirect, an action's revalidation render,
 a no-JS form post's re-render and its error-boundary render, the not-found tree
 on a document and on a navigation, the async limit and its `onError` report, the
-streamed-after-shell limit and its `onError` report, and that a streamed
-redirect's 200 is refused by the document cache and by a PPR shell capture),
+streamed-after-shell limit and its `onError` report, the error-boundary fallback
+in every lane that can render one — a component's own error renders none of it,
+a handler's, a loader's and an action's error segment answer its redirect, a
+streamed handler's error segment is out of time and reports it — and that a
+streamed redirect's 200 is refused by the document cache and by a PPR shell
+capture),
 `rsc/__tests__/render-pipeline.test.ts` (the stage's two outcomes: a redirect in
 the opening flush is thrown into the answering lanes and reported by nobody, and
 one reported by a render whose response already committed — the PPR shell HIT

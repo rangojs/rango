@@ -35,9 +35,11 @@ import {
 import { withLocationStateKey } from "../location-state-key.js";
 import {
   cookies,
+  createLoader,
   createLocationState,
   createRouter,
   getRequestContext,
+  loader,
   redirect,
   urls,
   type Middleware,
@@ -151,6 +153,46 @@ function RedirectingBoundary(): React.ReactNode {
   throw redirect("/target");
 }
 
+/**
+ * An `errorBoundary()` fallback whose child throws the redirect, plus a count
+ * of how often the render reached it. The render builds an error segment for a
+ * handler's or a loader's failure only (`matchError` -> `createErrorSegment`),
+ * so this answers whether a component's own throw reaches a declared fallback
+ * at all.
+ */
+let boundaryFallbackRenders = 0;
+
+function CountingRedirectingBoundary(): React.ReactNode {
+  boundaryFallbackRenders += 1;
+  throw redirect("/target");
+}
+
+/** A page component that fails: React renders it, so its throw is an error row. */
+function FailingPage(): React.ReactNode {
+  throw new Error("page boom");
+}
+
+/** A handler that fails: the render builds an error segment for it. */
+function failingHandler(): React.ReactNode {
+  throw new Error("handler boom");
+}
+
+/** A loader that fails: the render builds an error segment for it too. */
+const FailingLoader = createLoader(() => {
+  throw new Error("loader boom");
+});
+
+/** An action that fails: its boundary response renders the fallback. */
+async function failingAction(): Promise<void> {
+  throw new Error("action boom");
+}
+
+/** A streamed handler: it rejects after the response started. */
+async function failingStreamedHandler(): Promise<React.ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  throw new Error("streamed boom");
+}
+
 async function failingFormAction(_form: FormData): Promise<void> {
   throw new Error("form boom");
 }
@@ -226,6 +268,55 @@ function makeHandlerRouter() {
   return createRouter({}).routes(handlerPatterns).use(stamp);
 }
 
+/**
+ * One route per lane that can render a declared fallback, each fallback's child
+ * throwing the redirect: a component's own error (no error segment), a
+ * handler's, a loader's and an action's error (an error segment before the
+ * flush), and a streamed handler's error (an error segment after the response
+ * started).
+ */
+function boundaryFallbackRouter(onError: (error: unknown) => void) {
+  return createRouter({ onError }).routes(
+    urls(({ path, errorBoundary, loader, loading }) => [
+      path("/start", () => <p>start</p>, { name: "start" }),
+      path("/target", () => <p>target-page</p>, { name: "target" }),
+      path(
+        "/boom",
+        () => <FailingPage />,
+        { name: "boom" },
+        () => [errorBoundary(() => <CountingRedirectingBoundary />)],
+      ),
+      path("/handler-boom", failingHandler, { name: "handlerBoom" }, () => [
+        errorBoundary(() => <CountingRedirectingBoundary />),
+      ]),
+      path(
+        "/loader-boom",
+        () => <p>page</p>,
+        { name: "loaderBoom" },
+        () => [
+          loader(FailingLoader),
+          errorBoundary(() => <CountingRedirectingBoundary />),
+        ],
+      ),
+      path(
+        "/action-boom",
+        () => <p>page</p>,
+        { name: "actionBoom" },
+        () => [errorBoundary(() => <CountingRedirectingBoundary />)],
+      ),
+      path(
+        "/streamed-boom",
+        failingStreamedHandler,
+        { name: "streamedBoom" },
+        () => [
+          loading(<p>pending</p>),
+          errorBoundary(() => <CountingRedirectingBoundary />),
+        ],
+      ),
+    ]),
+  );
+}
+
 function documentRequest(path: string, basename?: string) {
   return serveShellRequest(makeRouter(basename), path, {
     cacheStore: new MemorySegmentCacheStore(),
@@ -251,6 +342,7 @@ function stamps(response: Response) {
 beforeEach(() => {
   layoutRedirects = false;
   slotRedirects = false;
+  boundaryFallbackRenders = 0;
   resetShellTestState();
 });
 
@@ -680,5 +772,109 @@ describe("a component's redirect (serveShellRequest)", () => {
     // the boundary the visitor is shown.
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
+  });
+
+  it("limit: a component's own error renders no declared fallback, so a redirect in one answers nothing", async () => {
+    // Pinned, not wanted: the render reaches a declared fallback only where it
+    // renders an error segment (a handler's or a loader's failure). A
+    // component's throw is an error row and nothing else, so no fallback
+    // renders for it — the client's RootErrorBoundary shows the error page —
+    // and a redirect thrown from inside one has no render to answer or report
+    // it. See docs/internal/execution-model.md, "A component that throws
+    // redirect() redirects, if the render says so in time".
+    const onError = vi.fn();
+    const router = boundaryFallbackRouter(onError);
+
+    const document = await serveShellRequest(router, "/boom", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(document.response.status).toBe(200);
+    expect(document.response.headers.get("Location")).toBeNull();
+    expect(document.flight).toContain('"digest"');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
+
+    onError.mockClear();
+    const nav = await serveShellRequest(router, "/boom", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(nav.response.status).toBe(200);
+    expect(nav.response.headers.get("X-RSC-Redirect")).toBeNull();
+    expect(nav.flight).toContain('"digest"');
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
+
+    // Nothing rendered the fallback, so nothing threw from it: the redirect is
+    // not a value the render ever sees.
+    expect(boundaryFallbackRenders).toBe(0);
+  });
+
+  it("a handler's, a loader's or an action's error renders the fallback, so its redirect is answered", async () => {
+    // The lanes whose error segment renders before the flush: a synchronous
+    // handler, a loader, and an action's boundary response.
+    for (const route of ["/handler-boom", "/loader-boom"]) {
+      const onError = vi.fn();
+      const router = boundaryFallbackRouter(onError);
+
+      const document = await serveShellRequest(router, route, {
+        cacheStore: new MemorySegmentCacheStore(),
+      });
+      expect(document.response.status).toBe(302);
+      expect(document.response.headers.get("Location")).toBe("/target");
+
+      const nav = await serveShellRequest(router, route, {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: "/start" },
+      });
+      // The header steers the browser whatever status the error lane answers
+      // (browser/navigation-client.ts).
+      expect(nav.response.headers.get("X-RSC-Redirect")).toBe(
+        "http://localhost/target",
+      );
+      // Answered is control flow: the render reports it to nobody.
+      expect(
+        onError.mock.calls.filter(
+          (call) => (call[0] as { phase?: string }).phase === "rendering",
+        ),
+      ).toEqual([]);
+    }
+
+    const action = await serveShellRequest(
+      boundaryFallbackRouter(vi.fn()),
+      "/action-boom",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+        action: {
+          ref: failingAction,
+          id: "component-redirect#failingAction",
+          args: [],
+        },
+      },
+    );
+    expect(action.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+    expect(boundaryFallbackRenders).toBeGreaterThan(0);
+  });
+
+  it("limit: a streamed handler's error segment is out of time, so its fallback's redirect is reported, not answered", async () => {
+    // Pinned, not wanted: loading() starts the response before the handler
+    // settles, so the fallback renders after the status committed. The
+    // redirect is a late one: answered by nobody, reported as a rendering
+    // error beside the handler's own failure.
+    const onError = vi.fn();
+    const router = boundaryFallbackRouter(onError);
+
+    const document = await serveShellRequest(router, "/streamed-boom", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(document.response.status).toBe(200);
+    expect(document.response.headers.get("Location")).toBeNull();
+    expect(document.response.headers.get("X-RSC-Redirect")).toBeNull();
+    expect(boundaryFallbackRenders).toBeGreaterThan(0);
+    expect(
+      onError.mock.calls.map((call) => (call[0] as { phase?: string }).phase),
+    ).toEqual(["handler", "rendering"]);
   });
 });
