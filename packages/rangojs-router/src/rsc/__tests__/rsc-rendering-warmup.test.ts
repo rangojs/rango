@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { handleRscRendering } from "../rsc-rendering.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 import {
   createRequestContext,
   runWithRequestContext,
@@ -49,7 +50,7 @@ function makeStubCtx(warmupEnabled: boolean): {
     callOnError: vi.fn(),
     renderToReadableStream: (payload: RscPayload) => {
       captured.payload = payload;
-      return new ReadableStream();
+      return emptyFlightStream();
     },
   } as unknown as HandlerContext<unknown>;
   return { ctx, captured };

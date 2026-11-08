@@ -918,6 +918,17 @@ export interface RequestContext<
   _renderErrors?: unknown[];
 
   /**
+   * @internal The first redirect a component threw while this request's render
+   * ran (rsc/render-redirect.ts): the thrown `Response`, recorded before React
+   * writes its error row, so the response can answer it while its status is
+   * still open. A document answers it at its shell, a Flight response at its
+   * opening flush; a redirect reported later is out of time and keeps
+   * rendering the boundary. A derived render pass resets it, like
+   * `_renderErrors`: its render is not the foreground's.
+   */
+  _renderRedirect?: Response;
+
+  /**
    * @internal Rejections of streamed (loading()) handlers that were recovered
    * into a declared errorBoundary()/notFoundBoundary() fallback, by segment id.
    * The recovered promise resolves, so Flight reports nothing; cacheRoute

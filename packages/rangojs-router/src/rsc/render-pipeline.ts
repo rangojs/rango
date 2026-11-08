@@ -6,6 +6,7 @@ import { printServerError } from "../server/print-server-error.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
+import { recordRenderRedirect } from "./render-redirect.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
@@ -162,6 +163,10 @@ function createFlightStage<TEnv>(
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      // A component that throws redirect() is control flow, not a failure: the
+      // response answers it if it can still say so (rsc/render-redirect.ts).
+      // Recorded before React writes the error row that carries it.
+      recordRenderRedirect(requestContext, error);
       renderErrors?.push(error);
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(

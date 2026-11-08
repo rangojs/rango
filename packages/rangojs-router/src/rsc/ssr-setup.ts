@@ -25,6 +25,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import { WIRE } from "../wire-params.js";
+import { throwIfRenderRedirect } from "./render-redirect.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -120,48 +121,63 @@ export function createSsrHtmlStage<TEnv>(
     const renderErrors = reqCtx?._renderErrors;
     const location = renderedLocation(reqCtx, options.url);
     return {
-      render: () =>
-        // search: the LIVE request's query string, threaded out-of-band into
-        // the SSR pass so useSearchParams sees real values during document
-        // renders. Deliberately not payload metadata: cached/prerendered
-        // payloads replay captured metadata, and search is not route
-        // identity — it must always come from the request being served.
-        ssrModule.renderHTML(flight.stream, {
-          ...options.render,
-          streamMode,
-          search: location.search,
-          // origin: same out-of-band channel — seeds the SSR store location
-          // so origin-dependent markup (Link's data-external) agrees with the
-          // browser's window.location across hydration.
-          origin: location.origin,
-          // A component that throws inside a Suspense boundary leaves an
-          // errored boundary in a completed document; the document cache
-          // reads the list before storing it. renderHTML printed what Fizz
-          // reports, or it was printed where it originated (a loader's or a
-          // Flight copy), so the writer that refuses it prints nothing more.
-          onError: (error) => {
-            renderErrors?.push(error);
-            markServerErrorPrinted(error, reqCtx);
-          },
-          // Reported once, phase "rendering", only when the error started in
-          // the SSR render: a copy (a loader's masked rebuild, a Flight error,
-          // a payload failure) was reported with its original where it started,
-          // and a loader's notFound()/redirect() is control flow. Marked
-          // printed, so the handler's catch neither reports nor prints what
-          // dev rethrows.
-          onShellError: ({ error, originated, status, location }) => {
-            if (status !== undefined) reqCtx?._setStatus(status);
-            if (location) reqCtx?.res.headers.set("Location", location);
-            markServerErrorPrinted(error, reqCtx);
-            if (!originated) return;
-            options.ctx.callOnError(error, "rendering", {
-              request: options.request,
-              url: options.url,
-              env: options.env,
-              handledByBoundary: false,
-            });
-          },
-        }),
+      render: async () => {
+        let body: BodyInit | null;
+        try {
+          // search: the LIVE request's query string, threaded out-of-band into
+          // the SSR pass so useSearchParams sees real values during document
+          // renders. Deliberately not payload metadata: cached/prerendered
+          // payloads replay captured metadata, and search is not route
+          // identity — it must always come from the request being served.
+          body = await ssrModule.renderHTML(flight.stream, {
+            ...options.render,
+            streamMode,
+            search: location.search,
+            // origin: same out-of-band channel — seeds the SSR store location
+            // so origin-dependent markup (Link's data-external) agrees with the
+            // browser's window.location across hydration.
+            origin: location.origin,
+            // A component that throws inside a Suspense boundary leaves an
+            // errored boundary in a completed document; the document cache
+            // reads the list before storing it. renderHTML printed what Fizz
+            // reports, or it was printed where it originated (a loader's or a
+            // Flight copy), so the writer that refuses it prints nothing more.
+            onError: (error) => {
+              renderErrors?.push(error);
+              markServerErrorPrinted(error, reqCtx);
+            },
+            // Reported once, phase "rendering", only when the error started in
+            // the SSR render: a copy (a loader's masked rebuild, a Flight error,
+            // a payload failure) was reported with its original where it started,
+            // and a loader's notFound()/redirect() is control flow. Marked
+            // printed, so the handler's catch neither reports nor prints what
+            // dev rethrows.
+            onShellError: ({ error, originated, status, location }) => {
+              if (status !== undefined) reqCtx?._setStatus(status);
+              if (location) reqCtx?.res.headers.set("Location", location);
+              markServerErrorPrinted(error, reqCtx);
+              if (!originated) return;
+              options.ctx.callOnError(error, "rendering", {
+                request: options.request,
+                url: options.url,
+                env: options.env,
+                handledByBoundary: false,
+              });
+            },
+          });
+        } catch (error) {
+          // Dev rethrows a shell error to the host so Vite's overlay shows it;
+          // the redirect the render reported still answers it, as a loader's
+          // does (ssr/shell-error-document.tsx).
+          throwIfRenderRedirect(reqCtx);
+          throw error;
+        }
+        // The shell is ready, so a throw that failed it, and one the Flight
+        // render's opening flush carried, are both known: a component's
+        // redirect is answered while the status is still open.
+        throwIfRenderRedirect(reqCtx);
+        return body;
+      },
       ...(options.init && { init: options.init }),
     };
   };

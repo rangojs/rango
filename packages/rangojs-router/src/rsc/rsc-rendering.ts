@@ -43,6 +43,10 @@ import {
 } from "./render-pipeline.js";
 import { markPrefetchOnRenderError } from "./prefetch-render-error.js";
 import {
+  holdOpeningRedirect,
+  throwIfRenderRedirect,
+} from "./render-redirect.js";
+import {
   createRoutineTrace,
   handoff,
   runRoutine,
@@ -1198,9 +1202,31 @@ function renderPreparedRscResponse<TEnv>(
           }),
         },
   );
+  // A component's redirect answers the response while its status is still
+  // open (rsc/render-redirect.ts). A document answers it in its html stage,
+  // once the shell is ready. A Flight response has no shell, so its window is
+  // the render's opening flush: hold the body until it, then throw the
+  // redirect into the lanes that answer a handler's throw. A redirect a later
+  // chunk carries is out of time and keeps rendering the boundary.
+  const settled = isFlightResponse
+    ? rendered.then(async (response) => {
+        if (!response.body) return response;
+        const body = await holdOpeningRedirect(reqCtx, response.body);
+        return new Response(body, response);
+      })
+    : rendered.then(
+        (response) => {
+          throwIfRenderRedirect(reqCtx);
+          return response;
+        },
+        (error: unknown) => {
+          throwIfRenderRedirect(reqCtx);
+          throw error;
+        },
+      );
   // A prefetch whose render reported an error is not kept (#1170).
-  if (!isPrefetchKind(reqCtx._requestKind) || !isPartial) return rendered;
-  return rendered.then((response) =>
+  if (!isPrefetchKind(reqCtx._requestKind) || !isPartial) return settled;
+  return settled.then((response) =>
     markPrefetchOnRenderError(response, reqCtx._renderErrors ?? []),
   );
 }
