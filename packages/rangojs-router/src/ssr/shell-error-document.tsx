@@ -6,7 +6,8 @@
  * server paths in production).
  *
  * The answer, in order:
- * - a loader `redirect()` with no state: a real 3xx (nothing has been sent);
+ * - a `redirect()` with no state, thrown by a loader or during the render: a
+ *   real 3xx (nothing has been sent);
  * - the payload decoded and the tree built: a recovery document carrying the
  *   same Flight payload, which the browser entry renders with createRoot
  *   (`data-rango-ssr-error`), so the router's client boundaries run as on a
@@ -16,6 +17,7 @@
 import React from "react";
 import { isDataNotFoundError } from "../errors.js";
 import { loaderRedirectOf } from "../decode-loader-results.js";
+import { renderedRedirectFromError } from "../rendered-redirect.js";
 import { ThemeScript } from "../theme/ThemeScript.js";
 import type { ResolvedThemeConfig } from "../theme/types.js";
 import type { SSRDependencies } from "./index.js";
@@ -102,10 +104,16 @@ export async function answerShellError(
   flight: ReadableStream<Uint8Array> | undefined,
   nonce: string | undefined,
 ): Promise<ShellErrorAnswer> {
+  // Two carriers reach this point. A loader's redirect arrives as the marker
+  // decode-loader-results.ts plants on the error it throws at the read site. A
+  // redirect thrown by a component (or by a handler streamed behind loading())
+  // arrives as the digest its Flight error row carries (rendered-redirect.ts):
+  // Fizz rethrows the row's decoded error, digest included.
+  //
   // A redirect with state keeps the recovery document: the state rides the
   // history entry the client replace writes, which a 3xx cannot. Without
-  // this branch every loader redirect takes the client replace.
-  const redirect = loaderRedirectOf(error);
+  // this branch every redirect takes the client replace.
+  const redirect = loaderRedirectOf(error) ?? renderedRedirectFromError(error);
   if (redirect && redirect.state === undefined) {
     flight?.cancel().catch(() => {});
     return {

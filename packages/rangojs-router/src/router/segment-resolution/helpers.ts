@@ -23,6 +23,7 @@ import {
   getRequestContext,
 } from "../../server/request-context.js";
 import { DefaultErrorFallback } from "../../default-error-boundary.js";
+import { isRedirectResponse } from "../../response-utils.js";
 import type { EntryData } from "../../server/context";
 import type {
   ResolvedSegment,
@@ -95,14 +96,18 @@ export function handleHandlerResult(
 
 /**
  * Dev-only: warn when a handler on a route that declares loading() resolves or
- * rejects with a Response (e.g. redirect()).
+ * rejects with a Response that is not a redirect.
  *
  * On a non-loading route a returned/thrown Response short-circuits to an HTTP
  * redirect. But when the route declares loading(), the handler result is
  * streamed (not awaited at the resolution boundary), so the Response surfaces
  * only during RSC serialization and is rendered into the stream instead of
- * becoming a 302/308 — a silent failure mode. Issue redirects from middleware,
- * a loader, or a synchronous handler return instead. Compiled out in production.
+ * becoming a 302/308 — a silent failure mode. Issue it from middleware, a
+ * loader, or a synchronous handler return instead.
+ *
+ * A `redirect()` is the exception: the render recognises it and answers it
+ * (rendered-redirect.ts), so only a raw-content Response is a swallowed one.
+ * Compiled out in production.
  */
 export function warnOnStreamedResponse(
   result: Promise<unknown>,
@@ -115,12 +120,12 @@ export function warnOnStreamedResponse(
   // covered. Each handler is an independent observer; it does not consume the
   // rejection for the trackHandler/observeStreamedHandler chains.
   const check = (value: unknown) => {
-    if (value instanceof Response) {
+    if (value instanceof Response && !isRedirectResponse(value)) {
       console.warn(
-        `[rango] Handler for "${entryId}" returned a Response (e.g. ` +
-          `redirect()), but it declares loading(): the Response is rendered ` +
-          `into the RSC stream, NOT sent as an HTTP redirect. Issue redirects ` +
-          `from middleware, a loader, or a synchronous handler return.`,
+        `[rango] Handler for "${entryId}" returned a Response, but it declares ` +
+          `loading(): the Response is rendered into the RSC stream, NOT sent ` +
+          `as an HTTP redirect. Issue it from middleware, a loader, or a ` +
+          `synchronous handler return.`,
       );
     }
   };

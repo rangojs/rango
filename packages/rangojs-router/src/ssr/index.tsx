@@ -18,6 +18,7 @@ import {
   isLoaderSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
+import { renderedRedirectFromError } from "../rendered-redirect.js";
 import {
   answerShellError,
   type ShellErrorRecovery,
@@ -1023,7 +1024,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // not decode without a Flight error row (no `digest`: the stream broke).
       // A Flight copy printed with its original in the Flight render. The
       // handler's catch skips what the html stage marked printed.
-      if (!isLoaderSignalError(error)) reportRenderError(onError, error);
+      if (!isControlFlow(error)) reportRenderError(onError, error);
       if (originatedHere(error) && !reportedByFizz?.has(error)) {
         console.error(error);
       }
@@ -1058,7 +1059,20 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
  * error as production does.
  */
 function shellErrorReachesHost(error: unknown): boolean {
-  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
+  return process.env.NODE_ENV !== "production" && !isControlFlow(error);
+}
+
+/**
+ * A shell error the router answers rather than reports: a loader's
+ * notFound()/redirect() (its marker), or a redirect a render threw (the
+ * digest its Flight error row carries, rendered-redirect.ts). Both are
+ * control flow on every lane, answered as in production in dev too, and
+ * neither is reported to onError nor printed.
+ */
+function isControlFlow(error: unknown): boolean {
+  return (
+    isLoaderSignalError(error) || renderedRedirectFromError(error) !== undefined
+  );
 }
 
 /**

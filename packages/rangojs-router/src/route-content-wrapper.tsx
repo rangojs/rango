@@ -10,6 +10,7 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { renderedRedirectFromError } from "./rendered-redirect.js";
 import { Defer, readDefer } from "./browser/defer.js";
 import type { BoundaryAudit } from "./suspense-audit.js";
 import {
@@ -37,6 +38,10 @@ import { shallowEqual } from "./browser/react/shallow-equal.js";
  *   client-side (the HTTP status was already set opportunistically by the
  *   producer when the rejection won the flush race).
  * - LOADER_REDIRECT (redirect()): mounts LoaderRedirect, which navigates.
+ *
+ * A redirect() thrown during the render has no marker: it reaches the browser
+ * as a Flight error row whose digest names it (rendered-redirect.ts). It is
+ * the same control flow, so it mounts the same LoaderRedirect.
  *
  * Errors without any marker rethrow to the app's own boundaries.
  */
@@ -78,7 +83,8 @@ export class StreamedLoaderErrorBoundary extends Component<
       const marked = error as Record<PropertyKey, unknown>;
       const notFoundFallback = marked[LOADER_NOT_FOUND_FALLBACK];
       if (notFoundFallback !== undefined) return notFoundFallback as ReactNode;
-      const redirect = marked[LOADER_REDIRECT];
+      const redirect =
+        marked[LOADER_REDIRECT] ?? renderedRedirectFromError(error);
       if (redirect !== undefined) {
         const r = redirect as { to: string; state?: Record<string, unknown> };
         return <LoaderRedirect to={r.to} state={r.state} />;

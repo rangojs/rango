@@ -2,6 +2,8 @@
 
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+import { renderedRedirectFromError } from "./rendered-redirect.js";
 
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
@@ -250,6 +252,15 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A redirect() a component threw during the render is control flow, not
+      // a failure: its Flight error row carries the digest that names it
+      // (rendered-redirect.ts). Navigate, as a loader redirect does, instead
+      // of showing the error page a signed-out visitor reported.
+      const redirect = renderedRedirectFromError(this.state.error);
+      if (redirect) {
+        return <LoaderRedirect to={redirect.to} state={redirect.state} />;
+      }
+
       const errorInfo = {
         message: this.state.error.message,
         name: this.state.error.name,

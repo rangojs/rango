@@ -3,6 +3,10 @@ import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import {
+  renderedRedirectDigest,
+  renderedRedirectOf,
+} from "../rendered-redirect.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -162,7 +166,23 @@ function createFlightStage<TEnv>(
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      // Every render error refuses the writers that read this list (the
+      // document cache, a ppr capture, a prerender warm) and evicts a prefetch.
+      // A redirect stays listed too: it can depend on the request (a session),
+      // so nothing may store this render.
       renderErrors?.push(error);
+      // A redirect() a component (or a handler streamed behind loading())
+      // throws is control flow, as one a loader throws is: the document answers
+      // it (answerShellError reads the digest below) and the browser navigates
+      // (the router's boundaries read it). Never reported, never printed.
+      const redirect = renderedRedirectOf(error, {
+        origin:
+          requestContext?.originalUrl?.origin ??
+          requestContext?.url.origin ??
+          "",
+        basename: requestContext?._basename,
+      });
+      if (redirect) return renderedRedirectDigest(redirect);
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,

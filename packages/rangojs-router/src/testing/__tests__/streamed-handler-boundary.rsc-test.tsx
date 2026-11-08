@@ -134,17 +134,19 @@ describe("streamed handler declared boundary (serveShellRequest)", () => {
     expect(nav.flight).toContain("declared-error");
   });
 
-  it("a redirect thrown from a streamed handler stays an error row in the stream", async () => {
+  it("a redirect thrown from a streamed handler is answered, not swallowed", async () => {
     const { router } = makeRouter();
     const res = await serveShellRequest(router, "/redirects", {
       cacheStore: new MemorySegmentCacheStore(),
     });
-    // Unchanged by the boundary lane: no HTTP redirect after flush, the
-    // rejection rides the stream as an error row (client RootErrorBoundary).
+    // Not recovered into the declared boundary: it is control flow. The
+    // response is already streaming, so the target rides the error row's
+    // digest and the browser navigates (rendered-redirect.ts).
     expect(res.response.status).toBe(200);
     expect(res.response.headers.get("location")).toBeNull();
     expect(res.flight).not.toContain("declared-error");
-    expect(res.flight).toMatch(/^\d+:E\{/m);
+    expect(res.flight).toContain("rango:redirect;");
+    expect(res.flight).toContain('\\"to\\":\\"http://localhost/ok\\"');
   });
 
   it("a healthy streamed handler renders unchanged", async () => {
