@@ -725,6 +725,17 @@ a hard load of the target URL renders the full route.
   elsewhere (a root route that a group `/:slug` under `/:locale?` also
   matches) never renders as a group route: the server ships the competing
   routes with the group.
+- **A server layout's `revalidate()` above the group can decline the frame.**
+  The frame keeps everything above the group as it is on screen. When a rule
+  there re-renders its segment for the destination (a category template whose
+  rule compares `category`, on `/c/audio` to `/p/1`), the click gets no frame
+  and the page on screen stays until the answer commits, so the product
+  never shows under the category hero. The server works out which
+  destination params those rules read and ships them with the page; a click
+  that keeps them (a product page to the cart page) still presents at once. A rule that
+  returns `true` outright, or reads `nextUrl`, `routeName` or `toRouteName`,
+  declines every cross-route frame from that page: compare params when you
+  can.
 - **Two parallel loaders with equal latency look "SSR'd" together.** Loaders
   kick off in parallel, so awaiting one (`ssr: "await"`) gives
   same-or-faster siblings time to settle coincidentally. Do not read "it was

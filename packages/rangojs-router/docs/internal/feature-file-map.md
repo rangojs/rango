@@ -197,6 +197,12 @@ The client descriptor and both runtime projections are owned by:
   local presentation, loading UI, outlet pending registration, and the group
   layout/intercept slot wrappers. No revalidation decision is made in the
   browser.
+- [`client-urls/chrome-reads.ts`](../../src/client-urls/chrome-reads.ts) - what
+  the `revalidate()` rules of the server segments above a group read of the
+  destination (`chromeReadsOf`, asked by the group route's handler in
+  `server-projection.ts` and shipped as ClientUrlsRoot's `chrome` prop), and
+  the browser check `beginClientUrlNavigation` declines a frame by
+  (`chromeKeeps`).
 - [`client-urls/hoisted-revalidate.ts`](../../src/client-urls/hoisted-revalidate.ts) -
   the `{ $$rangoRevalidate: "<key>" }` marker the browser and SSR copies of a
   "use client" module keep in place of a loader's `revalidate()` predicate.

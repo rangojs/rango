@@ -295,6 +295,80 @@ export function runKeptLayoutSourceTests(
     }
   });
 
+  // The optimistic clientUrls() frame presents the destination under the
+  // server layouts on screen. From a category page the template's rule
+  // re-renders the template for a product, so a frame would show the product
+  // under the category hero until the answer commits: the click gets none.
+  test("a product clicked on a category page keeps the category page, not a frame under its hero, while it loads", async ({
+    page,
+  }) => {
+    await open(page, options.url(`${two}/c/audio`));
+    await expect(page.getByTestId("kls-hero")).toHaveText("hero:audio");
+
+    // Every DOM change from now on: was product 1 ever under the hero?
+    await page.evaluate(() => {
+      const w = window as unknown as { __klsUnderHero?: boolean };
+      w.__klsUnderHero = false;
+      const check = () => {
+        const shown = document.querySelector('[data-testid="kls-page"]');
+        if (
+          shown?.textContent === "product:1" &&
+          document.querySelector('[data-testid="kls-hero"]')
+        ) {
+          w.__klsUnderHero = true;
+        }
+      };
+      new MutationObserver(check).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    });
+
+    const p1 = await holdPartials(page, `${two}/p/1`);
+    try {
+      await plainClick(page, `${two}/p/1`);
+      await p1.started;
+      // While the answer is held, the category page stays.
+      await page.waitForTimeout(300);
+      await expect(page.getByTestId("kls-page")).toHaveText("plp:audio");
+      await expect(page.getByTestId("kls-hero")).toHaveText("hero:audio");
+    } finally {
+      p1.release();
+    }
+    await expect(page).toHaveURL(new RegExp(`${two}/p/1$`));
+    await expect(page.getByTestId("kls-page")).toHaveText("product:1");
+    await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () =>
+          (window as unknown as { __klsUnderHero?: boolean }).__klsUnderHero,
+      ),
+    ).toBe(false);
+  });
+
+  // From a product page the rule keeps the template for /cart (no category
+  // either side): the frame stays.
+  test("/cart clicked on a product page presents at once while it loads", async ({
+    page,
+  }) => {
+    await open(page, options.url(`${two}/p/1`));
+
+    const cart = await holdPartials(page, `${two}/cart`);
+    try {
+      await plainClick(page, `${two}/cart`);
+      await cart.started;
+      await expect(page.getByTestId("kls-page")).toHaveText("cart");
+      await expect(page.getByTestId("kls-hero")).toHaveCount(0);
+      // A frame: the URL commits with the answer.
+      await expect(page).toHaveURL(new RegExp(`${two}/p/1$`));
+    } finally {
+      cart.release();
+    }
+    await expect(page).toHaveURL(new RegExp(`${two}/cart$`));
+    await expect(page.getByTestId("kls-page")).toHaveText("cart");
+  });
+
   // The locale rule above paginated pages ("/kept-layout-source/i18n").
   const i18n = "/kept-layout-source/i18n";
 
