@@ -207,6 +207,7 @@ export const routes = {
   "ctxClean.index": "/ctx-clean",
   "ctxClean.source": "/ctx-clean/source",
   delayedBreadcrumbs: "/delayed-breadcrumbs",
+  "devReloadSplit.index": "/dev-reload-split",
   "dhNav.actionDeferred": "/dh-nav/action-deferred",
   "dhNav.deferred": "/dh-nav/deferred",
   "dhNav.other": "/dh-nav/other",

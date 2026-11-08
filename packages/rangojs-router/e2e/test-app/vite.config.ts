@@ -39,6 +39,53 @@ function parityAliasPlugin(): Plugin {
   };
 }
 
+const DEV_RELOAD_SPLIT_EVENT = "rango-e2e:dev-reload-split";
+
+/**
+ * e2e/dev-reload-handoff.test.ts, behind RANGO_E2E_DEV_RELOAD_SPLIT=1. The
+ * first load of src/dev-reload-split-probe.ts, during a request, asks for the
+ * dep optimizer's RSC reload (invalidateAll + full-reload) and resumes after
+ * the runner's clear, so the request runs split across two module copies.
+ * Later loads are empty.
+ */
+function devReloadSplitProbe(): Plugin | false {
+  if (process.env.RANGO_E2E_DEV_RELOAD_SPLIT !== "1") return false;
+  const probe = path.resolve(__dirname, "src/dev-reload-split-probe.ts");
+  const reloadCode = [
+    "if (import.meta.hot) {",
+    "  await new Promise((resolve) => {",
+    // The runner clears its modules right after these listeners return.
+    '    import.meta.hot.on("vite:beforeFullReload", () => setTimeout(resolve, 0));',
+    `    import.meta.hot.send(${JSON.stringify(DEV_RELOAD_SPLIT_EVENT)});`,
+    "  });",
+    "}",
+    "export {};",
+    "",
+  ].join("\n");
+  let fired = false;
+  return {
+    name: "test-dev-reload-split-probe",
+    apply: "serve",
+    configureServer(server) {
+      const rsc = server.environments.rsc;
+      rsc.hot.on(DEV_RELOAD_SPLIT_EVENT, () => {
+        if (fired) return;
+        fired = true;
+        server.config.logger.info(
+          "[rango-e2e] dev-reload-split: full reload sent",
+        );
+        rsc.moduleGraph.invalidateAll();
+        rsc.hot.send({ type: "full-reload", path: "*" });
+      });
+    },
+    transform(_code, id) {
+      if (this.environment.name !== "rsc") return;
+      if (path.resolve(id.split("?", 1)[0]!) !== probe) return;
+      return { code: fired ? "export {};\n" : reloadCode, map: null };
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   cacheDir:
     process.env.RANGO_E2E_VITE_CACHE_DIR ?? "node_modules/.vite-e2e-test-app",
@@ -51,6 +98,7 @@ export default defineConfig(({ command }) => ({
       },
     }),
     parityAliasPlugin(),
+    devReloadSplitProbe(),
     react(),
     rango(headScripts ? { headScripts } : undefined),
     devtoolsJson(),
