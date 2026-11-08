@@ -1089,23 +1089,41 @@ because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
 content, on a document whose shell is out — is out of time the same way.
 
-**An `errorBoundary()` fallback is not in a component's render.** The render
-reaches a declared fallback only where it renders an error segment: a handler's
-or a loader's failure, a thrown action's boundary response, and a no-JS form
-post's boundary render (`matchError` -> `createErrorSegment`,
-`rsc/progressive-enhancement.ts`, `rsc/server-action.ts`). A component's own
-throw is an error row and nothing else — no error segment is built for it, so
-the declared fallback never renders for it and the client shows
-`RootErrorBoundary`'s page instead
-(`e2e/error-boundary.test.ts`, "should show error boundary for server component
-error"). A redirect thrown by a component inside a fallback therefore only ever
-happens in those error-segment lanes, where the window above decides it: a no-JS
-form post answers it, a handler's, a loader's or an action's error segment
-answers it while the document's status is still open (a client navigation gets
-`X-RSC-Redirect`), and a streamed handler's error segment — whose response
-started before the failure — is out of time and reports it as a rendering
-error. There is no lane in which the render renders a fallback after a
-component's own throw: nothing throws from it there, so nothing is answered and
+**A declared `errorBoundary()` fallback renders in every lane where the render
+reaches an error — and a component React renders is not one of them.** Which
+lane it is decides whether a redirect thrown from inside the fallback can be
+answered:
+
+- a component **the segment walk invokes** — a page passed to `path()` directly,
+  a layout body, a slot body — throws an error while resolving, so
+  `catchSegmentError` (`router/segment-resolution/helpers.ts`) builds an error
+  segment and the nearest declared fallback renders. A `Response` is re-thrown
+  before that (`resolveWithErrorBoundary`), so a redirect from the same
+  component is answered, never turned into an error segment;
+- a **handler's** failure builds an error segment the same way (`matchError` ->
+  `createErrorSegment`, `rsc/progressive-enhancement.ts`,
+  `rsc/server-action.ts`), and a **loader's** renders its fallback directly
+  through `renderErrorFallback` (`router/loader-resolution.ts`). A thrown
+  action's boundary response and a no-JS form post's boundary render are those
+  lanes too;
+- a **streamed handler's** rejection renders its fallback in
+  `router/segment-resolution/streamed-handler-boundary.ts`, after the response
+  started.
+
+The window above decides each one: every lane but the last answers the fallback's
+redirect while the status is still open — a document gets the 3xx, a client
+navigation gets `X-RSC-Redirect` beside the error lane's own `500`, which
+`setResponseStatus` already wrote. The streamed handler's failure is out of
+time, so its fallback's redirect is answered by nobody and reported as a
+rendering error.
+
+A component **React renders** — the element a handler returned, a child element
+— is the one lane with no fallback at all: its throw is an error row and nothing
+else, no error segment is built for it, so the declared fallback never renders
+(a counter in `testing/__tests__/component-redirect.rsc-test.tsx` reads 0) and
+the client shows `RootErrorBoundary`'s page (`e2e/error-boundary.test.ts`,
+"should show error boundary for server component error", a route that declares
+no boundary). Nothing throws from a fallback there, so nothing is answered and
 nothing is reported.
 
 What a late redirect is, and is not: the render reports nothing for a redirect
@@ -1140,11 +1158,11 @@ stamps, no `onError` for an answered redirect, an action's revalidation render,
 a no-JS form post's re-render and its error-boundary render, the not-found tree
 on a document and on a navigation, the async limit and its `onError` report, the
 streamed-after-shell limit and its `onError` report, the error-boundary fallback
-in every lane that can render one — a component's own error renders none of it,
-a handler's, a loader's and an action's error segment answer its redirect, a
-streamed handler's error segment is out of time and reports it — and that a
-streamed redirect's 200 is refused by the document cache and by a PPR shell
-capture),
+in every lane that can render one — a component React renders gets none of it;
+a page the walk invokes, a layout body, a slot body, and a handler's, a loader's
+or an action's error answer its redirect; a streamed handler's is out of time
+and reports it — and that a streamed redirect's 200 is refused by the document
+cache and by a PPR shell capture),
 `rsc/__tests__/render-pipeline.test.ts` (the stage's two outcomes: a redirect in
 the opening flush is thrown into the answering lanes and reported by nobody, and
 one reported by a render whose response already committed — the PPR shell HIT

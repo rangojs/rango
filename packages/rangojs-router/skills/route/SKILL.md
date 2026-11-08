@@ -637,11 +637,15 @@ A redirect answered this way is control flow, not a failure: no `onError` call,
 no `errorBoundary()`. A declared boundary does not catch it.
 
 A redirect thrown from inside an `errorBoundary()` fallback is answered only in
-the lanes where the render reaches that fallback: a handler's or a loader's
-failure, and a no-JS form post's boundary render. A component's own throw is not
-one of them: no error segment is built for it, so the declared fallback never
-renders for a page, layout or slot that throws, and the browser shows the root
-error page instead. Do not put control flow in a fallback.
+the lanes where the render reaches that fallback: a failure in a handler, a
+loader or an action, a no-JS form post's boundary render, and a component the
+router invokes itself — a page passed to `path()` directly, a layout body, a
+slot body. A component React renders (the element a handler returned, a child
+element) is not one of them: no error segment is built for its throw, so the
+declared fallback never renders for it and the browser shows the root error page
+instead. A streamed handler's failure is out of time: its fallback renders, but
+the redirect it throws is only reported to `onError`. Do not put control flow in
+a fallback.
 
 > **The async limit:** a component that `await`s before it throws is a task of
 > its own, so on a **client navigation** the throw lands after the response's

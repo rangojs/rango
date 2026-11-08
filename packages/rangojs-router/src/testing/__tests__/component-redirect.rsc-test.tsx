@@ -155,10 +155,12 @@ function RedirectingBoundary(): React.ReactNode {
 
 /**
  * An `errorBoundary()` fallback whose child throws the redirect, plus a count
- * of how often the render reached it. The render builds an error segment for a
- * handler's or a loader's failure only (`matchError` -> `createErrorSegment`),
- * so this answers whether a component's own throw reaches a declared fallback
- * at all.
+ * of how often the render reached it. Which lanes render a declared fallback is
+ * the fact these tests pin: a handler's failure builds an error segment
+ * (`matchError` -> `createErrorSegment`), a loader's renders the fallback
+ * through `renderErrorFallback` (`router/loader-resolution.ts`), a component
+ * the segment walk invokes goes through `catchSegmentError` — and a component
+ * React renders gets none of them.
  */
 let boundaryFallbackRenders = 0;
 
@@ -167,7 +169,12 @@ function CountingRedirectingBoundary(): React.ReactNode {
   throw redirect("/target");
 }
 
-/** A page component that fails: React renders it, so its throw is an error row. */
+/**
+ * A page component that fails. Which lane its throw takes depends on how it is
+ * mounted: returned by a handler, React renders it and the throw is an error
+ * row with no fallback; passed to `path()` directly, the walk invokes it and
+ * the throw is a resolution throw with an error segment. Both are pinned below.
+ */
 function FailingPage(): React.ReactNode {
   throw new Error("page boom");
 }
@@ -195,6 +202,19 @@ async function failingStreamedHandler(): Promise<React.ReactNode> {
 
 async function failingFormAction(_form: FormData): Promise<void> {
   throw new Error("form boom");
+}
+
+let layoutBoom = false;
+let slotBoom = false;
+
+function MaybeFailingLayout(): React.ReactNode {
+  if (layoutBoom) throw new Error("layout boom");
+  return <p>layout</p>;
+}
+
+function MaybeFailingSlot(): React.ReactNode {
+  if (slotBoom) throw new Error("slot boom");
+  return <aside>side</aside>;
 }
 
 const patterns = urls(({ path, errorBoundary, loading, cache }) => [
@@ -317,6 +337,33 @@ function boundaryFallbackRouter(onError: (error: unknown) => void) {
   );
 }
 
+/**
+ * The lanes where the walk invokes the component — a page passed to `path()`
+ * directly, a layout body, a slot body — each declaring its own fallback whose
+ * child throws the redirect.
+ */
+function invokedBoundaryRouter(onError: (error: unknown) => void) {
+  return createRouter({ onError }).routes(
+    urls(({ path, layout, parallel, errorBoundary }) => [
+      path("/start", () => <p>start</p>, { name: "start" }),
+      path("/target", () => <p>target-page</p>, { name: "target" }),
+      path("/direct-boom", FailingPage, { name: "directBoom" }, () => [
+        errorBoundary(() => <CountingRedirectingBoundary />),
+      ]),
+      layout(MaybeFailingLayout, () => [
+        errorBoundary(() => <CountingRedirectingBoundary />),
+        path("/inside", () => <p>inside</p>, { name: "inside" }),
+        parallel({
+          "@side": {
+            handler: MaybeFailingSlot,
+            use: () => [errorBoundary(() => <CountingRedirectingBoundary />)],
+          },
+        }),
+      ]),
+    ]),
+  );
+}
+
 function documentRequest(path: string, basename?: string) {
   return serveShellRequest(makeRouter(basename), path, {
     cacheStore: new MemorySegmentCacheStore(),
@@ -342,6 +389,8 @@ function stamps(response: Response) {
 beforeEach(() => {
   layoutRedirects = false;
   slotRedirects = false;
+  layoutBoom = false;
+  slotBoom = false;
   boundaryFallbackRenders = 0;
   resetShellTestState();
 });
@@ -768,20 +817,20 @@ describe("a component's redirect (serveShellRequest)", () => {
     expect(res.response.status).toBe(200);
     expect(res.flight).toContain('"digest"');
     expect(res.response.headers.get("X-RSC-Redirect")).toBeNull();
-    // The reported case (the ticket's own): a consumer's onError hears about
-    // the boundary the visitor is shown.
+    // The visitor is shown an error page, so the consumer must hear about it:
+    // onError is the only signal that the navigation's redirect did not land.
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
   });
 
   it("limit: a component's own error renders no declared fallback, so a redirect in one answers nothing", async () => {
-    // Pinned, not wanted: the render reaches a declared fallback only where it
-    // renders an error segment (a handler's or a loader's failure). A
-    // component's throw is an error row and nothing else, so no fallback
-    // renders for it — the client's RootErrorBoundary shows the error page —
-    // and a redirect thrown from inside one has no render to answer or report
-    // it. See docs/internal/execution-model.md, "A component that throws
-    // redirect() redirects, if the render says so in time".
+    // Pinned, not wanted: this component is React-rendered (a handler returned
+    // the element), so its throw is an error row and nothing else — no error
+    // segment, so no declared fallback renders, so a redirect thrown from one
+    // is never a value the render sees. The walk-invoked lanes (a page passed
+    // to path(), a layout or slot body) do build an error segment and are
+    // pinned below. See docs/internal/execution-model.md, "A component that
+    // throws redirect() redirects, if the render says so in time".
     const onError = vi.fn();
     const router = boundaryFallbackRouter(onError);
 
@@ -856,6 +905,54 @@ describe("a component's redirect (serveShellRequest)", () => {
       "http://localhost/target",
     );
     expect(boundaryFallbackRenders).toBeGreaterThan(0);
+  });
+
+  it("a component the walk invokes builds an error segment, so its fallback's redirect is answered", async () => {
+    // The lanes the segment walk invokes — a page passed to path() directly, a
+    // layout body, a slot body — throw while resolving, so catchSegmentError
+    // builds an error segment: the declared fallback renders, and the redirect
+    // it throws is answered while the window is open, as a handler's error
+    // lane is. Only a component React renders is an error row with no fallback
+    // (the pin above).
+    const lanes = [
+      { name: "direct", path: "/direct-boom", layout: false, slot: false },
+      { name: "layout", path: "/inside", layout: true, slot: false },
+      { name: "slot", path: "/inside", layout: false, slot: true },
+    ];
+    for (const lane of lanes) {
+      boundaryFallbackRenders = 0;
+      layoutBoom = lane.layout;
+      slotBoom = lane.slot;
+      const onError = vi.fn();
+      const router = invokedBoundaryRouter(onError);
+
+      const document = await serveShellRequest(router, lane.path, {
+        cacheStore: new MemorySegmentCacheStore(),
+      });
+      expect(document.response.status, lane.name).toBe(302);
+      expect(document.response.headers.get("Location"), lane.name).toBe(
+        "/target",
+      );
+      expect(boundaryFallbackRenders, lane.name).toBe(1);
+
+      const nav = await serveShellRequest(router, lane.path, {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: "/start" },
+      });
+      // The error lane answers its own status beside the header; the browser
+      // steers on the header whatever it is (browser/navigation-client.ts).
+      expect(nav.response.headers.get("X-RSC-Redirect"), lane.name).toBe(
+        "http://localhost/target",
+      );
+      expect(nav.response.status, lane.name).toBe(500);
+      // Answered is control flow: the render reports the redirect to nobody.
+      expect(
+        onError.mock.calls.filter(
+          (call) => (call[0] as { phase?: string }).phase === "rendering",
+        ),
+        lane.name,
+      ).toEqual([]);
+    }
   });
 
   it("limit: a streamed handler's error segment is out of time, so its fallback's redirect is reported, not answered", async () => {
