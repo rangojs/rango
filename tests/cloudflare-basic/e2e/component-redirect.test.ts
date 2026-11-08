@@ -39,6 +39,17 @@ function defineTests(f: Fixture) {
   });
 
   test("opening the URL directly lands on /login", async ({ page }) => {
+    // A document request answers the 3xx itself: pin the status and Location,
+    // not only where the browser ends up.
+    const answer = await page.request.get(
+      f.url("/component-redirect/after-await"),
+      { maxRedirects: 0 },
+    );
+    expect(answer.status()).toBe(302);
+    expect(answer.headers()["location"]).toMatch(
+      /\/component-redirect\/login$/,
+    );
+
     await page.goto(f.url("/component-redirect/after-await"));
     await waitForHydration(page);
 

@@ -31,6 +31,7 @@ import {
   isExternalRedirect,
   resolveSoftRedirectUrl,
 } from "./redirect-origin.js";
+import { isRedirectResponse } from "./response-utils.js";
 
 /** Prefix of every redirect digest; nothing else may produce one. */
 export const REDIRECT_DIGEST_PREFIX: string = "rango-redirect:";
@@ -81,6 +82,16 @@ export function redirectSignalOfError(
 ): RedirectSignal | undefined {
   if (error === null || typeof error !== "object") return undefined;
   return decodeRedirectDigest((error as { digest?: unknown }).digest);
+}
+
+/**
+ * Whether a value on its way out is a redirect: the thrown `Response` itself (a
+ * writer that refused to store the page), or its Flight copy (the browser's
+ * error row). Control flow, so nothing that reports failures reports it.
+ */
+export function isRedirectSignal(value: unknown): boolean {
+  if (value instanceof Response) return isRedirectResponse(value);
+  return redirectSignalOfError(value) !== undefined;
 }
 
 /**

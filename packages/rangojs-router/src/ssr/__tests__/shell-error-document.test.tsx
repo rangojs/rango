@@ -24,6 +24,7 @@ import {
   loaderResultError,
 } from "../../decode-loader-results.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
+import { encodeRedirectDigest } from "../../redirect-signal.js";
 
 const mockedRenderSegments = vi.mocked(renderSegments);
 
@@ -236,6 +237,77 @@ describe("renderHTML: a shell error in production", () => {
     expect(html).toContain(FLIGHT_MARKER);
     // 200 like the same redirect inside a <Suspense>: the document, then the
     // client replace.
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 200,
+      location: undefined,
+    });
+  });
+
+  it("answers a component's redirect() with the 3xx its digest names", async () => {
+    // A component's throw lands inside the Flight render, so the target reaches
+    // the shell error as the error row's digest (redirect-signal.ts).
+    const error = markedError("Error", "Response");
+    Object.assign(error, {
+      digest: encodeRedirectDigest({ to: "/login", status: 302 }),
+    });
+    shellThrows(error);
+    const onShellError = vi.fn();
+    const onError = vi.fn();
+    const renderHTML = createSSRHandler(deps({ onError }));
+
+    const body = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(body).toBe("");
+    expect(onShellError).toHaveBeenCalledWith({
+      error,
+      // A Flight copy: the Flight render reported the original.
+      originated: false,
+      status: 302,
+      location: "/login",
+    });
+    expect(onError).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("answers a component's redirect() with state with the recovery document as a 200", async () => {
+    const error = markedError("Error", "Response");
+    Object.assign(error, {
+      digest: encodeRedirectDigest({
+        to: "/target",
+        status: 302,
+        state: { __rsc_ls_flash: { text: "hi" } },
+      }),
+    });
+    shellThrows(error);
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    const html = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(html).toContain('<html data-rango-ssr-error="">');
+    expect(html).toContain(FLIGHT_MARKER);
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 200,
+      location: undefined,
+    });
+  });
+
+  it("answers a component's redirect() with an { external: true } target with the recovery document: LoaderRedirect's location.replace keeps the opt-in", async () => {
+    const error = markedError("Error", "Response");
+    Object.assign(error, {
+      digest: encodeRedirectDigest({
+        to: "https://accounts.example.com/oauth",
+        status: 302,
+        external: true,
+      }),
+    });
+    shellThrows(error);
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    const html = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(html).toContain('<html data-rango-ssr-error="">');
     expect(onShellError.mock.calls[0]![0]).toMatchObject({
       status: 200,
       location: undefined,

@@ -18,7 +18,7 @@ import {
   isLoaderSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
-import { redirectSignalOfError } from "../redirect-signal.js";
+import { isRedirectSignal, redirectSignalOfError } from "../redirect-signal.js";
 import {
   answerShellError,
   type ShellErrorRecovery,
@@ -521,11 +521,16 @@ function originatedHere(error: unknown): boolean {
  * "rendering" phase. Swallows callback failures so a broken reporter never
  * masks the original error. Shared by renderHTML, capture, and resume so the
  * onError contract is identical across all three handlers.
+ *
+ * A redirect is control flow, not a failure: a component's `throw redirect()`
+ * reaches these passes as a Flight error row (its target in the digest,
+ * redirect-signal.ts), and the lane that answers it is the request's own.
  */
 function reportRenderError(
   onError: SSRDependencies["onError"],
   error: unknown,
 ): void {
+  if (isRedirectSignal(error)) return;
   if (onError) {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     try {

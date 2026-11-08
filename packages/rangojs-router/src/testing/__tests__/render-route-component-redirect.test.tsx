@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
 import { cleanup, waitFor } from "@testing-library/react";
 import { useParams } from "../../browser/react/use-params.js";
+import { ErrorBoundary } from "../../client.js";
 import { renderRoute } from "../render-route.js";
 import { encodeRedirectDigest } from "../../redirect-signal.js";
 
@@ -35,6 +36,19 @@ function Page(): ReactNode {
   return <h1 data-testid="login">login</h1>;
 }
 
+/** The same throw under an app-placed boundary, the only other catcher. */
+function BoundedPage(): ReactNode {
+  const { page } = useParams<{ page: string }>();
+  if (page === "account") {
+    return (
+      <ErrorBoundary fallback={<p data-testid="app-fallback">app failed</p>}>
+        <Gate to="/list/login" />
+      </ErrorBoundary>
+    );
+  }
+  return <h1 data-testid="login">login</h1>;
+}
+
 describe("renderRoute: a component that throws redirect()", () => {
   it("replace-navigates to the target instead of showing the error page", async () => {
     const { getByTestId, router } = await renderRoute(
@@ -46,5 +60,16 @@ describe("renderRoute: a component that throws redirect()", () => {
     expect(getByTestId("login").textContent).toBe("login");
     // The error page never renders.
     expect(document.body.textContent).not.toContain("Internal Server Error");
+  });
+
+  it("is not turned into an app ErrorBoundary's fallback", async () => {
+    const { getByTestId, queryByTestId, router } = await renderRoute(
+      [{ path: "/list/:page", Component: BoundedPage }],
+      { request: "/list/account" },
+    );
+
+    await waitFor(() => expect(router.pathname()).toBe("/list/login"));
+    expect(getByTestId("login").textContent).toBe("login");
+    expect(queryByTestId("app-fallback")).toBeNull();
   });
 });

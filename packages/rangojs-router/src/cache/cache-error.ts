@@ -17,6 +17,7 @@
 
 import { _getRequestContext } from "../server/request-context.js";
 import { wasServerErrorPrinted } from "../server/print-server-error.js";
+import { isRedirectSignal } from "../redirect-signal.js";
 
 /**
  * Minimal shape of a request context for error reporting. Passed explicitly by
@@ -73,6 +74,11 @@ export function reportCacheError(
   label: string,
   ctx?: CacheErrorReporter,
 ): void {
+  // A writer that refused to store a redirecting page reported no failure: the
+  // page has no outcome to keep, and a component's `throw redirect()` is
+  // control flow (redirect-signal.ts). Logging it as cache degradation would
+  // report every such page as a broken cache.
+  if (isRedirectSignal(error)) return;
   let target: CacheErrorReporter | undefined;
   try {
     target = ctx ?? _getRequestContext();

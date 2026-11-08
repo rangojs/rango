@@ -44,6 +44,19 @@ function defineTests(f: Fixture) {
   });
 
   test("opening the URL directly lands on /login", async ({ page }) => {
+    // A document request has flushed nothing when the shell fails, so it
+    // answers the same 3xx a handler's throw does: pin the status, not only
+    // where the browser ends up (a 200 whose client replaces would land there
+    // too, and a crawler or a no-JS client would not).
+    const answer = await page.request.get(
+      f.url("/component-redirect/after-await"),
+      { maxRedirects: 0 },
+    );
+    expect(answer.status()).toBe(302);
+    expect(answer.headers()["location"]).toMatch(
+      /\/component-redirect\/login$/,
+    );
+
     await page.goto(f.url("/component-redirect/after-await"));
     await waitForHydration(page);
 

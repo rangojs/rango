@@ -26,8 +26,10 @@ into the same replace-navigation a loader's `redirect()` does. A document
 request, which has flushed nothing, answers the same 3xx a handler's throw does
 (and keeps the recovery document when the redirect carries `{ state }` or the
 `{ external: true }` opt-in, as the loader lane does). `onError` no longer
-reports it as a rendering error, and the console stays quiet: it is control
-flow, not a failure.
+reports it as a rendering error or as cache degradation, and the router logs
+nothing: it is control flow, not a failure. (React still logs its own
+"The above error occurred in ..." line when its error boundary catches one, as
+it does for any caught error.)
 
 ## 0.35.0 (2026-11-04)
 
