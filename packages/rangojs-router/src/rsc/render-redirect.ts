@@ -10,7 +10,8 @@
  * 204 + `X-RSC-Redirect` on a client navigation.
  *
  * The render can only answer it while the response's status is still open.
- * That window is:
+ * That window is {@link RenderRedirectWindow}: created where the render starts
+ * (`createFlightStage`), closed where the status commits:
  * - a Flight response (a client navigation, a prefetch): its opening flush,
  *   where a synchronous component's throw is already serialized
  *   ({@link holdOpeningRedirect});
@@ -18,36 +19,61 @@
  *   that failed the shell, and one the opening flush carried, are both known
  *   before the status commits (`createSsrHtmlStage`).
  *
- * A redirect reported after its window is out of time: an async component is a
- * task of its own, so its error row lands in a later chunk, and the response is
- * committed. Buffering the whole render to close that gap is what the streaming
- * contract forbids (docs/internal/execution-model.md, "A component that throws
- * redirect() redirects, if the render says so in time"), so that case keeps
- * rendering the boundary.
+ * A redirect reported after its window closed is out of time: an async
+ * component is a task of its own, so its error row lands in a later chunk, and
+ * the response is committed. Buffering the whole render to close that gap is
+ * what the streaming contract forbids (docs/internal/execution-model.md, "A
+ * component that throws redirect() redirects, if the render says so in time"),
+ * so that case renders the boundary. It is then a rendering failure like any
+ * other: nothing answers it, so the render reports it to the consumer's
+ * `onError` ({@link recordRenderRedirect}).
  */
 
 import { isRedirectResponse } from "../response-utils.js";
 
-/** The request-context fields this module reads and writes. */
-interface RenderRedirectContext {
-  _renderRedirect?: Response;
+/**
+ * The window a response has to answer a redirect its render reported. One per
+ * render stage: the stage that starts the render creates it, the lane that
+ * commits the response's status closes it.
+ */
+export interface RenderRedirectWindow {
+  /** The first redirect the render reported while the window was open. */
+  response?: Response;
+  /** The status has committed: nothing will answer a redirect reported now. */
+  closed: boolean;
 }
 
 /**
- * Record the first redirect a render reported. The Flight `onError` calls this
- * with the thrown `Response` before React writes its error row, so a render
- * that says so in time has it before the status commits.
+ * Open a window where a render starts. A lane that answers the response closes
+ * it where its status commits; a render that owns no response (a shell capture,
+ * a PPR shell HIT's tail) leaves it open, so a redirect it reports answers
+ * nothing and is reported by nobody: the lane that owns that render's failure
+ * reports it (a capture's refusal, a refused write).
+ */
+export function createRenderRedirectWindow(): RenderRedirectWindow {
+  return { closed: false };
+}
+
+/**
+ * Record the redirect a render reported, and say whether it is too late to
+ * answer the response.
  *
- * First wins, like a handler's redirect short-circuiting the render it started:
- * a page that redirects answers the redirect whatever else the tree throws.
+ * True only for a redirect the render can no longer answer: the error row
+ * React writes renders the boundary, so the caller reports it as a rendering
+ * error. False for a redirect the response will answer, for one that arrives
+ * after the response already answered another (first wins, like a handler's
+ * redirect short-circuiting the render it started), and for anything that is
+ * not a redirect.
  */
 export function recordRenderRedirect(
-  context: RenderRedirectContext | undefined,
+  window: RenderRedirectWindow,
   error: unknown,
-): void {
-  if (!context || context._renderRedirect !== undefined) return;
-  if (!isRenderRedirect(error)) return;
-  context._renderRedirect = error;
+): boolean {
+  if (!isRenderRedirect(error)) return false;
+  if (window.response !== undefined) return false;
+  if (window.closed) return true;
+  window.response = error;
+  return false;
 }
 
 /**
@@ -59,22 +85,22 @@ export function isRenderRedirect(value: unknown): value is Response {
 }
 
 /**
- * Throw the redirect this render reported, if it did. Called where the status
- * commits, so the throw lands in the lanes that already answer a handler's
- * throw (`rsc/handler.ts`): the partial conversion to 204 + `X-RSC-Redirect`,
- * the document 3xx through `finalizeRequestResponse`'s guard and
- * location-state cookie.
+ * Close the window: the response's status commits here. Throw the redirect the
+ * render reported while it was open, so it lands in the lanes that already
+ * answer a handler's throw (`rsc/handler.ts`): the partial conversion to 204 +
+ * `X-RSC-Redirect`, the document 3xx through `finalizeRequestResponse`'s guard
+ * and location-state cookie.
  */
-export function throwIfRenderRedirect(
-  context: RenderRedirectContext | undefined,
-): void {
-  const redirect = context?._renderRedirect;
+export function closeRenderRedirectWindow(window: RenderRedirectWindow): void {
+  window.closed = true;
+  const redirect = window.response;
   if (redirect) throw redirect;
 }
 
 /**
- * Hold a Flight stream until its opening flush, then throw the redirect the
- * render reported in it, or hand the stream back unchanged in content.
+ * Hold a Flight stream until its opening flush, then close the window (which
+ * throws the redirect the render reported in it), or hand the stream back
+ * unchanged in content.
  *
  * The opening flush is React's first `performWork` flush: the payload row and
  * every component that rendered synchronously, error rows included. A redirect
@@ -87,7 +113,7 @@ export function throwIfRenderRedirect(
  * was, and its body errors where it always did.
  */
 export async function holdOpeningRedirect(
-  context: RenderRedirectContext | undefined,
+  window: RenderRedirectWindow,
   stream: ReadableStream<Uint8Array>,
 ): Promise<ReadableStream<Uint8Array>> {
   const held = await peekOpeningChunk(stream);
@@ -95,7 +121,7 @@ export async function holdOpeningRedirect(
   // pulls does not flow, so the render stops where it is (the same teardown a
   // handler's redirect gets by never starting it), and cancelling it instead
   // would report React's abort to the consumer's onError.
-  throwIfRenderRedirect(context);
+  closeRenderRedirectWindow(window);
   return held;
 }
 

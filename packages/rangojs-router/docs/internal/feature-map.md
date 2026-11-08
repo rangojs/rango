@@ -741,15 +741,16 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   validators and the server 3xx/soft paths. See
   `docs/internal/security-checklist.md`.
 - A **component** (not a handler) that throws `redirect()` is answered by the
-  render the same way: the Flight `onError` records the thrown `Response`
-  (`rsc/render-redirect.ts` `recordRenderRedirect`) and the serve path throws
-  it back while the status is still open — a document once its shell is ready,
-  a Flight response after its opening flush (the response is held for it,
-  `holdOpeningRedirect`) — so it lands in the same handler lanes (204 +
-  `X-RSC-Redirect`, the 3xx guard, the state cookie). Out of time: an async
-  component on a client navigation reports after the status committed and
-  renders the boundary (execution-model.md, "A component that throws redirect()
-  redirects, if the render says so in time").
+  render the same way: the Flight `onError` records the thrown `Response` in the
+  render's `RenderRedirectWindow` (`rsc/render-redirect.ts`
+  `recordRenderRedirect`) and the serve path throws it back while the status is
+  still open — a document once its shell is ready, a Flight response after its
+  opening flush (the response is held for it, `holdOpeningRedirect`) — so it
+  lands in the same handler lanes (204 + `X-RSC-Redirect`, the 3xx guard, the
+  state cookie). Out of time: an async component on a client navigation reports
+  after the status committed, renders the boundary and is reported to `onError`
+  as a rendering error, because nothing answered it (execution-model.md, "A
+  component that throws redirect() redirects, if the render says so in time").
 - `throw rewrite(target)` from middleware (before `await next()`) renders
   another route at the same URL: a path (basename-prefixed, kept under the
   basename) or a global route name with params and search. The `Rewrite`

@@ -637,7 +637,8 @@ describe("a component's redirect (serveShellRequest)", () => {
     // document answers the 200 it committed. The same route without the
     // Suspense boundary answers the redirect (documentRequest("/async") in a
     // real render), which needs real Fizz and is covered by e2e.
-    const router = createRouter({}).routes(
+    const onError = vi.fn();
+    const router = createRouter({ onError }).routes(
       urls(({ path }) => [
         path(
           "/streamed",
@@ -657,14 +658,27 @@ describe("a component's redirect (serveShellRequest)", () => {
     expect(res.response.status).toBe(200);
     expect(res.flight).toContain('"digest"');
     expect(res.response.headers.get("Location")).toBeNull();
+    // Out of time is a failure, not control flow: nothing answers this
+    // redirect, so the render reports it like any other rendering error.
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
   });
 
   it("limit: an async component's redirect is reported after the status commits, so the boundary renders", async () => {
     // Pinned, not wanted: see the module comment. The document lane answers it
     // in a real render (its shell fails first), the Flight lane cannot.
-    const res = await navigation("/start", "/async");
+    const onError = vi.fn();
+    const router = createRouter({ onError }).routes(patterns);
+    const res = await serveShellRequest(router, "/async", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
     expect(res.response.status).toBe(200);
     expect(res.flight).toContain('"digest"');
     expect(res.response.headers.get("X-RSC-Redirect")).toBeNull();
+    // The reported case (the ticket's own): a consumer's onError hears about
+    // the boundary the visitor is shown.
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0]![0]).toMatchObject({ phase: "rendering" });
   });
 });

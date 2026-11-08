@@ -7,9 +7,11 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import {
+  createRenderRedirectWindow,
   holdOpeningRedirect,
   isRenderRedirect,
   recordRenderRedirect,
+  type RenderRedirectWindow,
 } from "./render-redirect.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
 import type { RscPayload } from "./types.js";
@@ -93,6 +95,8 @@ export interface RscFlightStage {
   payload: RscPayload;
   stream: ReadableStream<Uint8Array>;
   init: ResponseInit;
+  /** This render's redirect window; the lane that commits the status closes it. */
+  window: RenderRedirectWindow;
 }
 
 export interface RscPreparedHtmlRender {
@@ -170,13 +174,19 @@ function createFlightStage<TEnv>(
   // Read once here: onError can fire outside the ALS frame.
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
+  // The window opens with the render: the lane that commits this response's
+  // status closes it, and until then a redirect a component throws answers the
+  // response (rsc/render-redirect.ts). A render that owns no response (a shell
+  // capture, a PPR shell HIT's tail) leaves it open, and its failures are
+  // reported by the lane that owns them.
+  const window = createRenderRedirectWindow();
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
-      // A component that throws redirect() is control flow, not a failure: the
-      // response answers it if it can still say so (rsc/render-redirect.ts).
-      // Recorded before React writes the error row that carries it.
-      recordRenderRedirect(requestContext, error);
+      // Recorded before React writes the error row that carries it. A redirect
+      // the response can no longer answer is out of time: its error row renders
+      // the boundary, so it is a rendering failure and reported as one.
+      const late = recordRenderRedirect(window, error);
       renderErrors?.push(error);
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
@@ -184,10 +194,9 @@ function createFlightStage<TEnv>(
         { label: "Rendering error", pathname: input.url.pathname },
         requestContext,
       );
-      // A redirect is control flow, as it is for a handler: it never reports
-      // as a rendering failure, even when it lands out of time and its error
-      // row renders the boundary.
-      if (!isRenderRedirect(error)) {
+      // A redirect the response answers is control flow, as a handler's is: it
+      // never reports as a rendering failure.
+      if (!isRenderRedirect(error) || late) {
         input.ctx.callOnError(error, "rendering", {
           request: input.request,
           url: input.url,
@@ -196,22 +205,23 @@ function createFlightStage<TEnv>(
       }
     },
   });
-  return { type: "flight", payload: input.payload, stream, init };
+  return { type: "flight", payload: input.payload, stream, init, window };
 }
 
 /**
  * A Flight response's window: create the stage, wait for the render's opening
- * flush, and throw the redirect a component reported in it, so the lanes that
- * answer a handler's throw answer it too (rsc/handler.ts). The response is not
- * built yet, so the request's cookies, headers and onResponse callbacks are
- * still on the stub when the redirect response is. A document's stage skips
- * this: its html step waits for the shell, which is the same window.
+ * flush, and close the window there, which throws the redirect a component
+ * reported in it, so the lanes that answer a handler's throw answer it too
+ * (rsc/handler.ts). The response is not built yet, so the request's cookies,
+ * headers and onResponse callbacks are still on the stub when the redirect
+ * response is. A document's stage skips this: its html step waits for the
+ * shell, which closes the same window.
  */
 async function holdFlightOpening<TEnv>(
   input: RscRenderInput<TEnv>,
 ): Promise<RscFlightStage> {
   const stage = createFlightStage(input, input.init);
-  const stream = await holdOpeningRedirect(_getRequestContext(), stage.stream);
+  const stream = await holdOpeningRedirect(stage.window, stage.stream);
   return { ...stage, stream };
 }
 

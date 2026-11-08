@@ -98,7 +98,6 @@ export const RENDER_PASS_FIELDS: {
       pass._explicitTaggedStores = new Set();
       // The capture's render errors refuse the capture only.
       pass._renderErrors = [];
-      pass._renderRedirect = undefined;
       pass._recoveredHandlerErrors = undefined;
       // `run` is read by the loader, cookies() and headers() capture guards.
       // Every field is present from here on: one shape while the capture
@@ -189,7 +188,6 @@ export const RENDER_PASS_FIELDS: {
       // Nothing lands on the foreground's perf timeline.
       pass._metricsStore = undefined;
       pass._renderErrors = [];
-      pass._renderRedirect = undefined;
       pass._recoveredHandlerErrors = undefined;
       // The barrier's deadlock bookkeeping is the pass's own and stays open.
       // The visitor's is closed once its barrier resolves, so a handler's
@@ -254,7 +252,6 @@ export const RENDER_PASS_FIELDS: {
       // The re-run's classify timing stays off the visitor's Server-Timing.
       pass._handlerTiming = [];
       pass._renderErrors = [];
-      pass._renderRedirect = undefined;
       pass._recoveredHandlerErrors = undefined;
       pass._shellCaptureState = undefined;
       // Response writes go to the sink, never the visitor's STALE response.

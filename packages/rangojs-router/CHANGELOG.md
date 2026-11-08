@@ -46,6 +46,13 @@ whole render to close the gap and no navigation streams at all
 (`docs/internal/execution-model.md`, "A component that throws redirect()
 redirects, if the render says so in time").
 
+A redirect that lands out of time answered nothing, so it is reported: the
+navigation that shows the error boundary calls `onError` with phase
+`rendering`, as it did before a component's redirect was answered at all. A
+redirect the response answers reports nothing, and one a background render
+reports (a PPR shell capture, a stale re-validation) is reported by the lane
+that owns that failure.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

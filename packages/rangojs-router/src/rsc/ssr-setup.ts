@@ -25,7 +25,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import { renderedLocation } from "./full-payload.js";
 import { markServerErrorPrinted } from "../server/print-server-error.js";
 import { WIRE } from "../wire-params.js";
-import { throwIfRenderRedirect } from "./render-redirect.js";
+import { closeRenderRedirectWindow } from "./render-redirect.js";
 
 export type SSRSetup = readonly [SSRModule, SSRStreamMode];
 
@@ -169,13 +169,15 @@ export function createSsrHtmlStage<TEnv>(
           // Dev rethrows a shell error to the host so Vite's overlay shows it;
           // the redirect the render reported still answers it, as a loader's
           // does (ssr/shell-error-document.tsx).
-          throwIfRenderRedirect(reqCtx);
+          closeRenderRedirectWindow(flight.window);
           throw error;
         }
         // The shell is ready, so a throw that failed it, and one the Flight
         // render's opening flush carried, are both known: a component's
-        // redirect is answered while the status is still open.
-        throwIfRenderRedirect(reqCtx);
+        // redirect is answered while the status is still open. A redirect
+        // reported after this is out of time and reported as a rendering
+        // error (rsc/render-redirect.ts).
+        closeRenderRedirectWindow(flight.window);
         return body;
       },
       ...(options.init && { init: options.init }),

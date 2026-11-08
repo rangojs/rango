@@ -1038,9 +1038,11 @@ redirect would have taken them somewhere.
 
 The catch: React catches it, so nothing reaches the handler, and the only thing
 the render can do is look at what it reported. That only helps while the
-response's status is still open. `recordRenderRedirect`
-(`rsc/render-redirect.ts`) keeps the first redirect the Flight `onError` hands
-over, and the two serve paths answer it where the status commits:
+response's status is still open. `createFlightStage` opens a
+`RenderRedirectWindow` when the render starts (`rsc/render-redirect.ts`),
+`recordRenderRedirect` keeps the first redirect the Flight `onError` hands over
+while that window is open, and the two serve paths close it where the status
+commits:
 
 - a **document** answers it once its shell is ready: a throw that failed the
   shell, and one the Flight render's opening flush carried, are both known by
@@ -1085,29 +1087,36 @@ every loader settled). So on a **client navigation** an async component's
 `redirect()` still renders the boundary; a **document request** answers it,
 because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
-content, on a document whose shell is out — is out of time the same way, and so
-is one thrown in a PPR shell HIT's tail (`renderRscFlightStage` is never held:
-the response committed when the shell was served).
+content, on a document whose shell is out — is out of time the same way.
 
-A redirect is never a rendering error: `printServerError` treats a thrown
-`Response` as control flow, and the Flight `onError` now skips `callOnError` for
-one, so nothing is printed and no consumer `onError` sees it — not even when it
-lands out of time and its error row renders the boundary, because that is still
-the same control flow. It is never stored: the response is a 3xx/204, and the
-redirect stays in `_renderErrors`, which keeps a late one's 200 out of the
-document cache and of every shell capture.
+What a late redirect is, and is not: a redirect the response answers is control
+flow, so `printServerError` prints nothing for it and the Flight `onError` skips
+`callOnError` (a handler's redirect reports nothing either). A redirect that
+lands after its window closed answered nothing, though: its error row renders
+the boundary, so the visitor is shown an error page and the render reports it
+to the consumer's `onError` as a rendering error, like any other failure. It is
+never stored either way: the response is a 3xx/204, and the redirect stays in
+`_renderErrors`, which keeps a late one's 200 out of the document cache and of
+every shell capture.
+
+A render that owns no response of its own — a PPR shell capture, a background or
+document re-validation — leaves its window open, so a redirect there records
+nothing and reports nothing: the lane that owns that failure reports it (a
+capture's refusal as `cache-write`, a refused write), and the visitor's own
+response was answered by something else.
 
 Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
 the document and navigation lanes, a page, a layout and a parallel slot
 component, an intercept, the state cookie, the external opt-in, a basename, a
 declared `errorBoundary()`, strict mode, a prefetch, the cookie and `onResponse`
-stamps, no `onError`, an action's revalidation render, a no-JS form post's
-re-render and its error-boundary render, the not-found tree on a document and on
-a navigation, the async limit, the streamed-after-shell limit, and that a
-streamed redirect's 200 is refused by the document cache and by a PPR shell
-capture) and `e2e/component-redirect.test.ts` in both apps, dev and production
-(the async limit included, and a document request for the same async route
-landing on the target).
+stamps, no `onError` for an answered redirect, an action's revalidation render,
+a no-JS form post's re-render and its error-boundary render, the not-found tree
+on a document and on a navigation, the async limit and its `onError` report, the
+streamed-after-shell limit and its `onError` report, and that a streamed
+redirect's 200 is refused by the document cache and by a PPR shell capture) and
+`e2e/component-redirect.test.ts` in both apps, dev and production (the async
+limit included, and a document request for the same async route landing on the
+target).
 
 ### Streamed handler rejections render the declared boundary
 
