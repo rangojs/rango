@@ -7,6 +7,9 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
+import { isRedirectResponse } from "../response-utils.js";
+import { resolveThrownRedirect } from "../redirect-origin.js";
+import { renderRedirectDigest } from "../errors.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
@@ -161,8 +164,23 @@ function createFlightStage<TEnv>(
   const renderErrors = requestContext?._renderErrors;
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
-    onError: (error: unknown) => {
+    onError: (error: unknown): string | undefined => {
       renderErrors?.push(error);
+      // A component's `throw redirect()` is control flow, not a rendering
+      // error: its error row's digest names the target, and the browser
+      // follows it (segment-system.tsx renderSegments before a navigation
+      // commits, root-error-boundary.tsx for one React meets while it
+      // renders). Still pushed above: a writer that reads _renderErrors (the
+      // document cache) does not store a redirected render.
+      if (error instanceof Response && isRedirectResponse(error)) {
+        return renderRedirectDigest(
+          resolveThrownRedirect(
+            error,
+            requestContext?.originalUrl?.origin ?? input.url.origin,
+            requestContext?._basename,
+          ),
+        );
+      }
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
@@ -174,6 +192,7 @@ function createFlightStage<TEnv>(
         url: input.url,
         env: input.env,
       });
+      return undefined;
     },
   });
   return { type: "flight", payload: input.payload, stream, init };

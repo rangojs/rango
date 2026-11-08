@@ -488,7 +488,9 @@ export async function initBrowserApp(
 
   // Build initial tree with rootLayout
   bootLog("building initial segment tree (renderSegments)");
-  const initialTree = renderSegments(initialPayload.metadata!.segments);
+  const initialTree = renderSegments(initialPayload.metadata!.segments, {
+    commitRenderRedirect: true,
+  });
   if (IS_BROWSER_DEBUG && initialTree instanceof Promise) {
     initialTree.then(
       () => bootLog("initial segment tree settled"),
@@ -643,6 +645,7 @@ export async function initBrowserApp(
             store.emitUpdate({
               root: renderSegments(main, {
                 interceptSegments: intercept.length > 0 ? intercept : undefined,
+                commitRenderRedirect: true,
               }),
               metadata: payload.metadata,
             });

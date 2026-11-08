@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a client navigation to a page whose component throws `redirect()` lands on the target
+
+**Before.** A server component that threw `redirect()` while React rendered
+it was reported as a rendering error: a `<Link>` click (or `router.push`) to
+the page committed it and the router's root boundary showed "Internal Server
+Error". It printed as `Rendering error` on the server and reached
+`createRouter({ onError })` with phase `"rendering"`. An async route handler
+that threw or returned `redirect()` under `loading()` did the same.
+
+**Now.** The navigation lands on the redirect's target, in dev and
+production, sync or async. When the segment's own component threw, the
+router follows the redirect before it commits anything, as it follows a
+handler's: the layout stays mounted and history gets the target. When React
+meets the redirect only while it renders (an async component nested in the
+handler's element, one behind `loading()`, a handler streamed under
+`loading()`), the router's root boundary navigates to the target (a replace)
+instead of rendering its error page; `<ErrorBoundary>` from
+`@rangojs/router/client` lets it through rather than showing its fallback. `redirect(url, { state })` carries its
+state, `{ external: true }` leaves the app, and an off-origin target without
+it lands on the app root, as for every other soft redirect. A component's
+redirect is no longer printed as a rendering error or passed to `onError`: it
+is control flow. (A streamed handler's is still reported once with phase
+`"handler"`, as before.)
+
+```tsx
+// Async component that guards a page:
+async function RequireUser(): Promise<React.ReactNode> {
+  const user = await getUser();
+  if (!user) throw redirect("/login");
+  return <Dashboard user={user} />;
+}
+
+path("/dashboard", () => <RequireUser />, { name: "dashboard" });
+
+// Before: <Link to="/dashboard"> signed out showed "Internal Server Error".
+// Now: it lands on /login, with the layout kept.
+```
+
+A document request is unchanged: the server answers it without a redirect
+status. In production the hydrated page then lands on the target.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

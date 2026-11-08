@@ -31,6 +31,7 @@ import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
+import { decodedRedirectOf } from "./errors.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -397,6 +398,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    if (decodedRedirectOf(error)) return;
     console.error("[ErrorBoundary] Error caught:", error, errorInfo);
     this.props.onError?.(error, errorInfo);
   }
@@ -407,6 +409,10 @@ export class ErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A server component's `throw redirect()` is not this boundary's error:
+      // rethrown to RootErrorBoundary, which follows it and resets with the
+      // target's tree (this boundary stays in its error state otherwise).
+      if (decodedRedirectOf(this.state.error)) throw this.state.error;
       const { fallback } = this.props;
 
       // Create error info for the fallback
