@@ -749,8 +749,10 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   lands in the same handler lanes (204 + `X-RSC-Redirect`, the 3xx guard, the
   state cookie). Out of time: an async component on a client navigation reports
   after the status committed, renders the boundary and is reported to `onError`
-  as a rendering error, because nothing answered it (execution-model.md, "A
-  component that throws redirect() redirects, if the render says so in time").
+  as a rendering error, because nothing answered it — as does a redirect in a
+  PPR shell HIT's tail, whose render opens a closed window
+  (`redirectsCannotAnswer`) (execution-model.md, "A component that throws
+  redirect() redirects, if the render says so in time").
 - `throw rewrite(target)` from middleware (before `await next()`) renders
   another route at the same URL: a path (basename-prefixed, kept under the
   basename) or a global route name with params and search. The `Rewrite`

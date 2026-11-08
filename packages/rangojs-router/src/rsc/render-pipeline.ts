@@ -7,6 +7,7 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import {
+  createCommittedRenderRedirectWindow,
   createRenderRedirectWindow,
   holdOpeningRedirect,
   isRenderRedirect,
@@ -88,6 +89,13 @@ export interface RscFlightStageInput<TEnv> {
   temporaryReferences?: unknown;
   recordSerializeMetric?: boolean;
   tracking?: RscRenderStageTracking;
+  /**
+   * The render's response committed before it started (a PPR shell HIT's
+   * tail): a redirect a component throws cannot answer anything, so it renders
+   * the boundary and the render reports it as a rendering error
+   * (rsc/render-redirect.ts). Unset for a render that answers a response.
+   */
+  redirectsCannotAnswer?: boolean;
 }
 
 export interface RscFlightStage {
@@ -176,10 +184,12 @@ function createFlightStage<TEnv>(
   const renderErrors = requestContext?._renderErrors;
   // The window opens with the render: the lane that commits this response's
   // status closes it, and until then a redirect a component throws answers the
-  // response (rsc/render-redirect.ts). A render that owns no response (a shell
-  // capture, a PPR shell HIT's tail) leaves it open, and its failures are
-  // reported by the lane that owns them.
-  const window = createRenderRedirectWindow();
+  // response (rsc/render-redirect.ts). A render whose response already
+  // committed opens a closed one, so a redirect it reports is reported as the
+  // rendering failure it is.
+  const window = input.redirectsCannotAnswer
+    ? createCommittedRenderRedirectWindow()
+    : createRenderRedirectWindow();
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {

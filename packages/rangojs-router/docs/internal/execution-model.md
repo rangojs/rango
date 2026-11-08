@@ -1089,21 +1089,29 @@ because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
 content, on a document whose shell is out — is out of time the same way.
 
-What a late redirect is, and is not: a redirect the response answers is control
-flow, so `printServerError` prints nothing for it and the Flight `onError` skips
-`callOnError` (a handler's redirect reports nothing either). A redirect that
-lands after its window closed answered nothing, though: its error row renders
-the boundary, so the visitor is shown an error page and the render reports it
-to the consumer's `onError` as a rendering error, like any other failure. It is
-never stored either way: the response is a 3xx/204, and the redirect stays in
-`_renderErrors`, which keeps a late one's 200 out of the document cache and of
-every shell capture.
+What a late redirect is, and is not: the render reports nothing for a redirect
+the response answers — `printServerError` prints nothing for it and the Flight
+`onError` skips `callOnError` (a handler's redirect reports nothing either). A
+redirect that lands after its window closed answered nothing, though: its error
+row renders the boundary, so the visitor is shown an error page and the render
+reports it to the consumer's `onError` as a rendering error, like any other
+failure. A **PPR shell HIT's tail** is that same case from the first byte: the
+prelude committed when the shell was served, so its render opens a closed
+window (`renderRscFlightStage` with `redirectsCannotAnswer`) and a component's
+redirect there is reported, never answered. It is never stored either way: the
+response is a 3xx/204, and the redirect stays in `_renderErrors`, which keeps a
+late one's 200 out of the document cache and of every shell capture. That list
+is also why a writer that refuses a redirect's 200 reports the refusal as
+`cache-write` (the lane that owns the write), beside the rendering report a
+late one gets.
 
-A render that owns no response of its own — a PPR shell capture, a background or
-document re-validation — leaves its window open, so a redirect there records
-nothing and reports nothing: the lane that owns that failure reports it (a
-capture's refusal as `cache-write`, a refused write), and the visitor's own
-response was answered by something else.
+A **PPR shell capture** is the one render that owns no response of its own: it
+leaves its window open, so a redirect during a capture records nothing and
+reports nothing, and the capture's refusal is the report (`cache-write`). A
+document re-validation is not that: its re-run renders through the same html
+stage, so its redirect is thrown where the document cache's revalidation catches
+it and reports the refused refresh. A background route re-validation renders no
+Flight at all.
 
 Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
 the document and navigation lanes, a page, a layout and a parallel slot
@@ -1113,10 +1121,16 @@ stamps, no `onError` for an answered redirect, an action's revalidation render,
 a no-JS form post's re-render and its error-boundary render, the not-found tree
 on a document and on a navigation, the async limit and its `onError` report, the
 streamed-after-shell limit and its `onError` report, and that a streamed
-redirect's 200 is refused by the document cache and by a PPR shell capture) and
-`e2e/component-redirect.test.ts` in both apps, dev and production (the async
-limit included, and a document request for the same async route landing on the
-target).
+redirect's 200 is refused by the document cache and by a PPR shell capture),
+`rsc/__tests__/render-pipeline.test.ts` (the stage's two outcomes: a redirect in
+the opening flush is thrown into the answering lanes and reported by nobody, and
+one reported by a render whose response already committed — the PPR shell HIT
+tail — is reported as a rendering error) and `e2e/component-redirect.test.ts` in
+both apps, dev and production (the async limit included, and a document request
+for the same async route landing on the target). The PPR tail's own path is not
+exercised by a test: a shell capture in the userland kit reads the whole stream,
+so no tail segment re-renders there, and neither e2e app has a ppr route whose
+component redirects.
 
 ### Streamed handler rejections render the declared boundary
 

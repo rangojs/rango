@@ -368,6 +368,56 @@ describe("RSC render pipeline", () => {
     expect(events.map((event) => event.type)).not.toContain("stage:error");
   });
 
+  it("answers a component's redirect the render reports in its opening flush, and reports nothing", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { Location: "/target" },
+    });
+    // A synchronous component's throw: reported while React builds the opening
+    // flush, before the response's status commits.
+    const { input, requestContext } = makeInput((_payload, options) => {
+      options?.onError?.(redirect);
+      return emptyFlightStream();
+    });
+
+    const error = await runWithRequestContext(requestContext, () =>
+      renderRscResponse(input),
+    ).catch((thrown: unknown) => thrown);
+
+    // The window closed at the opening flush, so the render throws the
+    // redirect into the lanes that answer a handler's throw: it is control
+    // flow, never a rendering error.
+    expect(error).toBe(redirect);
+    expect(input.ctx.callOnError).not.toHaveBeenCalled();
+  });
+
+  it("reports a component's redirect when the render's response already committed", () => {
+    // A PPR shell HIT's tail: the prelude committed when the shell was served,
+    // so nothing can answer the redirect and its error row renders the
+    // boundary. The consumer's onError hears about it.
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { Location: "/target" },
+    });
+    let onStreamError: ((error: unknown) => void) | undefined;
+    const { input, requestContext } = makeInput((_payload, options) => {
+      onStreamError = options?.onError;
+      return emptyFlightStream();
+    });
+
+    const stage = runWithRequestContext(requestContext, () =>
+      renderRscFlightStage({ ...input, redirectsCannotAnswer: true }),
+    );
+    expect(stage.window.closed).toBe(true);
+    onStreamError?.(redirect);
+
+    expect(input.ctx.callOnError).toHaveBeenCalledWith(
+      redirect,
+      "rendering",
+      expect.objectContaining({ request: input.request, url: input.url }),
+    );
+  });
+
   it("does not create stage timestamps when observation is disabled", async () => {
     const now = vi.spyOn(performance, "now");
     const { input, requestContext } = makeInput(() => emptyFlightStream());

@@ -1810,7 +1810,10 @@ function serveShellHit(
       attachLocationStateIfPresent(payload, false, tailLocationState);
     }
     // Full Flight render per request: hydration needs the whole payload (there
-    // is no Flight-side resume — a React limitation, not ours).
+    // is no Flight-side resume — a React limitation, not ours). The prelude was
+    // committed when the shell was served, so a redirect a component throws in
+    // this render cannot answer it: it renders the boundary and is reported
+    // (rsc/render-redirect.ts).
     const flightStage = renderRscFlightStage({
       ctx,
       request,
@@ -1821,6 +1824,7 @@ function serveShellHit(
         mode: "full",
         routeKey: activeCtx._routeName,
       },
+      redirectsCannotAnswer: true,
     });
     let rscStream = flightStage.stream;
     // Timing tap: when does the Flight render produce its FIRST byte? Compared

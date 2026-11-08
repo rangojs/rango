@@ -44,14 +44,26 @@ export interface RenderRedirectWindow {
 }
 
 /**
- * Open a window where a render starts. A lane that answers the response closes
- * it where its status commits; a render that owns no response (a shell capture,
- * a PPR shell HIT's tail) leaves it open, so a redirect it reports answers
- * nothing and is reported by nobody: the lane that owns that render's failure
- * reports it (a capture's refusal, a refused write).
+ * Open a window where a render starts. The lane that answers the response
+ * closes it where its status commits; a render that starts after its response
+ * committed (a PPR shell HIT's tail) opens a closed one instead
+ * ({@link createCommittedRenderRedirectWindow}). A shell capture, whose
+ * failure is the capture's own to report, opens an open one and leaves it
+ * that way: a redirect it reports answers nothing and reports nothing.
  */
 export function createRenderRedirectWindow(): RenderRedirectWindow {
   return { closed: false };
+}
+
+/**
+ * A window for a render whose response committed before it started: a redirect
+ * a component throws there cannot answer anything, so it renders the boundary
+ * and the render reports it as a rendering error, as for any redirect that
+ * lands after its window closed. Closed from the start, because the throw can
+ * reach the render before the caller gets the stage back.
+ */
+export function createCommittedRenderRedirectWindow(): RenderRedirectWindow {
+  return { closed: true };
 }
 
 /**
