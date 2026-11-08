@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: an action that throws inside an open intercept shows the error boundary in the intercept, and the write above it
+
+**Before.** A server action submitted from an open intercept (a modal over a
+list) wrote, then threw. The call rejected, and nothing on screen changed: no
+error boundary showed anywhere, and a layout above the modal that reads the
+write (a cart count) kept its value from before the action. The response
+placed the error on the intercepted route's own page, which the browser was
+not showing, and re-ran no loader.
+
+**Now.** The modal shows the boundary an error in the intercept's handler
+shows on a navigation: the nearest `errorBoundary()` from the layout that
+declares the intercept, else the router's default, inside the intercept's
+`layout()`. The page under the modal stays on screen, as the same node, and
+the loaders above the modal re-run as after a successful action from it, so
+the cart count shows the write. The intercept's handler and loaders do not
+run, the status is 500, and the call rejects with the action's error.
+Retrying the action from the modal re-renders the intercept.
+
+| Action from an open intercept | Before                                 | Now                                                       |
+| ----------------------------- | -------------------------------------- | --------------------------------------------------------- |
+| Succeeds                      | intercept and loaders above re-render  | unchanged                                                 |
+| Throws                        | nothing changes; loaders keep old data | boundary in the modal; loaders above re-run               |
+| Throws, no boundary declared  | nothing changes                        | the router's default error boundary in the modal          |
+| Throws, then Back onto it     | the intercept re-renders (stale entry) | the boundary, then the intercept re-renders (stale entry) |
+
+No change in your code.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

@@ -37,9 +37,11 @@ export type ActionContext = {
    * revalidation (rsc/server-action.ts matchBoundaryRevalidation). The walk
    * (resolveAllSegments) resolves every entry above the segment's outlet as on
    * a success, emits the segment in the outlet's place and stops, so nothing
-   * at or below the outlet runs. The pass skips the prerender store
-   * (cache-lookup.ts): the evicted handler is under the cut. No revalidate()
-   * predicate sees it.
+   * at or below the outlet runs. A pass that resolves an intercept walks the
+   * chain as on a success, and the intercept's slot shows the error instead
+   * (intercept-resolution.ts resolveInterceptEntry). The pass skips the
+   * prerender store (cache-lookup.ts): the evicted handler is under the cut.
+   * No revalidate() predicate sees it.
    */
   boundary?: ResolvedSegment;
 };

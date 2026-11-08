@@ -19,7 +19,8 @@ import {
 } from "./segment-resolution.js";
 import { catchSegmentError } from "./segment-resolution/helpers.js";
 import { trackStreamedHandler } from "./segment-resolution/streamed-handler-boundary.js";
-import { findInOrphans } from "./error-handling.js";
+import { findInOrphans, renderErrorFallback } from "./error-handling.js";
+import { DefaultErrorFallback } from "../default-error-boundary.js";
 import {
   deliverStartedLoaders,
   resolveOwnerLoaders,
@@ -335,7 +336,8 @@ async function settleLoaderSegments(
  * background re-render resolves with a pass that holds nothing
  * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh, and
  * its loaders are skipped (skipLoaders), each registered for the handler's
- * read.
+ * read. An action that threw from the open intercept (ActionContext.boundary)
+ * gets the slot segment alone, showing the error (see `thrown` below).
  */
 export async function resolveInterceptEntry<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -357,12 +359,24 @@ export async function resolveInterceptEntry<TEnv>(
 
   const { context, params } = pass;
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
-  const { segments: loaderSegments } = await resolveInterceptLoaders(
-    pass,
-    interceptEntry,
-    parentEntry,
-    belongsToRoute,
-  );
+  // A thrown action from the open intercept (ActionContext.boundary): the
+  // slot shows the error, and neither the handler nor the loaders run (a
+  // loader the layout() reads runs for it). The ErrorInfo names the slot, as
+  // a handler's throw in it does (catchSegmentError).
+  const actionError = pass.actionContext?.boundary?.error;
+  const thrown = actionError && {
+    ...actionError,
+    segmentId: slotSegmentId,
+    segmentType: "parallel" as const,
+  };
+  const { segments: loaderSegments } = thrown
+    ? { segments: [] }
+    : await resolveInterceptLoaders(
+        pass,
+        interceptEntry,
+        parentEntry,
+        belongsToRoute,
+      );
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
   // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
   // it when called).
@@ -394,24 +408,35 @@ export async function resolveInterceptEntry<TEnv>(
   }
 
   let handlerResult: ReactNode;
-  try {
-    const handler = interceptEntry.handler;
-    handlerResult =
-      typeof handler === "function"
-        ? handleHandlerResult(
-            runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
-            ),
-          )
-        : handler;
-  } catch (error) {
-    handlerResult = renderInterceptHandlerError(
-      pass,
-      error,
-      parentEntry,
-      slotSegmentId,
-      options?.background,
+  if (thrown) {
+    // The boundary a handler's throw renders (renderInterceptHandlerError):
+    // the nearest one from the declaring entry, not the one matchError found
+    // on the target route's chain. The action's error was reported once
+    // already (rsc/server-action.ts), so not through catchSegmentError.
+    handlerResult = renderErrorFallback(
+      pass.deps.findNearestErrorBoundary(parentEntry) ?? DefaultErrorFallback,
+      thrown,
     );
+  } else {
+    try {
+      const handler = interceptEntry.handler;
+      handlerResult =
+        typeof handler === "function"
+          ? handleHandlerResult(
+              runAsSegment(slotSegmentId, () =>
+                runInSegmentTagScope(slotSegmentId, handler, context),
+              ),
+            )
+          : handler;
+    } catch (error) {
+      handlerResult = renderInterceptHandlerError(
+        pass,
+        error,
+        parentEntry,
+        slotSegmentId,
+        options?.background,
+      );
+    }
   }
   // Consumed only after the layout and loader awaits below; a rejection in that
   // window would be an unhandledRejection (process crash on Node's default
@@ -487,7 +512,14 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  const slot = slotSegment(component, layoutElement);
+  // The layout() wraps the boundary, as it wraps a handler's throw (dropping
+  // it would change the slot's element tree and remount the modal). Only this
+  // slot segment carries `error`, by which the action's revalidation
+  // (rsc/server-action.ts matchBoundaryRevalidation) finds it. _handlerRan
+  // makes the browser clear the handler's handle values.
+  if (thrown) return [{ ...slot, error: thrown, _handlerRan: true }];
+  return [slot, ...loaderSegments];
 }
 
 /**
