@@ -353,9 +353,23 @@ async function rerenderAfterFormAction<TEnv>(
   };
 
   const boundary = failure?.boundary;
-  const render = boundary
+  const renderDocument = boundary
     ? () => renderPeErrorBoundary(input, failure?.actionId, boundary)
     : renderPage;
+
+  // A component that throws redirect() during the re-render is control flow,
+  // as it is for a handler: rsc/render-redirect.ts records it and the html
+  // stage throws it at the shell. Answer it here, inside the render, so route
+  // middleware's stub headers and cookies merge into the 3xx as they do for a
+  // handler's throw (rsc/handler.ts returns the same Response from its catch).
+  const render = async (): Promise<Response> => {
+    try {
+      return await renderDocument();
+    } catch (error) {
+      if (error instanceof Response) return error;
+      throw error;
+    }
+  };
 
   // Execute route middleware wrapping the render, if any.
   // finalizeResponse drains onResponse callbacks that middleware short-circuits

@@ -27,7 +27,11 @@ vi.mock(
   () => import("../vitest-stubs/plugin-rsc.js"),
 );
 
-import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
+import {
+  createActionForm,
+  resetShellTestState,
+  serveShellRequest,
+} from "../flight.entry.js";
 import { withLocationStateKey } from "../location-state-key.js";
 import {
   cookies,
@@ -79,6 +83,34 @@ function go(): string {
 async function AsyncRedirectPage(): Promise<React.ReactNode> {
   await new Promise((resolve) => setTimeout(resolve, 5));
   throw redirect("/target");
+}
+
+/** The same, streamed after a document's shell (an inline Suspense). */
+async function StreamedRedirectPage(): Promise<React.ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  throw redirect("/target");
+}
+
+/** A page that redirects on the re-render after a no-JS form post. */
+let redirectOnFormRender = false;
+
+function FormRedirectPage(): React.ReactNode {
+  if (redirectOnFormRender) {
+    throw redirect("/target", { state: [Flash({ text: "posted" })] });
+  }
+  return <p>page</p>;
+}
+
+async function postThenRedirect(_form: FormData): Promise<void> {
+  redirectOnFormRender = true;
+}
+
+function RedirectingBoundary(): React.ReactNode {
+  throw redirect("/target");
+}
+
+async function failingFormAction(_form: FormData): Promise<void> {
+  throw new Error("form boom");
 }
 
 const patterns = urls(({ path, errorBoundary, loading, cache }) => [
@@ -377,6 +409,90 @@ describe("a component's redirect (serveShellRequest)", () => {
     });
     expect(res.response.status).toBe(302);
     expect(res.response.headers.get("Location")).toBe("/target");
+  });
+
+  it("not-found component: a navigation answers 204 + X-RSC-Redirect", async () => {
+    const router = createRouter({
+      notFound: () => <SyncRedirectPage />,
+    }).routes(patterns);
+    const res = await serveShellRequest(router, "/missing", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(res.response.status).toBe(204);
+    expect(res.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
+  it("no-JS form post: the re-render answers the redirect's 3xx and its state", async () => {
+    redirectOnFormRender = false;
+    const router = createRouter({}).routes(
+      urls(({ path }) => [
+        path("/page", () => <FormRedirectPage />, { name: "page" }),
+        path("/target", () => <p>target-page</p>, { name: "target" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/page", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(postThenRedirect, {
+        id: "component-redirect#postThenRedirect",
+        useActionState: false,
+      }),
+    });
+    expect(res.response.status).toBe(302);
+    expect(res.response.headers.get("Location")).toBe("/target");
+    expect(res.response.headers.get("Set-Cookie")).toContain("rango-state");
+  });
+
+  it("no-JS form post: a redirect from the error-boundary render answers the 3xx", async () => {
+    const router = createRouter({}).routes(
+      urls(({ path, errorBoundary }) => [
+        path(
+          "/page",
+          () => <p>page</p>,
+          { name: "page" },
+          () => [errorBoundary(() => <RedirectingBoundary />)],
+        ),
+        path("/target", () => <p>target-page</p>, { name: "target" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/page", {
+      cacheStore: new MemorySegmentCacheStore(),
+      form: createActionForm(failingFormAction, {
+        id: "component-redirect#failingFormAction",
+        useActionState: false,
+      }),
+    });
+    expect(res.response.status).toBe(302);
+    expect(res.response.headers.get("Location")).toBe("/target");
+  });
+
+  it("limit: a redirect streamed after the shell (inline Suspense) is out of time", async () => {
+    // Pinned, not wanted: the shell is out before the component throws, so a
+    // document answers the 200 it committed. The same route without the
+    // Suspense boundary answers the redirect (documentRequest("/async") in a
+    // real render), which needs real Fizz and is covered by e2e.
+    const router = createRouter({}).routes(
+      urls(({ path }) => [
+        path(
+          "/streamed",
+          () => (
+            <React.Suspense fallback={<p>pending</p>}>
+              <StreamedRedirectPage />
+            </React.Suspense>
+          ),
+          { name: "streamed" },
+        ),
+        path("/target", () => <p>target-page</p>, { name: "target" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/streamed", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(res.response.status).toBe(200);
+    expect(res.flight).toContain('"digest"');
+    expect(res.response.headers.get("Location")).toBeNull();
   });
 
   it("limit: an async component's redirect is reported after the status commits, so the boundary renders", async () => {
