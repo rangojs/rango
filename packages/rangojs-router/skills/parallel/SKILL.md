@@ -234,6 +234,15 @@ block the parent layout or sibling routes during SSR:
   existing parallel UI stays visible — no skeleton flash on route changes
   within the same layout.
 
+A slot handler that returns `redirect()` is the one place the streaming rules
+differ from the fallback: on a navigation, an async handler under `loading()`
+streams after the response has started, so its `Response` is not a redirect
+(the dev warning names it). An action's revalidation awaits the handler
+instead, as it awaits a route's under `loading()`: the redirect navigates the
+page, and a handler error or `notFound()` answers the action with its own
+status. Without `loading()`, a returned or thrown `Response` redirects on
+both.
+
 ```typescript
 // Sidebar streams independently — page renders immediately
 parallel(

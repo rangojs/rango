@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `parallel()` slot handler under `loading()` redirects from an action
+
+**Before.** A `parallel()` slot whose handler declared `loading()` and
+returned `redirect()` from an async handler answered an action's revalidation
+with `200` and the `Response` as the slot's component, which the browser
+failed to render. A slot handler without `loading()` did the same for a
+returned `Response`: the slot's handler result never went through
+`handleHandlerResult`, so only a thrown one short-circuited.
+
+**Now.** An action's revalidation awaits the slot's handler, and a `Response`
+it returns or throws short-circuits the action as a route handler's does:
+`204` + `X-RSC-Redirect`. A handler error or `notFound()` reaches the same
+boundary with the action's own status (`500` / `404`). A slot handler without
+`loading()` redirects on a navigation too. A navigation still streams a slot
+handler under `loading()`.
+
+### Fixed: an intercept handler under `loading()` redirects from an action
+
+**Before.** An `intercept()` whose handler declared `loading()` and returned
+`redirect()` from an async handler answered an action's revalidation with
+`200` and the `Response` in the Flight payload: the browser kept the page and
+the slot failed to render. The same handler on a route under `loading()`
+answered `204` + `X-RSC-Redirect`.
+
+**Now.** An action's revalidation awaits the intercept's handler, so a thrown
+`Response` short-circuits the action as a route handler's does: `204` +
+`X-RSC-Redirect`, and the browser navigates. A handler error or `notFound()`
+reaches the same boundary with the action's own status (`500` / `404`) instead
+of a `200` whose streamed rejection arrived after the flush. A navigation
+still streams the handler under the slot's `loading()` fallback.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

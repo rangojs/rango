@@ -86,11 +86,15 @@ rest, as it keeps a route loader it holds (pinned by the `[I3]` semantic matrix
 row). The intercept handler re-runs on every request that resolves the
 intercept, except a fill (flow 5) in which the client holds the slot: there
 neither the handler nor the intercept's layout runs, only the loaders the
-client lacks run. A runtime `cache()` hit or a `Prerender()` target serves the
-stored slot and resolves only its loaders. The browser folds the
-loader segments back onto the slot before it builds the tree
-(`segment-system.tsx` `foldInterceptLoaders`), so the page under the modal
-keeps its element tree.
+client lacks run. A handler under the slot's `loading()` streams on a
+navigation, and an action's revalidation awaits it instead, as
+`resolveRouteComponent` awaits a route's: a thrown `Response` (`redirect()`)
+or `notFound()` then answers the action as a route handler's does, rather than
+surfacing inside the payload after the response has started. A runtime
+`cache()` hit or a `Prerender()` target serves the stored slot and resolves
+only its loaders. The browser folds the loader segments back onto the slot
+before it builds the tree (`segment-system.tsx` `foldInterceptLoaders`), so the
+page under the modal keeps its element tree.
 
 The page under an intercept never renders on an intercept request: the
 route entry is skipped (`router/segment-resolution/revalidation.ts`), and
@@ -535,6 +539,11 @@ See "Rewrite" below for what moves and what stays.
   navigation (existing slot UI stays visible, data refreshes in background),
   and on cache-hit paths (loaders are reconstructed fresh).
   Without `loading()`, parallel loaders block the parent.
+- A slot handler under `loading()` streams on a navigation and is awaited on
+  an action's revalidation, as a route's is: a thrown `Response`
+  (`redirect()`) short-circuits the action (`204` + `X-RSC-Redirect`) instead
+  of being serialised into the payload as the slot's component
+  (`resolveParallelSlotComponent`, `router/segment-resolution/revalidation.ts`).
 - Slot override: when multiple `parallel()` calls define the same `@slot` name,
   the last definition wins. Earlier definitions of that slot are removed.
 - **PPR commits after the whole middleware chain.** The shell serve path (opt-in
@@ -1017,8 +1026,12 @@ not awaited at the resolution boundary (`resolveEntryHandler` in
 during RSC serialization, where it is rendered into the stream via React's
 error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
 return on a `loading()` route still throws synchronously and redirects correctly;
-only the async/Promise sub-branch is affected. Parallel slots with `loading()`
-share this behavior.
+only the async/Promise sub-branch is affected. A parallel slot with `loading()`
+shares this on a navigation.
+
+An action's revalidation is the exception on every handler kind: it awaits the
+route's, the slot's and the intercept's handler, so a returned or thrown
+`Response` short-circuits the action's own answer (`204` + `X-RSC-Redirect`).
 
 To redirect from a `loading()` route, issue the redirect from middleware, a
 loader, or a synchronous handler return. In development, `warnOnStreamedResponse`

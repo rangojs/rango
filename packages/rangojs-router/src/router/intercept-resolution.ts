@@ -453,7 +453,15 @@ export async function resolveInterceptEntry<TEnv>(
       recover: !options?.background,
     });
 
-  if (interceptEntry.loading && loaderSegments.length > 0) {
+  // An action awaits the intercept's handler, as it awaits a route's
+  // (segment-resolution/revalidation.ts resolveRouteComponent): a thrown
+  // Response then short-circuits the action's answer (204 + X-RSC-Redirect)
+  // instead of being serialised into the payload, where the browser rendered
+  // it as the slot's component and stayed on the page. Only a navigation
+  // streams the handler under the slot's loading().
+  const streamsUnderLoading = !!interceptEntry.loading && !pass.actionContext;
+
+  if (streamsUnderLoading && loaderSegments.length > 0) {
     if (handlerResult instanceof Promise) {
       warnOnStreamedResponse(
         handlerResult,
@@ -464,7 +472,7 @@ export async function resolveInterceptEntry<TEnv>(
       handlerResult instanceof Promise
         ? streamedComponent(handlerResult)
         : (Promise.resolve(handlerResult) as ReactNode);
-  } else if (interceptEntry.loading && handlerResult instanceof Promise) {
+  } else if (streamsUnderLoading && handlerResult instanceof Promise) {
     component = streamedComponent(handlerResult);
   } else {
     if (!interceptEntry.loading) await settleLoaderSegments(loaderSegments);

@@ -424,9 +424,12 @@ not in the route. On a handler error the modal layout and the background page
 stay mounted, and the status is 500 / 404. A thrown `Response` (`redirect()`)
 still short-circuits the navigation.
 
-With `loading()`, an async handler streams after the response has started, so
-its rejection is not caught on the server. Wrap the modal layout's `<Outlet />`
-in a client error boundary.
+With `loading()`, an async handler streams after the response has started on a
+navigation, so its rejection is not caught on the server. Wrap the modal
+layout's `<Outlet />` in a client error boundary. An action's revalidation
+awaits the handler instead, as it awaits a route's under `loading()`: a thrown
+`Response` (`redirect()`) or `notFound()` answers the action, so the modal's
+redirect navigates the page.
 
 An `errorBoundary()` or `notFoundBoundary()` placed directly in the intercept's
 `use()` (or returned from its handler's `.use`) throws at definition time. Put
