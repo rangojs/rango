@@ -135,6 +135,7 @@ export const NamedRoutes = {
   holeyShellPpr: "/holey-throws/shell-ppr",
   holeyShellRedirect: "/holey-throws/shell-redirect",
   holeyShellRedirectState: "/holey-throws/shell-redirect-state",
+  holeyShellRenderRedirect: "/holey-throws/shell-render-redirect",
   holeyShellSsrThrow: "/holey-throws/shell-ssr-throw",
   holeyShellSsrThrowBounded: "/holey-throws/shell-ssr-throw-bounded",
   holeyShellTarget: "/holey-throws/shell-target",

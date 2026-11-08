@@ -226,6 +226,9 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    // A rendered redirect is control flow, not an unhandled error: it logs
+    // nothing, as a loader redirect caught by a segment boundary logs nothing.
+    if (renderedRedirectFromError(error)) return;
     console.error(
       "[RootErrorBoundary] Unhandled error caught:",
       error,

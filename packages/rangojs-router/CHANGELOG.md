@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `redirect()` thrown by a server component navigates, instead of showing the error page
+
+**Before.** A component can only throw, so a session gate written as an async
+server component (`if (!session) throw redirect("/login")`) surfaced during the
+RSC render as a Flight error row. The visitor got the error page instead of
+`/login`, on a document load and on a click, in dev and in production. The
+documented place for the gate was middleware or a loader; the same funnel also
+swallowed a `redirect()` thrown by an async handler that declares `loading()`.
+
+**Now.** A `redirect()` thrown during the render is control flow, as one a
+loader throws is. The render recognises it, never reports or prints it, and
+answers it: a document whose shell it fails gets the redirect's own 3xx with
+`Location` (a `redirect(url, { state })` keeps the recovery document, so the
+client replace carries the state), and otherwise the browser navigates through
+the router's own boundaries. Nothing stores such a render — the document
+cache, a `ppr` shell, a `cache()` record and a prefetch all refuse it, because
+a redirect can depend on the request.
+
+A `Response` that is not a redirect, thrown from an async handler under
+`loading()`, is unchanged: it still renders into the stream and warns in dev.
+
+```tsx
+// Works now, on a document load and on a click.
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

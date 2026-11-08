@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { createLoader, notFound, redirect, urls } from "@rangojs/router";
 import {
   HoleyShellHooks,
@@ -84,6 +85,23 @@ function shellPage(loader: typeof HoleyShellLoader) {
   };
 }
 
+// Fixture: the reported shape. An async server component checks the session
+// and throws redirect() for a visitor who is not signed in. It is a
+// component, not the handler, so the throw surfaces during the render, after
+// the response started streaming.
+async function HoleyShellRenderRedirector(): Promise<ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  throw redirect("/holey-throws/shell-target");
+}
+
+function HoleyShellRenderRedirectPage(): ReactNode {
+  return (
+    <main data-testid="holey-shell-page">
+      <HoleyShellRenderRedirector />
+    </main>
+  );
+}
+
 function HoleyShellSsrThrowPage() {
   return (
     <main data-testid="holey-shell-page">
@@ -136,6 +154,11 @@ export const holeyThrowsPatterns = urls(
         shellPage(HoleyShellLoader),
         { name: "holeyShellPpr", ppr: { ttl: 300, swr: 120 } },
         () => [loader(HoleyShellLoader)],
+      ),
+      path(
+        "/holey-throws/shell-render-redirect",
+        HoleyShellRenderRedirectPage,
+        { name: "holeyShellRenderRedirect" },
       ),
       path("/holey-throws/shell-ssr-throw", HoleyShellSsrThrowPage, {
         name: "holeyShellSsrThrow",

@@ -579,12 +579,13 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   whole document, and a Prerender route still fails the build.
 - With no declared boundary the rejection reaches the client and
   `RootErrorBoundary` replaces the page. A `redirect()` thrown from a streamed
-  handler is not recovered either (see "Redirects").
+  handler is not an error: it navigates (see "Redirects").
 
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
-Return it from a handler or middleware, or throw it from a loader.
+Return it from a handler or middleware, or throw it from a loader or a server
+component.
 
 ### Basic redirect
 
@@ -618,12 +619,39 @@ path(
 
 > **Redirecting from a route with `loading()`:** an `async` handler that returns
 > a `Response`/`redirect()` on a route that also declares `loading()` is streamed,
-> so the redirect is rendered into the RSC stream instead of becoming an HTTP
-> redirect. For a real HTTP redirect, issue it from `middleware` or a
-> **synchronous** handler return — pre-stream redirect authority belongs there.
+> so a `redirect()` is answered from the render: a client navigation, or a real
+> 3xx on a document load whose shell it fails (with `state`, the recovery
+> document then a client replace). For a redirect before any render starts,
+> issue it from `middleware` or a **synchronous** handler return. A raw-content
+> `Response` (JSON, text) is NOT control flow there and still renders into the
+> stream — issue that from `middleware`, a loader, or a synchronous handler
+> return. Dev logs a warning for that case.
 > (A loader `throw redirect()` also navigates the user, but it is ALWAYS a
 > client-side replace on document loads — 200 document, never a 302; see
-> `/loader` → "Loader Authority". Dev logs a warning if this is hit.)
+> `/loader` → "Loader Authority".)
+
+### Redirecting from a component
+
+A server component can only throw, so `throw redirect(...)` inside one is
+control flow, as it is in a loader — and it is the way to gate a page whose
+check needs the render's own data. On a document load the visitor gets a real
+3xx when the throw fails the server render (no `<Suspense>` above it), and a
+client replace otherwise; on a click, a client replace. A `redirect(url, {
+state })` keeps its state on both lanes.
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+```
+
+Never reported to `onError`, never printed, and never stored: a `redirect()`
+can depend on the request, so the document cache, a `ppr` shell and a `cache()`
+record refuse the render and a prefetch of it is dropped. For a gate that needs
+no render data, `middleware` is still the cheapest 302 (it runs before the
+render).
 
 ### Redirect with location state
 

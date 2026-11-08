@@ -106,6 +106,7 @@ const SHELL_CASES = [
   "shell-not-found",
   "shell-redirect",
   "shell-redirect-state",
+  "shell-render-redirect",
   "shell-ppr",
   "shell-ssr-throw",
   "shell-ssr-throw-bounded",

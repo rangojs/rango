@@ -740,6 +740,26 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   `safeSameOriginLanding`, `resolveSoftRedirectUrl`) back both the client
   validators and the server 3xx/soft paths. See
   `docs/internal/security-checklist.md`.
+- A `redirect()` thrown during the RSC render (a server component, or an async
+  handler under `loading()`) is control flow, not an error. React carries the
+  render `onError`'s return value to the browser as the error row's `digest`,
+  so `createFlightStage` (`rsc/render-pipeline.ts`) recognises a redirect
+  `Response` there, resolves it through `resolveSoftRedirectUrl` and answers the
+  row with `renderedRedirect.ts`'s digest (target, status, resolved location
+  state); it never reports to `onError` and never prints. The browser navigates
+  from the router's own boundaries, which mount `LoaderRedirect` for that
+  digest (`StreamedLoaderErrorBoundary` in `route-content-wrapper.tsx`,
+  `RootErrorBoundary` in `root-error-boundary.tsx`; the root one logs nothing
+  for it), and a document whose shell the throw fails answers the redirect's
+  own 3xx with `Location` and an empty body (`answerShellError` in
+  `ssr/shell-error-document.tsx`, which already answered a loader redirect
+  there); `redirect(url, { state })` keeps the 200 recovery document so the
+  client replace carries the state. Such a render is still listed in
+  `_renderErrors`, so the document cache, a `ppr` capture, a `cache()` record
+  and a prerender warm refuse it and a prefetch of it is evicted: a redirect
+  can depend on the request. A non-redirect `Response` thrown from a streamed
+  handler is unchanged (see `docs/internal/execution-model.md`, "Limitation: a
+  non-redirect Response ...").
 - `throw rewrite(target)` from middleware (before `await next()`) renders
   another route at the same URL: a path (basename-prefixed, kept under the
   basename) or a global route name with params and search. The `Rewrite`

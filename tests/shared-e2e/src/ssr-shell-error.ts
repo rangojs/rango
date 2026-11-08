@@ -30,6 +30,7 @@ type Case =
   | "shell-not-found"
   | "shell-redirect"
   | "shell-redirect-state"
+  | "shell-render-redirect"
   | "shell-ppr"
   | "shell-ssr-throw"
   | "shell-ssr-throw-bounded"
@@ -120,7 +121,13 @@ async function expectRendered(page: Page): Promise<void> {
 }
 
 const screens: Record<
-  Exclude<Case, "shell-redirect" | "shell-redirect-state" | "shell-hooks">,
+  Exclude<
+    Case,
+    | "shell-redirect"
+    | "shell-redirect-state"
+    | "shell-render-redirect"
+    | "shell-hooks"
+  >,
   (page: Page) => Promise<void>
 > = {
   // No boundary: the router's root error boundary replaces the layouts.
@@ -228,6 +235,7 @@ export function defineSsrShellErrorTests(
       Case,
       | "shell-redirect"
       | "shell-redirect-state"
+      | "shell-render-redirect"
       | "shell-hooks"
       | "shell-not-found"
     >;
@@ -383,6 +391,32 @@ export function defineSsrShellErrorTests(
     expect(await onErrorFor(page, f, "shell-redirect")).toEqual([]);
 
     await navigateFromIndex(page, f, "shell-redirect");
+    await expectTarget(page, "none");
+  });
+
+  test("shell-render-redirect: a redirect() a component throws answers a real redirect, and a click navigates", async ({
+    page,
+  }) => {
+    const f = fixture();
+    await clearOnErrorLog(page, f);
+
+    const raw = await rawDocument(page, f, "shell-render-redirect");
+
+    // The reported shape: the session check lives in an async server
+    // component, so the throw surfaces during the render, not at the handler.
+    // Nothing has been sent when the shell fails, so the document answers the
+    // redirect's own status, as a loader redirect outside <Suspense> does.
+    expect(raw.status).toBe(302);
+    expect(raw.headers.location).toMatch(/\/holey-throws\/shell-target$/);
+    expect(raw.body).toBe("");
+    const response = await page.goto(f.url(pathOf("shell-render-redirect")));
+    expect(response?.status()).toBe(200);
+    await expectTarget(page, "none");
+    // Control flow, not an error: never reported to onError.
+    expect(await onErrorFor(page, f, "shell-render-redirect")).toEqual([]);
+
+    // And the click lane: the error row's digest navigates the browser.
+    await navigateFromIndex(page, f, "shell-render-redirect");
     await expectTarget(page, "none");
   });
 

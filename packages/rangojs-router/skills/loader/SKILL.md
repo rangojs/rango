@@ -1071,7 +1071,9 @@ print.
 
 Session/auth gates belong in middleware (they are request-shaped, not
 data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
-"this slug moved / does not exist" belongs in the loader.
+"this slug moved / does not exist" belongs in the loader. A gate that needs the
+page's own data can also live in a server component as `throw redirect(...)`:
+the render answers it (see `/route` → "Redirecting from a component").
 
 ## Writing Handles from Loaders (meta, breadcrumbs)
 

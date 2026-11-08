@@ -1003,27 +1003,65 @@ Any change to handler loading shapes must update:
 3. Type-level tests in `__tests__/route-entry-handler-types.check.ts`
 4. Unit tests in `router/__tests__/debug-manifest.test.ts`
 
-### Limitation: a Response from an async handler under `loading()` is not a redirect
+### A redirect thrown during the render
 
-On a route **without** `loading()`, a handler that returns or throws a `Response`
-(e.g. `redirect()`) short-circuits to an HTTP redirect: the handler is awaited at
-the resolution boundary, so the thrown `Response` propagates out to `match()`
-and becomes a 302/308.
+A component cannot return anything but its tree, so a session gate written in
+one (`if (!session) throw redirect("/login")`) can only throw. React's Flight
+renderer turns that throw into an error row, and an error row reaches the
+browser with one string attached: the value the render's `onError` returned,
+which React sends as the row's `digest` (`logRecoverableError` in
+react-server-dom-webpack). So a render-time redirect rides that channel:
+`createFlightStage` (`rsc/render-pipeline.ts`) recognises a redirect `Response`
+in `onError`, resolves its target through the shared soft-redirect rule, and
+returns the digest `rendered-redirect.ts` builds. It never calls `onError` and
+never prints — control flow, like a loader's `redirect()`.
+
+The browser half is the router's own boundaries. `StreamedLoaderErrorBoundary`
+(`route-content-wrapper.tsx`) and `RootErrorBoundary` (`root-error-boundary.tsx`)
+read the digest off the error they caught and mount the same `LoaderRedirect` a
+loader redirect mounts; every other error keeps its fallback, and the root
+boundary logs nothing for one. The reported page has no loader, so it is the
+root boundary that answers it.
+
+The document half is `answerShellError` (`ssr/shell-error-document.tsx`): Fizz
+rethrows the row's decoded error, digest included, so a shell the throw fails
+answers the redirect's own 3xx with `Location` and an empty body, exactly as a
+loader redirect outside `<Suspense>` does. A `redirect(url, { state })` keeps
+the 200 recovery document, because the state rides the history entry the client
+replace writes.
+
+Nothing stores such a render. It is listed in `_renderErrors` (the same list a
+Flight error row lands in), so the document cache, a `ppr` shell capture, a
+`cache()` record and a prerender warm all refuse it, and a prefetch of it ends
+with `PREFETCH_FAILED_ROW` and is evicted. A redirect can depend on the request
+(a session), so a stored one would redirect every later visitor.
+
+The same funnel answers an async handler that declares `loading()` and throws
+`redirect()`: its rejection surfaces in the render too. A **synchronous**
+`Response` return on a `loading()` route, or on one without it, still throws
+synchronously and short-circuits to the 3xx before any render (`match()`).
+Pinned by `testing/__tests__/rendered-redirect.rsc-test.tsx` (document,
+navigation, sync, `<Suspense>`, a `loading()` handler, `state`, prefetch,
+`cache()`, the document cache, and a non-redirect `Response` unchanged),
+`__tests__/rendered-redirect-boundaries.test.tsx` (both boundaries),
+`ssr/__tests__/shell-error-document.test.tsx` (the 3xx, with state, in dev) and
+the `shell-render-redirect` e2e case (both apps, dev and production).
+
+### Limitation: a non-redirect Response from an async handler under `loading()` is not control flow
 
 On a route that declares `loading()`, the handler result is **streamed** — it is
 not awaited at the resolution boundary (`resolveEntryHandler` in
-`segment-resolution/revalidation.ts`). So an
-**async** handler that returns a `Response` has that `Response` surface only
-during RSC serialization, where it is rendered into the stream via React's
-error boundary instead of becoming an HTTP redirect. A **synchronous** `Response`
-return on a `loading()` route still throws synchronously and redirects correctly;
-only the async/Promise sub-branch is affected. Parallel slots with `loading()`
-share this behavior.
+`segment-resolution/revalidation.ts`). So an **async** handler that returns a
+`Response` that is not a redirect (raw JSON, text, a file) has that `Response`
+surface only during RSC serialization, where it is rendered into the stream via
+React's error boundary instead of becoming the response. Parallel slots with
+`loading()` share this behavior.
 
-To redirect from a `loading()` route, issue the redirect from middleware, a
-loader, or a synchronous handler return. In development, `warnOnStreamedResponse`
+Issue such a response from middleware, a loader, or a synchronous handler
+return. In development, `warnOnStreamedResponse`
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
-or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
+or rejects with a non-redirect `Response`, so the swallowed-response failure
+mode is visible.
 
 ### Streamed handler rejections render the declared boundary
 
@@ -1061,8 +1099,8 @@ Rules that are easy to break:
   foreground's accumulators, including the map the foreground allocated lazily).
   A new writer must read one of
   them.
-- Never recovered: no boundary found, a thrown `Response` (the redirect
-  limitation above), a `Skip`, a throwing fallback, `recover: false`
+- Never recovered: no boundary found, a thrown `Response` that is not a
+  redirect (the limitation above), a `Skip`, a throwing fallback, `recover: false`
   (`throwOnError` for prerender and on-demand refresh, which must reject, and
   the intercept `background` re-render, which must not write a
   fallback, #878).
@@ -1093,10 +1131,12 @@ host answered its raw 500 (a stack with server paths in production).
 `renderHTML` (`ssr/index.tsx`) now answers it (`ssr/shell-error-document.tsx`
 `answerShellError`), in this order:
 
-1. A loader `redirect()` with no state: a real 3xx with `Location`, empty body
-   (the marker carries the redirect's own `status`, `loader-resolution.ts`).
-   With `state` it falls through: the state rides the history entry the
-   client replace writes, which a 3xx cannot carry.
+1. A `redirect()` with no state, thrown by a loader or during the render: a
+   real 3xx with `Location`, empty body. A loader's marker carries the
+   redirect's own `status` (`loader-resolution.ts`); a render throw carries it
+   in its error row's digest (`rendered-redirect.ts`). With `state` it falls
+   through: the state rides the history entry the client replace writes, which
+   a 3xx cannot carry.
 2. The payload decoded and the tree built: a recovery document,
    `<html data-rango-ssr-error>`, a `<noscript>` heading (a JavaScript visitor
    sees the client render's boundary, not a flash of the heading), the theme
@@ -1135,7 +1175,10 @@ Rules that are easy to break:
   (`isFlightDecodedError`: it sets `digest`, so the html stage skips its
   copy); a `notFound()`/`redirect()` marker is control flow and is never
   reported or printed (`isLoaderSignalError`, name-based because the RSC and
-  SSR environments hold different module instances of the marker symbols).
+  SSR environments hold different module instances of the marker symbols), and
+  so is a redirect thrown during the render (`isControlFlow` in `ssr/index.tsx`
+  over `renderedRedirectFromError`: its digest names it, and it is answered as
+  in production in dev too).
 - One console line per failure: see "Server errors print once, where they
   originate" below. On the SSR side `renderHTML` prints only what originated
   in its render (`originatedHere`: not a loader's rebuild, not a Flight copy,
