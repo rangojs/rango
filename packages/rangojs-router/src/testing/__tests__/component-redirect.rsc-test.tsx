@@ -81,7 +81,7 @@ async function AsyncRedirectPage(): Promise<React.ReactNode> {
   throw redirect("/target");
 }
 
-const patterns = urls(({ path, errorBoundary }) => [
+const patterns = urls(({ path, errorBoundary, loading, cache }) => [
   path("/start", () => <p>start</p>, { name: "start" }),
   path("/target", () => <p>target-page</p>, { name: "target" }),
   path("/sync", () => <SyncRedirectPage />, { name: "sync" }),
@@ -101,6 +101,21 @@ const patterns = urls(({ path, errorBoundary }) => [
     () => [errorBoundary(({ error }) => <p>bounded:{error.message}</p>)],
   ),
   path("/async", () => <AsyncRedirectPage />, { name: "async" }),
+  // A cache() route: the redirect answers before any record is written.
+  path(
+    "/cached",
+    () => <SyncRedirectPage />,
+    { name: "cached" },
+    () => [cache({ ttl: 60 })],
+  ),
+  // The component renders inside a Suspense boundary: its sync throw is still
+  // in the render's opening flush, and the document's shell is ready anyway.
+  path(
+    "/loading",
+    () => <SyncRedirectPage />,
+    { name: "loading" },
+    () => [loading(<p>loading-fallback</p>)],
+  ),
 ]);
 
 /** A handler redirect: the lane a component's must match. */
@@ -307,6 +322,32 @@ describe("a component's redirect (serveShellRequest)", () => {
     });
     expect(res.response.status).toBe(204);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("loading() route: both lanes answer it, the fallback never renders", async () => {
+    const document = await documentRequest("/loading");
+    expect(document.response.status).toBe(302);
+    expect(document.response.headers.get("Location")).toBe("/target");
+    const nav = await navigation("/start", "/loading");
+    expect(nav.response.status).toBe(204);
+    expect(nav.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
+  it("cache() route: answered every time, never stored", async () => {
+    const router = makeRouter();
+    const store = new MemorySegmentCacheStore();
+    for (const attempt of ["first", "second"]) {
+      const res = await serveShellRequest(router, "/cached", {
+        cacheStore: store,
+        partial: { from: "/start" },
+      });
+      expect(res.response.status, attempt).toBe(204);
+      expect(res.response.headers.get("X-RSC-Redirect"), attempt).toBe(
+        "http://localhost/target",
+      );
+    }
   });
 
   it("action revalidation: the re-render answers it as a handler's redirect is answered", async () => {
