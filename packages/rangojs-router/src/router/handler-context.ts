@@ -20,6 +20,7 @@ import {
 import {
   assertCachedHeaderWriteAllowed,
   assertNonCacheableReadAllowed,
+  runAsSegment,
   scopeReverse,
   type ReverseScope,
   type ScopableReverse,
@@ -207,23 +208,90 @@ function createPrerenderPassthroughFn(
 }
 
 /**
- * The ctx a layout's or parallel slot's handler gets: a prototype child of
- * the request's one handler ctx with its own `reverse` in the segment's
- * ReverseScope, so `.name` resolves in the module that declared the segment.
- * The scope rides the object, not the call frame: it holds after an `await`
- * and in a component the ctx is handed to. Every other field reads through
- * live (`_currentSegmentId` as resolution moves it, ctx.set values).
- * `_reverseScope` keys a "use cache" call that takes this ctx (cache-runtime.ts).
+ * The ctx a segment's handler gets: a child of the request's one handler ctx,
+ * stamped with the segment it owns and given that segment's `use`, plus its
+ * own `reverse` in the segment's ReverseScope so `.name` resolves in the
+ * module that declared the segment. Ownership rides the object, not the call
+ * frame: it holds after an `await` and in a component the ctx is handed to,
+ * where the shared `_currentSegmentId` the walker moves has already named a
+ * later segment (segmentPinOf).
+ *
+ * The request's fields are copied as own properties, so `{ ...ctx }` from a
+ * handler carries what it carried when every handler shared the one ctx (a
+ * spread copies own enumerable keys only, the NOCACHE symbol included). The
+ * prototype still answers for a field added to the request's ctx later, and
+ * `_currentSegmentId` stays an accessor: the walker moves it as it resolves.
+ * `_reverseScope` keys a "use cache" call that takes this ctx
+ * (cache-runtime.ts).
  */
-export function withReverseScope<C>(
+export function withSegmentContext<C>(
   ctx: C,
+  segmentId: string,
   scope: ReverseScope | undefined,
 ): C {
-  if (scope === undefined) return ctx;
-  const scoped = Object.create(ctx as object);
-  scoped.reverse = scopeReverse((ctx as any).reverse, scope);
-  scoped._reverseScope = scope;
+  const scoped = Object.create(ctx as object) as C & {
+    use: HandlerContext["use"];
+    _owningSegmentId?: string;
+    _reverseScope?: ReverseScope;
+    reverse?: ScopableReverse;
+  };
+  Object.defineProperty(scoped, "_currentSegmentId", {
+    get() {
+      return (ctx as { _currentSegmentId?: string })._currentSegmentId;
+    },
+    set(value: string | undefined) {
+      (ctx as { _currentSegmentId?: string })._currentSegmentId = value;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  copyRequestFields(scoped, ctx as Record<PropertyKey, unknown>);
+  scoped._owningSegmentId = segmentId;
+  if (scope !== undefined) {
+    scoped.reverse = scopeReverse((ctx as any).reverse, scope);
+    scoped._reverseScope = scope;
+  }
+  // Bound to this object, not read off the receiver: a destructured or
+  // spread-copied `use` keeps the segment (the detached call shape). The
+  // parent's `use` is read at call time, so an interceptor installed later on
+  // the request's ctx (loader-cache.ts) still answers.
+  scoped.use = ((item: Parameters<HandlerContext["use"]>[0]) =>
+    runAsSegment(segmentId, () =>
+      (ctx as { use: HandlerContext["use"] }).use(item),
+    )) as HandlerContext["use"];
   return scoped;
+}
+
+/** The data fields of a request's handler ctx, computed once per ctx. */
+const COPY_FIELDS = Symbol("rango:segment-ctx-fields");
+
+/**
+ * Copy the request's own data fields onto a segment's ctx. Getters are left to
+ * the prototype: a pre-render or static ctx refuses `request` by throwing from
+ * its getter, and reading it here would refuse every handler. `use` and the
+ * walker's pin are left out too: the segment's ctx binds its own.
+ */
+function copyRequestFields(
+  target: Record<PropertyKey, unknown>,
+  source: Record<PropertyKey, unknown>,
+): void {
+  let fields = source[COPY_FIELDS] as PropertyKey[] | undefined;
+  if (fields === undefined) {
+    fields = [];
+    for (const key of Reflect.ownKeys(source)) {
+      if (
+        key === "use" ||
+        key === "_currentSegmentId" ||
+        key === "_owningSegmentId"
+      ) {
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(source, key);
+      if (descriptor?.enumerable && "value" in descriptor) fields.push(key);
+    }
+    Object.defineProperty(source, COPY_FIELDS, { value: fields });
+  }
+  for (const key of fields) target[key] = source[key];
 }
 
 /**
@@ -245,7 +313,7 @@ export function createReverseFunction(
 ): ScopableReverse {
   return (name, hrefParams, search, segmentScope) => {
     // A dot-local name from a segment's handler or loader resolves in the
-    // segment's own include scope (withReverseScope); everything else from
+    // segment's own include scope (withSegmentContext); everything else from
     // the route's name.
     const scope = name.startsWith(".") ? segmentScope : undefined;
     const pattern = scope

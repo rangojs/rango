@@ -22,9 +22,13 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
-  withReverseScope,
+  withSegmentContext,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
 
 beforeEach(() => {
@@ -537,7 +541,7 @@ describe("createReverseFunction", () => {
     });
   });
 
-  describe("segment reverse scope (withReverseScope)", () => {
+  describe("segment ctx (withSegmentContext)", () => {
     // include("/:accountId", account, { name: "account" }) containing
     // include("/:projectId", project, { name: "project" }).
     const nestedMap: Record<string, string> = {
@@ -589,24 +593,42 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+    it("the scope and the owning segment ride the ctx; other fields read through live", () => {
+      const pushed: string[] = [];
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
+        // Stands in for setupLoaderAccess's use: it resolves the segment
+        // once, when the push function is created, as the real one does.
+        use: ((_item: unknown) => {
+          const segment = segmentPinOf(ctx as any);
+          return (value: string) => pushed.push(`${segment}:${value}`);
+        }) as unknown as InternalHandlerContext<any, any>["use"],
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
-      const scoped = withReverseScope(ctx, scope);
+      const scoped = withSegmentContext(ctx, "L0", scope);
       // Destructured and called later, as a component handed the ctx does.
-      const { reverse } = scoped;
-      ctx._currentSegmentId = "L1";
+      const { reverse, use } = scoped;
+      // The walker moves the shared pin on before the component runs.
+      ctx._currentSegmentId = "R0";
       expect(reverse(".settings")).toBe("/acme/settings");
-      expect(scoped._currentSegmentId).toBe("L1");
+      expect(scoped._currentSegmentId).toBe("R0");
+      expect(scoped._owningSegmentId).toBe("L0");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
-      // The shared ctx keeps the route's resolution.
+      (use as (item: unknown) => (value: string) => void)({ $$id: "crumb" })(
+        "late",
+      );
+      expect(pushed).toEqual(["L0:late"]);
+      // The shared ctx keeps the route's resolution and the pin's segment.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
-      expect(withReverseScope(ctx, undefined)).toBe(ctx);
+      expect(segmentPinOf(ctx)).toBe("R0");
+      // No reverse scope still gets its own owner.
+      const plain = withSegmentContext(ctx, "R1", undefined);
+      expect(plain).not.toBe(ctx);
+      expect(plain._owningSegmentId).toBe("R1");
+      expect(plain.reverse).toBe(ctx.reverse);
     });
   });
 

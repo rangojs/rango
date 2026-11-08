@@ -34,6 +34,7 @@ import {
   runAsSegment,
 } from "../server/context.js";
 import { _getRequestContext } from "../server/request-context.js";
+import { withSegmentContext } from "./handler-context.js";
 
 /**
  * Header-guard latch for the intercept funnels (issue #713). ppr and
@@ -393,6 +394,9 @@ export async function resolveInterceptEntry<TEnv>(
     return [slotSegment(null, undefined), ...loaderSegments];
   }
 
+  // The intercept's own ctx: a component it hands the ctx to pushes after
+  // the main walk moved the shared pin on.
+  const slotContext = withSegmentContext(context, slotSegmentId, undefined);
   let handlerResult: ReactNode;
   try {
     const handler = interceptEntry.handler;
@@ -400,7 +404,7 @@ export async function resolveInterceptEntry<TEnv>(
       typeof handler === "function"
         ? handleHandlerResult(
             runAsSegment(slotSegmentId, () =>
-              runInSegmentTagScope(slotSegmentId, handler, context),
+              runInSegmentTagScope(slotSegmentId, handler, slotContext),
             ),
           )
         : handler;
@@ -425,7 +429,7 @@ export async function resolveInterceptEntry<TEnv>(
       const layoutResult = await runInSegmentTagScope(
         slotSegmentId,
         layout,
-        context,
+        slotContext,
       );
       if (layoutResult instanceof Response) {
         throw layoutResult;

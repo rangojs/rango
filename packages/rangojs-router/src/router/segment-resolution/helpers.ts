@@ -34,7 +34,7 @@ import type { SegmentResolutionDeps } from "../types.js";
 import { debugLog } from "../logging.js";
 import { tryStaticLookup } from "./static-store.js";
 import { observeSegmentHandler } from "../instrument.js";
-import { withReverseScope } from "../handler-context.js";
+import { withSegmentContext } from "../handler-context.js";
 import type { TelemetrySink } from "../telemetry.js";
 import { resolveSink, safeEmit, getRequestId } from "../telemetry.js";
 
@@ -185,7 +185,7 @@ export async function resolveLayoutComponent<TEnv>(
       entry.shortCode,
       entry.id,
       handler,
-      withReverseScope(context, entry.reverseScope),
+      withSegmentContext(context, entry.shortCode, entry.reverseScope),
     ),
   );
 }
