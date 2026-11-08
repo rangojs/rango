@@ -30,6 +30,7 @@ import {
   type ReverseScope,
 } from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
+import { NOCACHE_SYMBOL } from "../../cache/taint.js";
 
 beforeEach(() => {
   getSearchSchemaMock.mockReset();
@@ -629,6 +630,67 @@ describe("createReverseFunction", () => {
       expect(plain).not.toBe(ctx);
       expect(plain._owningSegmentId).toBe("R1");
       expect(plain.reverse).toBe(ctx.reverse);
+    });
+
+    it("a handler's spread copy carries the request ctx's own fields", () => {
+      const url = new URL("http://localhost/p/7");
+      const ctx = createHandlerContext(
+        { id: "7" },
+        new Request(url.href),
+        url.searchParams,
+        "/p/7",
+        url,
+        {},
+        { p: "/p/:id" },
+        "p",
+        "document",
+      );
+      // setupLoaderAccess's write, which runs before any handler: the copy a
+      // handler hands a "use cache" call keys the entry by these fields.
+      const claim = () => true;
+      (ctx as any)._claimLoaderPushes = claim;
+      (ctx as any)._currentSegmentId = "M0L0R0";
+      const scope = { prefix: "p", rootScoped: false };
+      const scoped = withSegmentContext(ctx, "M0L0L0", scope);
+      const copy = { ...scoped } as any;
+      expect(copy._routeName).toBe("p");
+      expect(copy._responseType).toBe("document");
+      expect(copy._variables).toBe((ctx as any)._variables);
+      expect(copy._claimLoaderPushes).toBe(claim);
+      expect(copy._reverseScope).toBe(scope);
+      expect(copy[NOCACHE_SYMBOL]).toBe(true);
+      expect(copy.params).toEqual({ id: "7" });
+      // The `_` fields are forwarded, not snapshotted: the pin is the walker's
+      // cursor and the loader cache installs its overrides after handlers
+      // already hold a ctx.
+      expect(scoped._currentSegmentId).toBe("M0L0R0");
+      const overrides = new Map([[1, Promise.resolve(1)]]);
+      (ctx as any)._loaderCacheOverrides = overrides;
+      (ctx as any)._currentSegmentId = "M0L0R1";
+      expect(scoped._currentSegmentId).toBe("M0L0R1");
+      expect(scoped._loaderCacheOverrides).toBe(overrides);
+      // A spread still freezes what it read, as the request ctx's own does.
+      expect(copy._currentSegmentId).toBe("M0L0R0");
+      expect(copy._loaderCacheOverrides).toBeUndefined();
+    });
+
+    it("forwards a getter instead of reading it, so a pre-render ctx still builds", () => {
+      const ctx = createPrerenderContext(
+        { id: "7" },
+        "/p/7",
+        { p: "/p/:id" },
+        "p",
+      );
+      const scoped = withSegmentContext(ctx, "M0L0L0", undefined);
+      expect(scoped.params).toEqual({ id: "7" });
+      expect(() => (scoped as any).request).toThrow(
+        'Property "request" is not available during pre-rendering.',
+      );
+      // The copy carries the same getter, so a spread refuses it as the
+      // request ctx's own spread does.
+      expect(() => ({ ...scoped })).toThrow(
+        'Property "request" is not available during pre-rendering.',
+      );
     });
   });
 

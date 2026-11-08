@@ -2550,11 +2550,20 @@ Limits:
 - Only the ctx carries the scope. `getRequestContext().reverse(".name")`
   resolves from the matched route everywhere, a layout included.
 - Every segment's ctx is a different object from the request's one handler
-  ctx. It copies that ctx's own public fields (and its symbols, the NOCACHE
-  brand among them) as own properties, so `{ ...ctx }` from a handler still
-  carries `params`, `url` and the rest. A getter keyed by its holder resolves
-  through the prototype chain (`rewrittenFrom`, `server/rewrite-trail.ts`);
-  `theme` reads a symbol the child inherits.
+  ctx. It takes that ctx's own enumerable fields as own properties, the `_`
+  fields and symbols (the NOCACHE brand among them) included, so `{ ...ctx }`
+  from a handler still carries `params`, `url` and the rest, and a copy handed
+  to a `"use cache"` call keys the entry the same way the ctx does
+  (`_routeName`, `_responseType`, `_reverseScope`; `cache/cache-runtime.ts`).
+  The public fields are values; a `_` field and an own getter are forwarded
+  (`copyRequestFields`), read off the request's ctx on each access. The walker
+  moves `_currentSegmentId` as it resolves, the loader cache installs
+  `_loaderCacheOverrides` and `_loaderCacheOriginalUse` and prefetch deferral
+  `_deferredLoaders` after handlers already hold a ctx, and a pre-render or
+  static ctx refuses `request` from its getter: reading any of them to copy
+  would freeze a stale value or refuse every build handler. A getter keyed by
+  its holder resolves through the prototype chain (`rewrittenFrom`,
+  `server/rewrite-trail.ts`); `theme` reads a symbol the child inherits.
 - `Static()` layouts and slots bake at build time through
   `renderStaticSegment` with the def's `$$routePrefix` as a route name, not
   through this scope. At one include level that gives the same module; in a
@@ -2631,8 +2640,10 @@ the handler starts, a `"use cache"` call, a loader started from a loader body
 after an await; `{ ...ctx }` in a `loading()` route),
 `testing/__tests__/serve-shell-request-late-push-owner.rsc-test.tsx` (a late
 push through a layout's, a slot's, a route's and an intercept's ctx, naming
-the segment that owns it in the `LateHandlePushError`), and
-`server/__tests__/segment-pin.test.ts`.
+the segment that owns it in the `LateHandlePushError`; a `"use cache"` call a
+route handler makes through the layout's ctx, whose HIT replays into the
+layout's segment as its MISS recorded; a handler's `{ ...ctx }` reaching the
+same entry its ctx wrote), and `server/__tests__/segment-pin.test.ts`.
 
 ### Cache-safety contract for context variables
 

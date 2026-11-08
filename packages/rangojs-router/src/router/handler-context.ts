@@ -216,13 +216,15 @@ function createPrerenderPassthroughFn(
  * where the shared `_currentSegmentId` the walker moves has already named a
  * later segment (segmentPinOf).
  *
- * The request's fields are copied as own properties, so `{ ...ctx }` from a
- * handler carries what it carried when every handler shared the one ctx (a
- * spread copies own enumerable keys only, the NOCACHE symbol included). The
- * prototype still answers for a field added to the request's ctx later, and
- * `_currentSegmentId` stays an accessor: the walker moves it as it resolves.
- * `_reverseScope` keys a "use cache" call that takes this ctx
- * (cache-runtime.ts).
+ * The request's own fields are copied as own properties, so `{ ...ctx }` from
+ * a handler carries what it carried when every handler shared the one ctx (a
+ * spread copies own enumerable keys only, the NOCACHE symbol included, and
+ * the `_` fields cache-runtime.ts keys a "use cache" entry by). The public
+ * fields are values, as the request ctx holds them; its own `_` fields and its
+ * getters are forwarded (copyRequestFields), because the walker moves
+ * `_currentSegmentId` and the loader cache and prefetch deferral install
+ * fields after a handler already has its ctx. `_reverseScope` keys a "use
+ * cache" call that takes this ctx (cache-runtime.ts).
  */
 export function withSegmentContext<C>(
   ctx: C,
@@ -235,17 +237,6 @@ export function withSegmentContext<C>(
     _reverseScope?: ReverseScope;
     reverse?: ScopableReverse;
   };
-  Object.defineProperty(scoped, "_currentSegmentId", {
-    get() {
-      return (ctx as { _currentSegmentId?: string })._currentSegmentId;
-    },
-    set(value: string | undefined) {
-      (ctx as { _currentSegmentId?: string })._currentSegmentId = value;
-    },
-    enumerable: true,
-    configurable: true,
-  });
-  copyRequestFields(scoped, ctx as Record<PropertyKey, unknown>);
   scoped._owningSegmentId = segmentId;
   if (scope !== undefined) {
     scoped.reverse = scopeReverse((ctx as any).reverse, scope);
@@ -259,6 +250,9 @@ export function withSegmentContext<C>(
     runAsSegment(segmentId, () =>
       (ctx as { use: HandlerContext["use"] }).use(item),
     )) as HandlerContext["use"];
+  // Last, so the fields this ctx owns (its segment, its reverse, its use) are
+  // already own properties and the copy leaves them alone.
+  copyRequestFields(scoped, ctx as Record<PropertyKey, unknown>);
   return scoped;
 }
 
@@ -266,29 +260,59 @@ export function withSegmentContext<C>(
 const COPY_FIELDS = Symbol("rango:segment-ctx-fields");
 
 /**
- * Copy the request ctx's own public data fields (and its symbols, the NOCACHE
+ * An own field of the request's ctx: `forward` when the segment's ctx reads it
+ * off the request's ctx instead of holding a value.
+ */
+type CopiedField = { key: PropertyKey; forward?: PropertyDescriptor };
+
+/**
+ * Copy the request ctx's own enumerable fields (and its symbols, the NOCACHE
  * brand among them) onto a segment's ctx, so `{ ...ctx }` from a handler
- * carries what it carried when every handler shared the one ctx. Getters are
- * left to the prototype: a pre-render or static ctx refuses `request` by
- * throwing from its getter, and reading it here would refuse every handler.
- * `use` is left out too: the segment's ctx binds its own.
+ * carries what it carried when every handler shared the one ctx: the `_`
+ * fields included, since cache-runtime.ts reads `_routeName`, `_responseType`
+ * and `_claimLoaderPushes` off a copy a handler hands a "use cache" call.
+ *
+ * A `_` field or a getter is forwarded, never snapshotted: the walker moves
+ * `_currentSegmentId`, the loader cache and prefetch deferral install
+ * `_loaderCacheOverrides`, `_loaderCacheOriginalUse` and `_deferredLoaders`
+ * after handlers already hold a ctx, and reading a pre-render or static ctx's
+ * `request` getter here would refuse every build handler. The descriptor is
+ * built once per request ctx and shared by every segment's ctx.
  */
 function copyRequestFields(
   target: Record<PropertyKey, unknown>,
   source: Record<PropertyKey, unknown>,
 ): void {
-  let fields = source[COPY_FIELDS] as PropertyKey[] | undefined;
+  let fields = source[COPY_FIELDS] as CopiedField[] | undefined;
   if (fields === undefined) {
-    fields = Reflect.ownKeys(source).filter((key) => {
-      if (typeof key === "string" && (key[0] === "_" || key === "use")) {
-        return false;
-      }
+    fields = [];
+    for (const key of Reflect.ownKeys(source)) {
       const descriptor = Object.getOwnPropertyDescriptor(source, key);
-      return descriptor?.enumerable === true && "value" in descriptor;
-    });
+      if (descriptor?.enumerable !== true) continue;
+      const forward =
+        !("value" in descriptor) ||
+        (typeof key === "string" && key.startsWith("_"));
+      fields.push({
+        key,
+        forward: forward
+          ? {
+              get: () => source[key],
+              set: (value: unknown) => {
+                source[key] = value;
+              },
+              enumerable: true,
+              configurable: true,
+            }
+          : undefined,
+      });
+    }
     Object.defineProperty(source, COPY_FIELDS, { value: fields });
   }
-  for (const key of fields) target[key] = source[key];
+  for (const { key, forward } of fields) {
+    if (Object.hasOwn(target, key)) continue;
+    if (forward) Object.defineProperty(target, key, forward);
+    else target[key] = source[key];
+  }
 }
 
 /**

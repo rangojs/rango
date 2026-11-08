@@ -1,5 +1,6 @@
 // "use cache" function for serve-shell-request-streamed-handle-owner.rsc-test.tsx
-// (wrapped by rangoUseCacheTransform() in vitest.rsc.config.ts).
+// and serve-shell-request-late-push-owner.rsc-test.tsx (wrapped by
+// rangoUseCacheTransform() in vitest.rsc.config.ts).
 import {
   createHandle,
   type Handle,

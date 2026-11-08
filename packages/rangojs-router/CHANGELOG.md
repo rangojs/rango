@@ -14,7 +14,10 @@ at a handler that pushed nothing.
 **Now.** The message names the segment that owns the ctx the push went through
 (the layout's `L<n>`, a slot's, the route's), on a document request and on a
 navigation. The push is rejected exactly as before, and production still
-shows no message.
+shows no message. A copy of a handler's ctx behaves as it did: `{ ...ctx }`
+still carries the fields a `"use cache"` call keys its entry by, so
+`cached({ ...ctx })` reads the entry `cached(ctx)` wrote instead of running
+the function again.
 
 ## 0.35.0 (2026-11-04)
 

@@ -9,6 +9,11 @@
  * The error reaches the test through the telemetry sink (handler.error), the
  * raw Error the store reports before throwing it; the served payload's message
  * is sanitized under NODE_ENV=production, which this project forces.
+ *
+ * The owner is also what a `"use cache"` call through that ctx records and
+ * replays its pushes under (cache-runtime.ts reads segmentPinOf of the ctx
+ * argument), so the same suite pins a MISS and its HIT, and the copy a
+ * handler's `{ ...ctx }` hands that call.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -28,6 +33,11 @@ import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import type { Handler } from "../../types.js";
 import type { TelemetryEvent } from "../../router/telemetry.js";
+import {
+  CachedCrumbs,
+  cachedCrumb,
+  cachedCrumbRuns,
+} from "./fixtures/streamed-handle-owner-data.js";
 
 const Crumbs = createHandle<string, string[]>((segments) => segments.flat());
 
@@ -76,6 +86,18 @@ async function serve(
     // A dev render error can reject the response; the sink reported the
     // error either way.
   }
+}
+
+/** The handle buckets the response delivers, keyed by segment id. */
+async function serveHandleBuckets(
+  router: Parameters<typeof serveShellRequest>[0],
+  url: string,
+  options: Parameters<typeof serveShellRequest>[2],
+): Promise<Record<string, string[]>> {
+  const result = await serveShellRequest(router, url, options);
+  const { hydration, late } = (await result.readHandles())!;
+  const data = late.at(-1) ?? hydration;
+  return (data[CachedCrumbs.$$id] ?? {}) as Record<string, string[]>;
 }
 
 beforeEach(async () => {
@@ -153,6 +175,73 @@ describe("a component's late handle push through a handler's ctx", () => {
     );
     await serve(router, "/late-route-slot");
     expect(namedSegments(errors)).toEqual(["M0L0R0"]);
+  });
+
+  it('records and replays a "use cache" call through the layout\'s ctx under the layout', async () => {
+    // The route handler runs the call, but the ctx is the layout's: the
+    // walker's pin names the route by then, and the owner is what the MISS
+    // records and the HIT replays into (cache-runtime.ts).
+    const cacheStore = new MemorySegmentCacheStore();
+    const runs = cachedCrumbRuns.count;
+    let layoutCtx: Ctx | undefined;
+    const router = createRouter({}).routes(
+      urls(({ layout, path }) => [
+        layout(
+          (ctx: Ctx) => {
+            layoutCtx = ctx;
+            return <main>shell</main>;
+          },
+          () => [
+            path(
+              "/cached-through-layout",
+              async () => (
+                <article>{await cachedCrumb(layoutCtx!, "layout")}</article>
+              ),
+              { name: "cachedThroughLayout" },
+            ),
+          ],
+        ),
+      ]),
+    );
+    const miss = await serveHandleBuckets(router, "/cached-through-layout", {
+      cacheStore,
+    });
+    const hit = await serveHandleBuckets(router, "/cached-through-layout", {
+      cacheStore,
+    });
+    expect(miss).toEqual({ M0L0L0: ["layout"] });
+    expect(hit).toEqual(miss);
+    // One body run: the HIT replayed the MISS's recorded push.
+    expect(cachedCrumbRuns.count - runs).toBe(1);
+  });
+
+  it('a handler\'s { ...ctx } reaches the same "use cache" entry as its ctx', async () => {
+    // The copy is a tainted ctx argument too: cache-runtime.ts keys the entry
+    // by `_routeName`, `_responseType` and `_reverseScope` off it, so a copy
+    // missing them misses the entry the ctx wrote.
+    const cacheStore = new MemorySegmentCacheStore();
+    const runs = cachedCrumbRuns.count;
+    const router = createRouter({}).routes(
+      urls(({ path }) => [
+        path(
+          "/cached-copy",
+          async (ctx: Ctx) => (
+            <article>
+              {await cachedCrumb(ctx, "copy")}
+              {await cachedCrumb({ ...ctx }, "copy")}
+            </article>
+          ),
+          { name: "cachedCopy" },
+        ),
+      ]),
+    );
+    const buckets = await serveHandleBuckets(router, "/cached-copy", {
+      cacheStore,
+    });
+    // One body run for the two calls: the copy hit the ctx's entry and
+    // replayed its push into the same bucket.
+    expect(cachedCrumbRuns.count - runs).toBe(1);
+    expect(buckets).toEqual({ M0L0R0: ["copy", "copy"] });
   });
 
   it("names the intercept's segment, not the target route's", async () => {
