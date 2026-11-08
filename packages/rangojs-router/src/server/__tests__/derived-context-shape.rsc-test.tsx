@@ -113,6 +113,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     "_onResponseCallbacks",
     "_recoveredHandlerErrors",
     "_renderErrors",
+    "_renderRedirect",
     "_requestTags",
     "_shellCaptureState",
     "_shellFragmentPayload",
@@ -161,6 +162,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
     expect(capture._explicitTaggedStores).not.toBe(base._explicitTaggedStores);
     expect(capture._renderErrors).toEqual([]);
     expect(capture._renderErrors).not.toBe(base._renderErrors);
+    expect(capture._renderRedirect).toBeUndefined();
     expect(capture._onResponseCallbacks).toEqual([]);
     expect(capture._onResponseCallbacks).not.toBe(base._onResponseCallbacks);
     expect(capture._shellCaptureState?.loaderRecords).toEqual(new Map());
@@ -228,6 +230,10 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
       _handlerLoaderDeps: new Set(["d"]),
       _awaitBeforeFlushLoaderIds: new Set(["a"]),
       _renderErrors: [new Error("rendered")],
+      _renderRedirect: new Response(null, {
+        status: 302,
+        headers: { Location: "/target" },
+      }),
     });
     base._onResponseCallbacks.push((response) => response);
     base._requestTags.add("t");
@@ -254,6 +260,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
       _handlerLoaderDeps: capture._handlerLoaderDeps,
       _awaitBeforeFlushLoaderIds: capture._awaitBeforeFlushLoaderIds,
       _renderErrors: capture._renderErrors,
+      _renderRedirect: capture._renderRedirect,
       _onResponseCallbacks: capture._onResponseCallbacks,
       _requestTags: capture._requestTags,
       _explicitTaggedStores: capture._explicitTaggedStores,
@@ -272,6 +279,7 @@ describe("shell capture context (deriveShellCaptureContext)", () => {
       _handlerLoaderDeps: undefined,
       _awaitBeforeFlushLoaderIds: undefined,
       _renderErrors: [],
+      _renderRedirect: undefined,
       _onResponseCallbacks: [],
       _requestTags: new Set(),
       _explicitTaggedStores: new Set(),
@@ -451,6 +459,7 @@ describe("background re-render context (rerenderAndCacheRoute)", () => {
       "_renderBarrierGuardClosed",
       "_renderBarrierWaiters",
       "_renderErrors",
+      "_renderRedirect",
       "_rotateStateCookie",
       "_setFreshReadsCookie",
       "_setKeepCacheDirective",
@@ -577,6 +586,7 @@ describe("document cache re-run context (document-cache.ts)", () => {
         "_onResponseCallbacks",
         "_recoveredHandlerErrors",
         "_renderErrors",
+        "_renderRedirect",
         "_rotateStateCookie",
         "_setFreshReadsCookie",
         "_setKeepCacheDirective",
