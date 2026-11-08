@@ -6,7 +6,10 @@
  * server paths in production).
  *
  * The answer, in order:
- * - a loader `redirect()` with no state: a real 3xx (nothing has been sent);
+ * - a loader `redirect()` with no state, and a component's `redirect()` with
+ *   no state and no `{ external: true }` opt-in (its target arrives in the
+ *   Flight error row's digest, redirect-signal.ts): a real 3xx (nothing has
+ *   been sent);
  * - the payload decoded and the tree built: a recovery document carrying the
  *   same Flight payload, which the browser entry renders with createRoot
  *   (`data-rango-ssr-error`), so the router's client boundaries run as on a
@@ -16,6 +19,7 @@
 import React from "react";
 import { isDataNotFoundError } from "../errors.js";
 import { loaderRedirectOf } from "../decode-loader-results.js";
+import { redirectSignalOfError } from "../redirect-signal.js";
 import { ThemeScript } from "../theme/ThemeScript.js";
 import type { ResolvedThemeConfig } from "../theme/types.js";
 import type { SSRDependencies } from "./index.js";
@@ -106,6 +110,17 @@ export async function answerShellError(
   // history entry the client replace writes, which a 3xx cannot. Without
   // this branch every loader redirect takes the client replace.
   const redirect = loaderRedirectOf(error);
+  // A component's redirect() reaches here as a Flight error row whose digest
+  // carries the target (redirect-signal.ts): a document request still has
+  // nothing flushed, so it answers the same 3xx a handler's throw does. An
+  // `{ external: true }` target takes the recovery document below like a
+  // state-carrying one: the 3xx guard neutralizes an unbranded off-host
+  // Location, and LoaderRedirect's location.replace keeps the opt-in.
+  const signal = redirectSignalOfError(error);
+  const signalAs3xx =
+    signal !== undefined && signal.state === undefined && !signal.external
+      ? signal
+      : undefined;
   if (redirect && redirect.state === undefined) {
     flight?.cancel().catch(() => {});
     return {
@@ -114,9 +129,18 @@ export async function answerShellError(
       location: redirect.to,
     };
   }
+  if (signalAs3xx) {
+    flight?.cancel().catch(() => {});
+    return {
+      body: new Response("").body!,
+      status: signalAs3xx.status ?? 302,
+      location: signalAs3xx.to,
+    };
+  }
   // A redirect with state answers 200 like the same redirect inside a
   // <Suspense>: the document, then the client replace.
-  const status = redirect ? 200 : isDataNotFoundError(error) ? 404 : 500;
+  const status =
+    redirect || signal ? 200 : isDataNotFoundError(error) ? 404 : 500;
   if (recovery && flight) {
     try {
       return {
@@ -134,6 +158,6 @@ export async function answerShellError(
     }
   }
   flight?.cancel().catch(() => {});
-  const failed = redirect ? 500 : status;
+  const failed = redirect || signal ? 500 : status;
   return { body: staticErrorDocument(failed), status: failed };
 }

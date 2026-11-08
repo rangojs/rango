@@ -394,6 +394,7 @@ import { deferredHandleNavPatterns } from "./pages/deferred-handle-nav.js";
 import { prefetchFalsePatterns } from "./pages/prefetch-false.js";
 import { onErrorLog, clearOnErrorLog } from "./error-log.js";
 import { holeyThrowsPatterns } from "./pages/holey-throws.js";
+import { componentRedirectPatterns } from "./component-redirect.js";
 import {
   WarmCachedPage,
   WarmPersonalPage,
@@ -757,6 +758,8 @@ export const urlpatterns = urls(
     include("/api", apiPatterns, { name: "api" }),
     // An ssr: "await" loader that throws with no errorBoundary().
     include("/", holeyThrowsPatterns, { name: "" }),
+    // A component that throws redirect(), before and after an await (rango-t450).
+    include("/", componentRedirectPatterns, { name: "" }),
 
     // onError's `background`: only the shell capture after the MISS throws.
     path(

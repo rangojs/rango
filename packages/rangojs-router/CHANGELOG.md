@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `throw redirect()` from a component lands on its target, on a click and on a page load
+
+**Before.** `redirect()` thrown by a server component (not a handler, not a
+loader) was an error, not a redirect. Clicking a link to the page showed the
+error page; opening the URL directly answered a 500. Only a throw from a
+handler or a loader short-circuited, so the same check written one component
+deeper behaved differently.
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login"); // this throw was not a redirect
+  return <AccountSummary session={session} />;
+}
+```
+
+**Now.** It is a redirect on every lane. A component renders inside the Flight
+render, so a navigation's headers and first rows have already left the server
+when it throws: the target rides the error row's digest, which is the one field
+React lets a server set there, and the router's own client boundary turns it
+into the same replace-navigation a loader's `redirect()` does. A document
+request, which has flushed nothing, answers the same 3xx a handler's throw does
+(and keeps the recovery document when the redirect carries `{ state }` or the
+`{ external: true }` opt-in, as the loader lane does). `onError` no longer
+reports it as a rendering error, and the console stays quiet: it is control
+flow, not a failure.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

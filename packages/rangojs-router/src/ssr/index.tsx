@@ -18,6 +18,7 @@ import {
   isLoaderSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
+import { redirectSignalOfError } from "../redirect-signal.js";
 import {
   answerShellError,
   type ShellErrorRecovery,
@@ -1053,12 +1054,18 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 /**
  * In dev a shell error reaches the host as the original error object,
  * so Vite's overlay shows its message and source-mapped stack. A loader's
- * notFound()/redirect() is control flow and is answered as in production.
+ * notFound()/redirect() is control flow and is answered as in production, as
+ * is a component's redirect(), which arrives as a Flight error row carrying
+ * its target in the digest (redirect-signal.ts).
  * This is the one gate: returning false here makes dev answer every shell
  * error as production does.
  */
 function shellErrorReachesHost(error: unknown): boolean {
-  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
+  return (
+    process.env.NODE_ENV !== "production" &&
+    !isLoaderSignalError(error) &&
+    redirectSignalOfError(error) === undefined
+  );
 }
 
 /**

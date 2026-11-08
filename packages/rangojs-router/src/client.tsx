@@ -31,6 +31,8 @@ import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+import { redirectSignalOfError } from "./redirect-signal.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -397,6 +399,8 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    // A redirect is control flow, not a failure: nothing to report.
+    if (redirectSignalOfError(error)) return;
     console.error("[ErrorBoundary] Error caught:", error, errorInfo);
     this.props.onError?.(error, errorInfo);
   }
@@ -407,6 +411,14 @@ export class ErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A component's `throw redirect()` is control flow, not a failure, so
+      // an app boundary must not turn it into its fallback: the target rides
+      // the Flight error row's digest (redirect-signal.ts).
+      const redirect = redirectSignalOfError(this.state.error);
+      if (redirect) {
+        return <LoaderRedirect to={redirect.to} state={redirect.state} />;
+      }
+
       const { fallback } = this.props;
 
       // Create error info for the fallback

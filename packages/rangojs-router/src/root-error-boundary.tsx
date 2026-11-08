@@ -2,6 +2,8 @@
 
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+import { redirectSignalOfError } from "./redirect-signal.js";
 
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
@@ -224,6 +226,8 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    // A redirect is control flow, not a failure: nothing to report.
+    if (redirectSignalOfError(error)) return;
     console.error(
       "[RootErrorBoundary] Unhandled error caught:",
       error,
@@ -250,6 +254,18 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A component's `throw redirect()` arrives as a Flight error row whose
+      // digest carries the target (redirect-signal.ts): control flow, not a
+      // failure, so it takes the loader lane's replace-navigation instead of
+      // the error page. A client navigation is where this happens -- a
+      // document request answered the same redirect with a 3xx
+      // (ssr/shell-error-document.tsx) or, for a state-carrying one, with the
+      // recovery document this render replaces.
+      const redirect = redirectSignalOfError(this.state.error);
+      if (redirect) {
+        return <LoaderRedirect to={redirect.to} state={redirect.state} />;
+      }
+
       const errorInfo = {
         message: this.state.error.message,
         name: this.state.error.name,

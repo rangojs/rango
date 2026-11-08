@@ -3,6 +3,11 @@ import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import { isRedirectResponse } from "../response-utils.js";
+import {
+  encodeRedirectDigest,
+  redirectSignalOfResponse,
+} from "../redirect-signal.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -163,6 +168,20 @@ function createFlightStage<TEnv>(
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
       renderErrors?.push(error);
+      // A component's `throw redirect()` is control flow, not a render
+      // failure: React can only carry it to the browser in the row's digest,
+      // so that is where the target goes (redirect-signal.ts). Returning it
+      // also keeps it out of the server console and out of onError, which
+      // report failures. Recorded above regardless, so the writers that must
+      // not keep a redirecting page (the document cache, a prefetch, a shell
+      // capture) still see a render that produced no page.
+      if (error instanceof Response && isRedirectResponse(error)) {
+        const signal = redirectSignalOfResponse(error, {
+          requestOrigin: input.url.origin,
+          basename: requestContext?._basename,
+        });
+        return signal ? encodeRedirectDigest(signal) : undefined;
+      }
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
