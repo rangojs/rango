@@ -923,8 +923,10 @@ export interface RequestContext<
    * writes its error row, so the response can answer it while its status is
    * still open. A document answers it at its shell, a Flight response at its
    * opening flush; a redirect reported later is out of time and keeps
-   * rendering the boundary. A derived render pass resets it, like
-   * `_renderErrors`: its render is not the foreground's.
+   * rendering the boundary. The derived passes that reset `_renderErrors`
+   * reset it too (a capture's or a re-run's render is not the foreground's);
+   * the ppr tail, which serves a render whose response already committed,
+   * inherits it like every other field it does not own.
    */
   _renderRedirect?: Response;
 
@@ -1090,6 +1092,7 @@ export type PublicRequestContext<
   | "_throwers"
   | "_printedErrors"
   | "_renderErrors"
+  | "_renderRedirect"
   | "_recoveredHandlerErrors"
   | "_renderBarrier"
   | "_resolveRenderBarrier"

@@ -24,7 +24,11 @@ response's status is still open: a document request answers the redirect's 3xx
 (`Location`, the location-state cookie, the `{ external: true }` opt-in, the
 basename), and a client navigation answers 204 + `X-RSC-Redirect` (or the
 redirect payload when it carries location state). A declared `errorBoundary()`
-is not consulted: a redirect is control flow, not a failure.
+is not consulted: a redirect is control flow, not a failure, so it reports no
+`onError` either. The response is built after the redirect is answered, so the
+cookies and `onResponse` callbacks a request registered are on it, as on a
+handler's throw. An action's revalidation render and the not-found tree answer
+it the same way.
 
 ```tsx
 function AccountPage() {

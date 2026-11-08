@@ -1046,16 +1046,26 @@ over, and the two serve paths answer it where the status commits:
   shell, and one the Flight render's opening flush carried, are both known by
   then (`createSsrHtmlStage` in `rsc/ssr-setup.ts`, success and shell-error path
   alike, so dev's rethrow to Vite's overlay does not swallow it);
-- a **Flight response** (a client navigation, a prefetch) has no shell, so its
-  window is the render's opening flush: `holdOpeningRedirect` reads the first
-  chunk, puts it back in front of the body, and the response is built after it
-  (`rsc/rsc-rendering.ts`).
+- a **Flight response** (a client navigation, a prefetch, an action's
+  revalidation render) has no shell, so its window is the render's opening
+  flush: `holdOpeningRedirect` reads the first chunk and puts it back in front
+  of the body, and the plan's flight step does not complete until it has
+  (`createRscRenderPlan`, which is why the command may return a promise).
+
+The response is therefore built **after** the redirect is answered, never
+before it: the request's stub — the cookies middleware and `cookies().set`
+wrote, the `onResponse` callbacks registered before the render — is still
+untouched when `createSimpleRedirectResponse` merges it, exactly as on a
+handler's throw. (Building the Flight response first and replacing it after the
+peek lost the `Set-Cookie` and skipped every callback.)
 
 Throwing the recorded `Response` from there is deliberate: it lands in the lanes
 that already answer a handler's throw (`rsc/handler.ts`'s
 `interceptRedirectForPartial`, then `finalizeRequestResponse`'s open-redirect
 guard and location-state cookie), so a component's redirect cannot drift from a
-handler's.
+handler's. The not-found tree is one of those lanes: its render runs inside the
+404 catch, so `handler.ts` answers a thrown `Response` there rather than let it
+escape the handler.
 
 **The limit.** An async component is a task of its own, so its error row lands
 in a later chunk, after the status committed. Closing that gap means buffering
@@ -1067,17 +1077,21 @@ because the shell render waits for the component the shell needs. A redirect a
 component throws after its route already streamed — from a `<Suspense>`'s
 content, on a document whose shell is out — is out of time the same way.
 
-A redirect is never a rendering error: `printServerError` already treats a
-thrown `Response` as control flow, so nothing is printed, and it is never stored
-(the response is a 3xx/204, and `_renderErrors` keeps it out of the document
-cache and shell captures).
+A redirect is never a rendering error: `printServerError` treats a thrown
+`Response` as control flow, and the Flight `onError` now skips `callOnError` for
+one, so nothing is printed and no consumer `onError` sees it — not even when it
+lands out of time and its error row renders the boundary, because that is still
+the same control flow. It is never stored: the response is a 3xx/204, and the
+redirect stays in `_renderErrors`, which keeps a late one's 200 out of the
+document cache and of every shell capture.
 
 Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
 the document and navigation lanes, the state cookie, the external opt-in, a
-basename, a declared `errorBoundary()`, a prefetch, and the async limit) and
-`e2e/component-redirect.test.ts` in both apps, dev and production (the async
-limit included, and a document request for the same async route landing on the
-target).
+basename, a declared `errorBoundary()`, a prefetch, the cookie and `onResponse`
+stamps, no `onError`, an action's revalidation render, the not-found tree, and
+the async limit) and `e2e/component-redirect.test.ts` in both apps, dev and
+production (the async limit included, and a document request for the same async
+route landing on the target).
 
 ### Streamed handler rejections render the declared boundary
 

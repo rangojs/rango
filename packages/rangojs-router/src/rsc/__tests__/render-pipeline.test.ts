@@ -25,6 +25,7 @@ import type {
 } from "../render-pipeline.js";
 import type { HandlerContext } from "../handler-context.js";
 import type { RscPayload } from "../types.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 
 function payload(pathname: string): RscPayload {
   return { metadata: { pathname, segments: [] } };
@@ -64,9 +65,7 @@ function makeInput(
 
 describe("RSC render pipeline", () => {
   it("yields Flight before serialization executes", () => {
-    const renderToReadableStream = vi.fn(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const renderToReadableStream = vi.fn(() => emptyFlightStream());
     const { input } = makeInput(renderToReadableStream);
 
     const plan = createRscRenderPlan(input);
@@ -80,7 +79,7 @@ describe("RSC render pipeline", () => {
 
   it("stamps Flight with the router's captured dev discovery epoch", () => {
     const renderToReadableStream: HandlerContext["renderToReadableStream"] =
-      vi.fn(() => new ReadableStream<Uint8Array>());
+      vi.fn(() => emptyFlightStream());
     const { input } = makeInput(renderToReadableStream);
 
     renderRscFlightStage({
@@ -97,8 +96,8 @@ describe("RSC render pipeline", () => {
   });
 
   it("drives Flight, HTML, and response in order without reading the streams", async () => {
-    const flight = new ReadableStream<Uint8Array>();
-    const html = new ReadableStream<Uint8Array>();
+    const flight = emptyFlightStream();
+    const html = emptyFlightStream();
     const renderToReadableStream = vi.fn(() => flight);
     const renderHtml = vi.fn(
       async (_stream: ReadableStream<Uint8Array>) => html,
@@ -152,9 +151,7 @@ describe("RSC render pipeline", () => {
 
   it("bridges real render stages beneath the high-level render step", async () => {
     const trace = createRoutineTrace("document");
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
     function* routine(): RoutinePlan<Response> {
       return yield* step("render", () =>
         renderRscResponse({
@@ -298,9 +295,7 @@ describe("RSC render pipeline", () => {
   it("attributes HTML preparation failures without starting response finalization", async () => {
     const original = new Error("SSR setup failed");
     const events: RscRenderStageEvent[] = [];
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
 
     let caught: unknown;
     try {
@@ -330,9 +325,7 @@ describe("RSC render pipeline", () => {
 
   it("attributes response-constructor failures after Flight completes", async () => {
     const events: RscRenderStageEvent[] = [];
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
 
     await expect(
       runWithRequestContext(requestContext, () =>
@@ -354,7 +347,7 @@ describe("RSC render pipeline", () => {
     let onStreamError: ((error: unknown) => void) | undefined;
     const { input, requestContext } = makeInput((_payload, options) => {
       onStreamError = options?.onError;
-      return new ReadableStream<Uint8Array>();
+      return emptyFlightStream();
     });
     const events: RscRenderStageEvent[] = [];
 
@@ -377,9 +370,7 @@ describe("RSC render pipeline", () => {
 
   it("does not create stage timestamps when observation is disabled", async () => {
     const now = vi.spyOn(performance, "now");
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
 
     try {
       await runWithRequestContext(requestContext, () =>
@@ -396,9 +387,7 @@ describe("RSC render pipeline", () => {
     const htmlPending = new Promise<BodyInit | null>((resolve) => {
       releaseHtml = resolve;
     });
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
     requestContext._renderDiagnosticsEnabled = true;
 
     const pending = runWithRequestContext(requestContext, () =>
@@ -430,9 +419,7 @@ describe("RSC render pipeline", () => {
   });
 
   it("records Flight serialization once and only when requested", async () => {
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
     const metricsStore = createMetricsStore(true)!;
     requestContext._metricsStore = metricsStore;
 
@@ -447,7 +434,7 @@ describe("RSC render pipeline", () => {
 
   it("keeps specialized direct Flight rendering observable without response ownership", async () => {
     const events: RscRenderStageEvent[] = [];
-    const stream = new ReadableStream<Uint8Array>();
+    const stream = emptyFlightStream();
     const { input, requestContext } = makeInput(() => stream);
 
     const stage = await runWithRequestContext(requestContext, () =>
@@ -472,9 +459,7 @@ describe("RSC render pipeline", () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    const { input, requestContext } = makeInput(
-      () => new ReadableStream<Uint8Array>(),
-    );
+    const { input, requestContext } = makeInput(() => emptyFlightStream());
 
     try {
       const response = await runWithRequestContext(requestContext, () =>

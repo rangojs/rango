@@ -6,6 +6,7 @@ import {
 } from "../../server/request-context.js";
 import { createMetricsStore } from "../../router/metrics.js";
 import { resolveTracing } from "../../router/tracing.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 
 // An action's revalidation render used to open NO rango.render span and recorded
 // render:total directly, so its revalidation loaders' rango.loader spans dangled
@@ -30,7 +31,7 @@ function makeCtx() {
   return {
     version: "v-test",
     callOnError: () => {},
-    renderToReadableStream: () => new ReadableStream(),
+    renderToReadableStream: () => emptyFlightStream(),
     router: {
       id: "test",
       async matchPartial() {

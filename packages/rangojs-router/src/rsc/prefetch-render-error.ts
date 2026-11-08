@@ -20,9 +20,12 @@
  * `private, no-cache` (rsc-rendering.ts NOT_REUSED).
  *
  * The errors are the render's `_renderErrors`: a Flight error row, a streamed
- * handler recovered into its boundary, a loader that threw (redirect() and
- * notFound() are not errors). Each is recorded before Flight writes the row
- * that carries it, so the list is complete once Flight closes the stream.
+ * handler recovered into its boundary, a loader that threw (a loader's
+ * redirect() and notFound() are not errors), and a component that threw
+ * redirect() — the row it leaves IS an error row, whether the response answered
+ * the redirect (a 200 redirect payload) or not, so the prefetch is evicted
+ * rather than adopted. Each is recorded before Flight writes the row that
+ * carries it, so the list is complete once Flight closes the stream.
  */
 
 import { PREFETCH_FAILED_ROW } from "../prefetch-markers.js";

@@ -46,8 +46,16 @@ export function recordRenderRedirect(
   error: unknown,
 ): void {
   if (!context || context._renderRedirect !== undefined) return;
-  if (!(error instanceof Response) || !isRedirectResponse(error)) return;
+  if (!isRenderRedirect(error)) return;
   context._renderRedirect = error;
+}
+
+/**
+ * A value a render threw that is a redirect: the one control flow this module
+ * answers. A thrown non-redirect `Response` (a 403, a 500) stays an error.
+ */
+export function isRenderRedirect(value: unknown): value is Response {
+  return value instanceof Response && isRedirectResponse(value);
 }
 
 /**
@@ -83,6 +91,10 @@ export async function holdOpeningRedirect(
   stream: ReadableStream<Uint8Array>,
 ): Promise<ReadableStream<Uint8Array>> {
   const held = await peekOpeningChunk(stream);
+  // Answered: the held stream is dropped unread. A Flight stream that nobody
+  // pulls does not flow, so the render stops where it is (the same teardown a
+  // handler's redirect gets by never starting it), and cancelling it instead
+  // would report React's abort to the consumer's onError.
   throwIfRenderRedirect(context);
   return held;
 }

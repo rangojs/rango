@@ -8,6 +8,7 @@ import {
   createRequestContext,
   runWithRequestContext,
 } from "../../server/request-context.js";
+import { emptyFlightStream } from "./handler-mock-factories.js";
 
 // D1: a JS-path action argument-decode failure (truncated/oversized/malformed
 // Flight body, or garbage posted to ?_rsc_action=...) must produce a
@@ -237,7 +238,7 @@ describe("executeServerAction — action error boundary deferred under middlewar
         throw new Error("action boom");
       },
       callOnError: () => {},
-      renderToReadableStream: () => new ReadableStream(),
+      renderToReadableStream: () => emptyFlightStream(),
       router: {
         id: "test",
         async matchError() {
@@ -286,7 +287,7 @@ describe("executeServerAction — action error boundary deferred under middlewar
     const ctx = {
       version: "v-test",
       callOnError: () => {},
-      renderToReadableStream: () => new ReadableStream(),
+      renderToReadableStream: () => emptyFlightStream(),
       router: { id: "test" },
     } as any;
 

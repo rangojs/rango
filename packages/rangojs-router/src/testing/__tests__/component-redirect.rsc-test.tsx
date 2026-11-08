@@ -30,10 +30,13 @@ vi.mock(
 import { resetShellTestState, serveShellRequest } from "../flight.entry.js";
 import { withLocationStateKey } from "../location-state-key.js";
 import {
+  cookies,
   createLocationState,
   createRouter,
+  getRequestContext,
   redirect,
   urls,
+  type Middleware,
 } from "../../index.rsc.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 
@@ -57,6 +60,19 @@ function SyncExternalRedirectPage(): React.ReactNode {
 
 function SyncBlockedRedirectPage(): React.ReactNode {
   throw redirect("javascript:alert(1)");
+}
+
+let redirectOnRender = false;
+
+function MaybeRedirectPage(): React.ReactNode {
+  if (redirectOnRender) throw redirect("/target");
+  return <p>page</p>;
+}
+
+function go(): string {
+  "use server";
+  redirectOnRender = true;
+  return "ok";
 }
 
 /** An async component: its throw is a task of its own, reported later. */
@@ -87,8 +103,38 @@ const patterns = urls(({ path, errorBoundary }) => [
   path("/async", () => <AsyncRedirectPage />, { name: "async" }),
 ]);
 
-function makeRouter(basename?: string) {
-  return createRouter({ basename }).routes(patterns);
+/** A handler redirect: the lane a component's must match. */
+function handlerRedirect(): Response {
+  return redirect("/target");
+}
+
+const handlerPatterns = urls(({ path }) => [
+  path("/start", () => <p>start</p>, { name: "start" }),
+  path("/target", () => <p>target-page</p>, { name: "target" }),
+  path("/handler", handlerRedirect, { name: "handler" }),
+]);
+
+/** Sets a cookie and registers an onResponse callback before the render. */
+const stamp: Middleware = async (_ctx, next) => {
+  cookies().set("probe", "1");
+  getRequestContext().onResponse((response) => {
+    const headers = new Headers(response.headers);
+    headers.set("x-probe", "seen");
+    return new Response(response.body, {
+      status: response.status,
+      headers,
+    });
+  });
+  return next();
+};
+
+function makeRouter(basename?: string, middleware?: Middleware) {
+  const router = createRouter({ basename }).routes(patterns);
+  return middleware ? router.use(middleware) : router;
+}
+
+function makeHandlerRouter() {
+  return createRouter({}).routes(handlerPatterns).use(stamp);
 }
 
 function documentRequest(path: string, basename?: string) {
@@ -102,6 +148,15 @@ function navigation(from: string, path: string, basename?: string) {
     cacheStore: new MemorySegmentCacheStore(),
     partial: { from },
   });
+}
+
+/** What a redirecting request leaves on its response besides the redirect. */
+function stamps(response: Response) {
+  return {
+    status: response.status,
+    cookie: response.headers.get("Set-Cookie"),
+    onResponse: response.headers.get("x-probe"),
+  };
 }
 
 beforeEach(() => resetShellTestState());
@@ -201,6 +256,86 @@ describe("a component's redirect (serveShellRequest)", () => {
     expect(res.response.headers.get("X-RSC-Redirect")).toBe(
       "http://localhost/target",
     );
+  });
+
+  it("leaves what a handler's redirect leaves: the cookie and the onResponse callback", async () => {
+    // The response is built only after the render's opening flush answered the
+    // redirect, so the request's stub is untouched: the cookie and every
+    // onResponse callback are on the 204 exactly as on a handler's.
+    const handlerLane = await serveShellRequest(
+      makeHandlerRouter(),
+      "/handler",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: "/start" },
+      },
+    );
+    const componentLane = await serveShellRequest(
+      makeRouter(undefined, stamp),
+      "/sync",
+      {
+        cacheStore: new MemorySegmentCacheStore(),
+        partial: { from: "/start" },
+      },
+    );
+    expect(stamps(componentLane.response)).toEqual(
+      stamps(handlerLane.response),
+    );
+    expect(stamps(componentLane.response)).toEqual({
+      status: 204,
+      cookie: "probe=1",
+      onResponse: "seen",
+    });
+    const document = await serveShellRequest(
+      makeRouter(undefined, stamp),
+      "/sync",
+      { cacheStore: new MemorySegmentCacheStore() },
+    );
+    expect(stamps(document.response)).toEqual({
+      status: 302,
+      cookie: "probe=1",
+      onResponse: "seen",
+    });
+  });
+
+  it("reports nothing to onError: a redirect is control flow, as for a handler", async () => {
+    const onError = vi.fn();
+    const router = createRouter({ onError }).routes(patterns);
+    const res = await serveShellRequest(router, "/sync", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(res.response.status).toBe(204);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("action revalidation: the re-render answers it as a handler's redirect is answered", async () => {
+    redirectOnRender = false;
+    const router = createRouter({}).routes(
+      urls(({ path }) => [
+        path("/page", () => <MaybeRedirectPage />, { name: "page" }),
+        path("/target", () => <p>target-page</p>, { name: "target" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/page", {
+      cacheStore: new MemorySegmentCacheStore(),
+      action: { ref: go, id: "component-redirect#go", args: [] },
+    });
+    expect(res.response.status).toBe(204);
+    expect(res.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
+  it("not-found component: a document request answers its redirect, not a 500", async () => {
+    const router = createRouter({
+      notFound: () => <SyncRedirectPage />,
+    }).routes(patterns);
+    const res = await serveShellRequest(router, "/missing", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(res.response.status).toBe(302);
+    expect(res.response.headers.get("Location")).toBe("/target");
   });
 
   it("limit: an async component's redirect is reported after the status commits, so the boundary renders", async () => {

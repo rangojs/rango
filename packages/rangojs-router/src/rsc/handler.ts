@@ -1134,48 +1134,66 @@ export function createRSCHandler<
             mode: isPartial ? ("partial" as const) : ("full" as const),
             routeKey,
           };
-          return renderRscResponse(
-            {
-              ctx: handlerCtx,
-              request,
-              url,
-              env,
-              payload,
-              // The 404 path historically records no rsc-serialize metric (it
-              // used the standalone Flight constructor, whose gate was opt-in);
-              // opt out explicitly since renderRscResponse defaults the gate on.
-              recordSerializeMetric: false,
-              init: isNotFoundFlightResponse
-                ? {
-                    status: 404,
-                    headers: {
-                      "content-type": "text/x-component;charset=utf-8",
-                      // Router identity for the client's pre-decode integrity
-                      // check; a same-app 404 applies in place.
-                      "X-RSC-Router-Id": router.id,
+          // A component in the not-found tree can throw redirect() too, and the
+          // render answers it (rsc/render-redirect.ts). This catch block is the
+          // only place a thrown Response would otherwise escape the handler, so
+          // answer it here as the page lanes do.
+          try {
+            return await renderRscResponse(
+              {
+                ctx: handlerCtx,
+                request,
+                url,
+                env,
+                payload,
+                // The 404 path historically records no rsc-serialize metric (it
+                // used the standalone Flight constructor, whose gate was opt-in);
+                // opt out explicitly since renderRscResponse defaults the gate on.
+                recordSerializeMetric: false,
+                init: isNotFoundFlightResponse
+                  ? {
+                      status: 404,
+                      headers: {
+                        "content-type": "text/x-component;charset=utf-8",
+                        // Router identity for the client's pre-decode integrity
+                        // check; a same-app 404 applies in place.
+                        "X-RSC-Router-Id": router.id,
+                      },
+                    }
+                  : {
+                      status: 404,
+                      headers: {
+                        "content-type": "text/html;charset=utf-8",
+                      },
                     },
-                  }
+                tracking: notFoundStageTracking,
+              },
+              isNotFoundFlightResponse
+                ? undefined
                 : {
-                    status: 404,
-                    headers: {
-                      "content-type": "text/html;charset=utf-8",
-                    },
+                    html: createSsrHtmlStage({
+                      ctx: handlerCtx,
+                      request,
+                      env,
+                      url,
+                      metricsStore: getRequestContext()._metricsStore,
+                      render: { nonce },
+                    }),
                   },
-              tracking: notFoundStageTracking,
-            },
-            isNotFoundFlightResponse
-              ? undefined
-              : {
-                  html: createSsrHtmlStage({
-                    ctx: handlerCtx,
-                    request,
-                    env,
-                    url,
-                    metricsStore: getRequestContext()._metricsStore,
-                    render: { nonce },
-                  }),
-                },
-          );
+            );
+          } catch (notFoundRenderError) {
+            if (!(notFoundRenderError instanceof Response))
+              throw notFoundRenderError;
+            if (isPartial) {
+              const intercepted = interceptRedirectForPartial(
+                notFoundRenderError,
+                createRedirectFlightResponse,
+                { requestOrigin: url.origin, basename: router.basename },
+              );
+              if (intercepted) return intercepted;
+            }
+            return notFoundRenderError;
+          }
         }
 
         // Report unhandled errors. Skip one the request already printed or
