@@ -1184,11 +1184,12 @@ export function createRSCHandler<
           } catch (notFoundRenderError) {
             if (!(notFoundRenderError instanceof Response))
               throw notFoundRenderError;
-            // A Flight answer takes the partial lane whatever the plan mode:
-            // an unmatched route renders its not-found tree as Flight on a
-            // client navigation, and the browser follows a raw 3xx to a
-            // document it cannot decode as one.
-            if (isPartial || isNotFoundFlightResponse) {
+            // A Flight answer takes the partial lane whatever the plan mode
+            // (isNotFoundFlightResponse covers isPartial): an unmatched route
+            // renders its not-found tree as Flight on a client navigation, and
+            // the browser follows a raw 3xx to a document it cannot decode as
+            // one.
+            if (isNotFoundFlightResponse) {
               const intercepted = interceptRedirectForPartial(
                 notFoundRenderError,
                 createRedirectFlightResponse,
