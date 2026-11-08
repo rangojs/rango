@@ -612,8 +612,20 @@ async function* serveStoredSegments<TEnv>(
         shouldRevalidate: send,
       });
     }
-    if (!send) keepClientSegment(segment);
-    else sentIds?.add(segment.id);
+    if (!send) {
+      keepClientSegment(segment);
+    } else {
+      // The response serves this segment's recorded handler values
+      // (restoreHandles' `sent`), so the browser replaces its bucket exactly
+      // as it does for a handler that ran: mark it as the live walk marks a
+      // segment whose handler ran, and match-result.ts lists it in
+      // resolvedIds. Without it a HIT of a record lists no stored segment and
+      // the browser keeps values the record no longer holds (a breadcrumb a
+      // re-run handler stopped pushing). A kept segment stays unmarked, so its
+      // values stay the client's, as on a live walk.
+      segment._handlerRan = true;
+      sentIds?.add(segment.id);
+    }
     yield segment;
   }
 
