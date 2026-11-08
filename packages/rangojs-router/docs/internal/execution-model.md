@@ -1098,8 +1098,9 @@ redirect stays in `_renderErrors`, which keeps a late one's 200 out of the
 document cache and of every shell capture.
 
 Pinned by `testing/__tests__/component-redirect.rsc-test.tsx` (serveShellRequest:
-the document and navigation lanes, the state cookie, the external opt-in, a
-basename, a declared `errorBoundary()`, a prefetch, the cookie and `onResponse`
+the document and navigation lanes, a page, a layout and a parallel slot
+component, an intercept, the state cookie, the external opt-in, a basename, a
+declared `errorBoundary()`, strict mode, a prefetch, the cookie and `onResponse`
 stamps, no `onError`, an action's revalidation render, a no-JS form post's
 re-render and its error-boundary render, the not-found tree on a document and on
 a navigation, the async limit, the streamed-after-shell limit, and that a

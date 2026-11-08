@@ -88,6 +88,33 @@ async function AsyncRedirectPage(): Promise<React.ReactNode> {
   throw redirect("/target");
 }
 
+/** A layout and a parallel slot: components of the tree, not handlers. */
+let layoutRedirects = false;
+let slotRedirects = false;
+
+function LayoutRedirectPage(): React.ReactNode {
+  if (layoutRedirects) throw redirect("/target");
+  return <p>layout</p>;
+}
+
+function SlotRedirect(): React.ReactNode {
+  if (slotRedirects) throw redirect("/target");
+  return <aside>side</aside>;
+}
+
+function layoutSlotRouter() {
+  return createRouter({}).routes(
+    urls(({ path, layout, parallel }) => [
+      path("/start", () => <p>start</p>, { name: "start" }),
+      path("/target", () => <p>target-page</p>, { name: "target" }),
+      layout(LayoutRedirectPage, () => [
+        path("/inside", () => <p>inside</p>, { name: "inside" }),
+        parallel({ "@side": SlotRedirect }),
+      ]),
+    ]),
+  );
+}
+
 /** The same, streamed after a document's shell (an inline Suspense). */
 async function StreamedRedirectPage(): Promise<React.ReactNode> {
   await new Promise((resolve) => setTimeout(resolve, 5));
@@ -221,7 +248,11 @@ function stamps(response: Response) {
   };
 }
 
-beforeEach(() => resetShellTestState());
+beforeEach(() => {
+  layoutRedirects = false;
+  slotRedirects = false;
+  resetShellTestState();
+});
 
 describe("a component's redirect (serveShellRequest)", () => {
   it("document: answers the redirect's 3xx, not the boundary", async () => {
@@ -430,6 +461,39 @@ describe("a component's redirect (serveShellRequest)", () => {
     });
     expect(res.response.status).toBe(204);
     expect(res.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+  });
+
+  it("layout and parallel slot components answer it on both lanes", async () => {
+    layoutRedirects = true;
+    const layoutDoc = await serveShellRequest(layoutSlotRouter(), "/inside", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(layoutDoc.response.status).toBe(302);
+    expect(layoutDoc.response.headers.get("Location")).toBe("/target");
+    const layoutNav = await serveShellRequest(layoutSlotRouter(), "/inside", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(layoutNav.response.status).toBe(204);
+    expect(layoutNav.response.headers.get("X-RSC-Redirect")).toBe(
+      "http://localhost/target",
+    );
+
+    layoutRedirects = false;
+    slotRedirects = true;
+    const slotDoc = await serveShellRequest(layoutSlotRouter(), "/inside", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+    expect(slotDoc.response.status).toBe(302);
+    expect(slotDoc.response.headers.get("Location")).toBe("/target");
+    const slotNav = await serveShellRequest(layoutSlotRouter(), "/inside", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/start" },
+    });
+    expect(slotNav.response.status).toBe(204);
+    expect(slotNav.response.headers.get("X-RSC-Redirect")).toBe(
       "http://localhost/target",
     );
   });
