@@ -160,14 +160,14 @@ function NavigationControls() {
 }
 ```
 
-| Method                   | Behaviour                                                                                                                     |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                                          |
-| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                                            |
-| `refresh()`              | Re-fetch the current route's server data, keeping client state. Returns a promise.                                            |
-| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`, see `/links`). |
-| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.                   |
-| `forward()`              | `history.forward()`.                                                                                                          |
+| Method                   | Behaviour                                                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `push(url, options?)`    | Navigate and add a history entry. Returns a promise.                                                                             |
+| `replace(url, options?)` | Navigate and replace the current history entry. Returns a promise.                                                               |
+| `refresh()`              | Re-fetch the current route's server data, keeping client state. A redirect is followed in place of the entry. Returns a promise. |
+| `prefetch(url, opts?)`   | Prefetch a target. `{ key: ":source" }` scopes the entry to the source page (parity with `<Link prefetchKey>`, see `/links`).    |
+| `back()`                 | `history.back()`; on the first entry of the session it replaces to the app root instead of leaving the app.                      |
+| `forward()`              | `history.forward()`.                                                                                                             |
 
 `push` / `replace` options: `scroll` (`false` keeps the current scroll
 position), `revalidate` (default `true`, see below), `transition` (`false`
@@ -192,6 +192,8 @@ Pass `revalidate: false` to skip the RSC server fetch for same-pathname navigati
 router.push("/products?color=blue", { revalidate: false });
 router.replace("/products?page=3", { revalidate: false });
 ```
+
+A `refresh()`, or a Back/Forward still loading, of the entry being left is cancelled: its answer would put the old URL back. A navigation to another page that is still loading goes on.
 
 If the pathname changes, `revalidate: false` is silently ignored and a full navigation occurs. This also works on `<Link>`:
 

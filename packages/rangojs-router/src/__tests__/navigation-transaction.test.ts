@@ -286,8 +286,14 @@ describe("createNavigationTransaction", () => {
       previous: unknown = SOURCE,
       /** history.state when the commit lands, if it moved after `previous`. */
       entryAtCommit: unknown = previous,
+      /** The page on screen when the commit lands, if not the start page. */
+      onScreen?: string,
     ) {
       const { store, eventController } = createTestContext();
+      if (onScreen) {
+        locationHref = onScreen;
+        store.setHistoryKey(new URL(onScreen).pathname);
+      }
       historyState = previous;
       eventController.commitLocationState(previous);
       historyState = entryAtCommit;
@@ -518,13 +524,104 @@ describe("createNavigationTransaction", () => {
     it.each([
       { label: "storeOnly (action refetch)", options: { storeOnly: true } },
       { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
-    ])("a $label commit leaves the entry's state alone", ({ options }) => {
-      const { tx, eventController, before, commitSpy } = commitOf(options);
-      expect(commitSpy).not.toHaveBeenCalled();
-      expect(eventController.getLocationState()).toBe(before);
-      expect(window.dispatchEvent).not.toHaveBeenCalled();
-      tx[Symbol.dispose]();
-    });
+    ])(
+      "a $label commit with no server-set state leaves the entry's state alone",
+      ({ options }) => {
+        const { tx, eventController, before, commitSpy } = commitOf(
+          options,
+          SOURCE,
+          SOURCE,
+          "http://localhost/other",
+        );
+        expect(commitSpy).not.toHaveBeenCalled();
+        expect(replaceStateSpy).not.toHaveBeenCalled();
+        expect(eventController.getLocationState()).toBe(before);
+        expect(window.dispatchEvent).not.toHaveBeenCalled();
+        tx[Symbol.dispose]();
+      },
+    );
+
+    // The handler of the page on screen set state on the render the action's
+    // refetch or Back's revalidation brought: the entry and readers get it,
+    // as on a refresh, and a flash readers show stays on screen.
+    it.each([
+      { label: "storeOnly (action refetch)", options: { storeOnly: true } },
+      { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
+    ])(
+      "a $label commit merges server-set state into the entry on screen and into what readers show",
+      ({ options }) => {
+        const withFlash = { ...SOURCE, __rsc_ls_flash: { text: "saved" } };
+        // The flash reader cleared the slot from history after paint.
+        const { __rsc_ls_flash: _cleared, ...cleared } = withFlash;
+        const { tx, eventController, before, heard } = commitOf(
+          { ...options, serverState: { __rsc_ls_stamp: { page: 2 } } },
+          withFlash,
+          cleared,
+          "http://localhost/other",
+        );
+        expect(pushStateSpy).not.toHaveBeenCalled();
+        const written = replaceStateSpy.mock.calls.at(-1)!;
+        expect(written[0]).toMatchObject({
+          __rsc_ls_product: { name: "Widget" },
+          __rsc_ls_stamp: { page: 2 },
+          key: "abc",
+        });
+        expect(written[0]).not.toHaveProperty("__rsc_ls_flash");
+        // The entry's own URL: no navigation.
+        expect(locationHref).toBe("http://localhost/other");
+        const shown = eventController.getLocationState()!;
+        expect(shown).toEqual({
+          __rsc_ls_product: { name: "Widget" },
+          __rsc_ls_flash: { text: "saved" },
+          __rsc_ls_stamp: { page: 2 },
+        });
+        expect(shown.__rsc_ls_product).toBe(before!.__rsc_ls_product);
+        // Taken with the tree that follows, not on its own.
+        eventController.flushRouteState();
+        expect(eventController.takeTreelessLocationState()).toBe(false);
+        expect(heard).toHaveBeenCalledOnce();
+        tx[Symbol.dispose]();
+      },
+    );
+
+    it.each([
+      { label: "storeOnly (action refetch)", options: { storeOnly: true } },
+      { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
+    ])(
+      "a treeless $label commit hands server-set state over with its notification",
+      ({ options }) => {
+        const { tx, eventController } = commitOf(
+          {
+            ...options,
+            serverState: { __rsc_ls_stamp: { page: 2 } },
+            treeless: true,
+          },
+          SOURCE,
+          SOURCE,
+          "http://localhost/other",
+        );
+        expect(eventController.takeTreelessLocationState()).toBe(true);
+        tx[Symbol.dispose]();
+      },
+    );
+
+    it.each([
+      { label: "storeOnly (action refetch)", options: { storeOnly: true } },
+      { label: "cacheOnly (stale revalidation)", options: { cacheOnly: true } },
+    ])(
+      "a $label commit for an entry no longer on screen drops server-set state",
+      ({ options }) => {
+        const { tx, eventController, before, commitSpy } = commitOf({
+          ...options,
+          serverState: { __rsc_ls_stamp: { page: 2 } },
+        });
+        expect(commitSpy).not.toHaveBeenCalled();
+        expect(replaceStateSpy).not.toHaveBeenCalled();
+        expect(historyState).toBe(SOURCE);
+        expect(eventController.getLocationState()).toBe(before);
+        tx[Symbol.dispose]();
+      },
+    );
   });
 
   // NavigationEntry.settled: the transaction's end reaches the handle,

@@ -93,7 +93,10 @@ export { runActionBoundaryTests } from "./action-boundary-scenario.js";
 export type { ActionBoundaryScenarioOptions } from "./action-boundary-scenario.js";
 export { runInterceptBoundaryTests } from "./intercept-boundary-scenario.js";
 export type { InterceptBoundaryScenarioOptions } from "./intercept-boundary-scenario.js";
-export { runRefreshLocationStateTests } from "./refresh-location-state-scenario.js";
+export {
+  runRefreshLocationStateTests,
+  runRevalidationLocationStateTests,
+} from "./refresh-location-state-scenario.js";
 export type { RefreshLocationStateScenarioOptions } from "./refresh-location-state-scenario.js";
 export type { ActionFailureScenarioOptions } from "./action-failure-scenario.js";
 export {

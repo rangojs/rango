@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a redirect answering `router.refresh()` is followed
+
+**Before.** When the page a `router.refresh()` reloaded answered with a
+redirect (a middleware sending an expired session to `/login`, say, on the
+refresh another tab's action triggers), the page showed its error boundary.
+The same redirect answering an action's follow-up refetch or Back's
+background revalidation of a stale entry was logged as a failed revalidation,
+and the page the server no longer serves stayed on screen.
+
+**Now.** All three follow the redirect as Back/Forward does: the target
+replaces the entry that redirected, with the state `redirect(url, { state })`
+carried, and Back from the target skips it. A background re-render of a page
+the user already left follows nothing.
+
+### Fixed: a shallow navigation is no longer undone by a refresh in flight
+
+**Before.** `router.push(url, { revalidate: false })` (or `replace`) while a
+`router.refresh()` of the page was still loading left the refresh running.
+Its answer then put the old URL back over the new entry, and the URL hooks
+followed it. A Back/Forward or an action's follow-up still loading did the
+same to the URL the router reported.
+
+**Now.** A shallow navigation cancels a navigation still loading for the
+entry it leaves, as any other navigation does. A navigation to another page
+that is still loading goes on, and a committed navigation's `prefetch: false`
+fill still fills the page.
+
+### Fixed: state the server sets on an action's follow-up or Back's revalidation reaches the page
+
+**Before.** `ctx.setLocationState()` in the render an action's follow-up
+refetch brought, or in the background revalidation of a stale entry after
+Back, never reached the history entry or any `useLocationState` reader.
+
+**Now.** It merges into the entry on screen and into what readers show, in
+the commit that shows the re-rendered page, as on a refresh. A flash value
+readers already show stays on screen. When the user has left that entry by
+the time the render lands, it is dropped.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

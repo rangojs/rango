@@ -351,6 +351,12 @@ export function createNavigationBridge(
       },
     )
       .catch((error) => {
+        // The page on screen now redirects: followed as a refresh follows
+        // one, unless the user already left it.
+        if (error instanceof ServerRedirect && !tx.handle.signal.aborted) {
+          void followServerRedirect(bridge, error, url, 0, { replace: true });
+          return;
+        }
         if (isBackgroundSuppressible(error)) return;
         console.error("[Browser] Background revalidation failed:", error);
       })
@@ -413,6 +419,23 @@ export function createNavigationBridge(
           intercept: isIntercept,
           interceptSource: interceptSourceUrl,
         });
+
+        // A navigation still pending to the entry this one leaves (a refresh,
+        // a Back/Forward that missed the history cache, an action's
+        // follow-up, a background revalidation) would commit that entry's URL
+        // over the new one. This lane starts no transaction, so it supersedes
+        // it here, as startNavigation does. A pending navigation to another
+        // entry goes on: the user asked for it. pendingOnly: a committed
+        // navigation's prefetch: false fill still fills the page this entry
+        // copies.
+        const pending = eventController.getCurrentNavigation();
+        if (
+          pending &&
+          generateHistoryKey(pending.url) ===
+            generateHistoryKey(window.location.href)
+        ) {
+          eventController.abortNavigation(true);
+        }
 
         // Copy current segments to the new history key so back/forward restores instantly.
         // The array itself, not a clone: getPageHistoryKeys reads a shared
@@ -790,6 +813,16 @@ export function createNavigationBridge(
           tx.handle.signal.aborted
         ) {
           return;
+        }
+
+        // The page on screen now redirects (a session that expired, say).
+        // Followed as Back/Forward follows one: the entry that redirected is
+        // replaced, so Back from the target skips it. Through `bridge`, not
+        // `this`, so a detached refresh() follows it too.
+        if (error instanceof ServerRedirect) {
+          return followServerRedirect(bridge, error, window.location.href, 0, {
+            replace: true,
+          });
         }
 
         const networkError = toNetworkError(error, {
