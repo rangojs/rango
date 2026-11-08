@@ -82,11 +82,10 @@ const router = createRouter({
           () => [
             parallel(
               {
-                "@response": async () =>
-                  new Response(null, {
-                    status: 302,
-                    headers: { location: "/home" },
-                  }),
+                // Raw content, not a redirect: a redirect thrown from a
+                // streamed handler is control flow now and is not warned
+                // about (rendered-redirect.rsc-test.tsx).
+                "@response": async () => new Response("raw", { status: 200 }),
               },
               () => [loading(<i>spinner</i>)],
             ),

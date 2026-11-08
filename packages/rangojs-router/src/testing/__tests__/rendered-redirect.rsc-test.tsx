@@ -104,6 +104,13 @@ function RawPage(): React.ReactNode {
 
 const Loading = <p>loading-fallback</p>;
 
+/** A server action whose revalidation re-renders a page that redirects. */
+export async function noop(): Promise<{ ok: boolean }> {
+  return { ok: true };
+}
+
+const NOOP = "src/actions.ts#noop";
+
 const routes = urls(({ path, loading }) => [
   path("/", async () => <p>home</p>, { name: "home" }),
   path("/login", async () => <p>login-page</p>, { name: "login" }),
@@ -206,11 +213,18 @@ describe("a redirect thrown during the render", () => {
   });
 
   it("a handler streamed behind loading() is answered, not swallowed", async () => {
-    const res = await serve("/streamed");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await serve("/streamed");
 
-    expect(redirectsIn(res.flight)).toEqual([
-      { to: "http://localhost/login", status: 302 },
-    ]);
+      expect(redirectsIn(res.flight)).toEqual([
+        { to: "http://localhost/login", status: 302 },
+      ]);
+      // warnOnStreamedResponse names only a raw-content Response now.
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("redirect(url, { status, state }) keeps both", async () => {
@@ -264,6 +278,81 @@ describe("a redirect thrown during the render", () => {
     // without running the handler again.
     expect(accountRuns).toBe(2);
     expect(redirectsIn(second.flight)).toHaveLength(1);
+  });
+
+  it("a ppr route stores no shell and still answers the redirect", async () => {
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = createRouter({ cache: { store: cacheStore } }).routes(
+      urls(({ path }) => [
+        path("/ppr", AccountHandler, {
+          name: "ppr",
+          ppr: { ttl: 300, swr: 60 },
+        }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/ppr", { cacheStore });
+
+    expect(res.shellStatus).toBe("MISS");
+    expect(await res.readEntry()).toBeNull();
+    expect(redirectsIn(res.flight)).toHaveLength(1);
+  });
+
+  it("a basename keeps the app-local target", async () => {
+    const router = createRouter({ basename: "/app" }).routes(
+      urls(({ path }) => [
+        path("/account", AccountHandler, { name: "account" }),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/app/account", {
+      cacheStore: new MemorySegmentCacheStore(),
+    });
+
+    expect(redirectsIn(res.flight)).toEqual([
+      { to: "http://localhost/app/login", status: 302 },
+    ]);
+  });
+
+  it("an intercept slot's component answers it too", async () => {
+    const router = createRouter({}).routes(
+      urls(({ path, layout, intercept }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            path("/list", async () => <p>list</p>, { name: "list" }),
+            path("/item/:id", async () => <p>item</p>, { name: "item" }),
+            intercept("@modal", ".item", () => <AccountPage />),
+          ],
+        ),
+      ]),
+    );
+    const res = await serveShellRequest(router, "/item/1", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/list" },
+    });
+
+    expect(redirectsIn(res.flight)).toEqual([
+      { to: "http://localhost/login", status: 302 },
+    ]);
+  });
+
+  it("an action's revalidation carries it too", async () => {
+    const router = createRouter({}).routes(routes);
+    const first = await serveShellRequest(router, "/account", {
+      cacheStore: new MemorySegmentCacheStore(),
+      partial: { from: "/" },
+    });
+    const row = first.flight?.split("\n").find((line) => line.startsWith("0:"));
+    const matched = (
+      JSON.parse(row!.slice(2)).metadata as { matched: string[] }
+    ).matched;
+    const res = await serveShellRequest(router, "/account", {
+      cacheStore: new MemorySegmentCacheStore(),
+      action: { ref: noop, id: NOOP, args: [], segments: matched },
+    });
+
+    expect(redirectsIn(res.flight)).toEqual([
+      { to: "http://localhost/login", status: 302 },
+    ]);
   });
 
   it("a raw Response is not control flow: it stays an error, reported once", async () => {
