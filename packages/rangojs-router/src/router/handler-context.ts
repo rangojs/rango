@@ -262,14 +262,16 @@ export function withSegmentContext<C>(
   return scoped;
 }
 
-/** The data fields of a request's handler ctx, computed once per ctx. */
+/** The fields a segment's ctx copies from the request's, once per ctx. */
 const COPY_FIELDS = Symbol("rango:segment-ctx-fields");
 
 /**
- * Copy the request's own data fields onto a segment's ctx. Getters are left to
- * the prototype: a pre-render or static ctx refuses `request` by throwing from
- * its getter, and reading it here would refuse every handler. `use` and the
- * walker's pin are left out too: the segment's ctx binds its own.
+ * Copy the request ctx's own public data fields (and its symbols, the NOCACHE
+ * brand among them) onto a segment's ctx, so `{ ...ctx }` from a handler
+ * carries what it carried when every handler shared the one ctx. Getters are
+ * left to the prototype: a pre-render or static ctx refuses `request` by
+ * throwing from its getter, and reading it here would refuse every handler.
+ * `use` is left out too: the segment's ctx binds its own.
  */
 function copyRequestFields(
   target: Record<PropertyKey, unknown>,
@@ -277,18 +279,13 @@ function copyRequestFields(
 ): void {
   let fields = source[COPY_FIELDS] as PropertyKey[] | undefined;
   if (fields === undefined) {
-    fields = [];
-    for (const key of Reflect.ownKeys(source)) {
-      if (
-        key === "use" ||
-        key === "_currentSegmentId" ||
-        key === "_owningSegmentId"
-      ) {
-        continue;
+    fields = Reflect.ownKeys(source).filter((key) => {
+      if (typeof key === "string" && (key[0] === "_" || key === "use")) {
+        return false;
       }
       const descriptor = Object.getOwnPropertyDescriptor(source, key);
-      if (descriptor?.enumerable && "value" in descriptor) fields.push(key);
-    }
+      return descriptor?.enumerable === true && "value" in descriptor;
+    });
     Object.defineProperty(source, COPY_FIELDS, { value: fields });
   }
   for (const key of fields) target[key] = source[key];
