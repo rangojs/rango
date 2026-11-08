@@ -94,10 +94,25 @@ async function HoleyShellRenderRedirector(): Promise<ReactNode> {
   throw redirect("/holey-throws/shell-target");
 }
 
+async function HoleyShellRenderRedirectStateor(): Promise<ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  throw redirect("/holey-throws/shell-target", {
+    state: HoleyShellState({ text: "carried-by-render-redirect" }),
+  });
+}
+
 function HoleyShellRenderRedirectPage(): ReactNode {
   return (
     <main data-testid="holey-shell-page">
       <HoleyShellRenderRedirector />
+    </main>
+  );
+}
+
+function HoleyShellRenderRedirectStatePage(): ReactNode {
+  return (
+    <main data-testid="holey-shell-page">
+      <HoleyShellRenderRedirectStateor />
     </main>
   );
 }
@@ -159,6 +174,11 @@ export const holeyThrowsPatterns = urls(
         "/holey-throws/shell-render-redirect",
         HoleyShellRenderRedirectPage,
         { name: "holeyShellRenderRedirect" },
+      ),
+      path(
+        "/holey-throws/shell-render-redirect-state",
+        HoleyShellRenderRedirectStatePage,
+        { name: "holeyShellRenderRedirectState" },
       ),
       path("/holey-throws/shell-ssr-throw", HoleyShellSsrThrowPage, {
         name: "holeyShellSsrThrow",

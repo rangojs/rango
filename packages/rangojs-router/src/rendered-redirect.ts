@@ -22,8 +22,11 @@
  * so it stays dependency free apart from the redirect rules every layer
  * already shares.
  */
-import { getRedirectState, isExternalRedirect } from "./redirect-origin.js";
-import { resolveSoftRedirectUrl } from "./redirect-origin.js";
+import {
+  getRedirectState,
+  isExternalRedirect,
+  resolveSoftRedirectUrl,
+} from "./redirect-origin.js";
 import { isRedirectResponse } from "./response-utils.js";
 
 /**

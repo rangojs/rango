@@ -31,6 +31,7 @@ type Case =
   | "shell-redirect"
   | "shell-redirect-state"
   | "shell-render-redirect"
+  | "shell-render-redirect-state"
   | "shell-ppr"
   | "shell-ssr-throw"
   | "shell-ssr-throw-bounded"
@@ -126,6 +127,7 @@ const screens: Record<
     | "shell-redirect"
     | "shell-redirect-state"
     | "shell-render-redirect"
+    | "shell-render-redirect-state"
     | "shell-hooks"
   >,
   (page: Page) => Promise<void>
@@ -236,6 +238,7 @@ export function defineSsrShellErrorTests(
       | "shell-redirect"
       | "shell-redirect-state"
       | "shell-render-redirect"
+      | "shell-render-redirect-state"
       | "shell-hooks"
       | "shell-not-found"
     >;
@@ -418,6 +421,24 @@ export function defineSsrShellErrorTests(
     // And the click lane: the error row's digest navigates the browser.
     await navigateFromIndex(page, f, "shell-render-redirect");
     await expectTarget(page, "none");
+  });
+
+  test("shell-render-redirect-state: a component's redirect() with state keeps the recovery document, then the client replace carries it", async ({
+    page,
+  }) => {
+    const f = fixture();
+
+    const raw = await rawDocument(page, f, "shell-render-redirect-state");
+
+    // 200 like the same redirect inside a <Suspense>: the document, then the
+    // client replace, because a 3xx cannot carry the state.
+    expect(raw.status).toBe(200);
+    expectRecoveryDocument(raw.body, f.production);
+    await page.goto(f.url(pathOf("shell-render-redirect-state")));
+    await expectTarget(page, "carried-by-render-redirect");
+
+    await navigateFromIndex(page, f, "shell-render-redirect-state");
+    await expectTarget(page, "carried-by-render-redirect");
   });
 
   test("shell-redirect-state: a loader's redirect() with state answers the recovery document, then the client replace carries the state", async ({

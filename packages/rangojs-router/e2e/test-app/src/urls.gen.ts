@@ -277,6 +277,7 @@ export const routes = {
   holeyShellRedirect: "/holey-throws/shell-redirect",
   holeyShellRedirectState: "/holey-throws/shell-redirect-state",
   holeyShellRenderRedirect: "/holey-throws/shell-render-redirect",
+  holeyShellRenderRedirectState: "/holey-throws/shell-render-redirect-state",
   holeyShellSsrThrow: "/holey-throws/shell-ssr-throw",
   holeyShellSsrThrowBounded: "/holey-throws/shell-ssr-throw-bounded",
   holeyShellTarget: "/holey-throws/shell-target",
