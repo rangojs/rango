@@ -458,6 +458,8 @@ export type InternalHandlerContext<
   passthrough?: () => unknown;
   /** Current segment ID for handle data attribution. */
   _currentSegmentId?: string;
+  /** A layout's or slot's own segment on its ctx (withSegmentPin). */
+  _segmentPin?: string;
   /** Response type tag (json, text, html, etc.) for cache key differentiation. */
   _responseType?: string;
   /** Route name for cache key scoping (prevents cross-route collisions). */
