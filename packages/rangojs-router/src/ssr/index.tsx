@@ -18,7 +18,7 @@ import {
   isLoaderSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
-import { isRedirectSignal, redirectSignalOfError } from "../redirect-signal.js";
+import { isRedirectSignal } from "../redirect-signal.js";
 import {
   answerShellError,
   type ShellErrorRecovery,
@@ -1069,7 +1069,7 @@ function shellErrorReachesHost(error: unknown): boolean {
   return (
     process.env.NODE_ENV !== "production" &&
     !isLoaderSignalError(error) &&
-    redirectSignalOfError(error) === undefined
+    !isRedirectSignal(error)
   );
 }
 

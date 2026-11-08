@@ -34,7 +34,7 @@ import {
 import { isRedirectResponse } from "./response-utils.js";
 
 /** Prefix of every redirect digest; nothing else may produce one. */
-export const REDIRECT_DIGEST_PREFIX: string = "rango-redirect:";
+const REDIRECT_DIGEST_PREFIX: string = "rango-redirect:";
 
 /** A `redirect()` thrown during a render, as the browser needs it. */
 export interface RedirectSignal {

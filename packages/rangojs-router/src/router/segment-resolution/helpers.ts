@@ -98,11 +98,13 @@ export function handleHandlerResult(
  * rejects with a Response (e.g. redirect()).
  *
  * On a non-loading route a returned/thrown Response short-circuits to an HTTP
- * redirect. But when the route declares loading(), the handler result is
- * streamed (not awaited at the resolution boundary), so the Response surfaces
- * only during RSC serialization and is rendered into the stream instead of
- * becoming a 302/308 — a silent failure mode. Issue redirects from middleware,
- * a loader, or a synchronous handler return instead. Compiled out in production.
+ * redirect. When the route declares loading(), the handler result is streamed
+ * (not awaited at the resolution boundary), so the Response surfaces only
+ * during RSC serialization: a client navigation still reaches the target, via
+ * the digest the render funnel puts on the error row (redirect-signal.ts), but
+ * a document request answers no 3xx — it renders, and the browser replaces.
+ * Issue redirects from middleware, a loader, or a synchronous handler return
+ * when the HTTP status matters. Compiled out in production.
  */
 export function warnOnStreamedResponse(
   result: Promise<unknown>,
@@ -118,9 +120,10 @@ export function warnOnStreamedResponse(
     if (value instanceof Response) {
       console.warn(
         `[rango] Handler for "${entryId}" returned a Response (e.g. ` +
-          `redirect()), but it declares loading(): the Response is rendered ` +
-          `into the RSC stream, NOT sent as an HTTP redirect. Issue redirects ` +
-          `from middleware, a loader, or a synchronous handler return.`,
+          `redirect()), but it declares loading(): it is streamed, so a ` +
+          `document request answers no HTTP redirect — the browser replaces ` +
+          `once it renders. Issue redirects from middleware, a loader, or a ` +
+          `synchronous handler return when the 3xx matters.`,
       );
     }
   };

@@ -30,7 +30,10 @@ import {
   urls,
 } from "../../index.rsc.js";
 import type { OnErrorContext, Rango } from "../../index.rsc.js";
-import { decodeRedirectDigest } from "../../redirect-signal.js";
+import {
+  decodeRedirectDigest,
+  type RedirectSignal,
+} from "../../redirect-signal.js";
 
 /** The signed-out session read: the throw lands after the shell flushed. */
 async function getSession(): Promise<{ user: string } | null> {
@@ -96,7 +99,7 @@ function makeRouter(opts: { basename?: string } = {}): Rango<any, any> {
       reported.push(ctx);
     },
   }).routes(
-    urls(({ path }) => [
+    urls(({ path, loading }) => [
       path("/", () => <h1>home</h1>, { name: "home" }),
       path("/login", () => <h1>login</h1>, { name: "login" }),
       path("/account", AccountPage, { name: "account" }),
@@ -141,6 +144,18 @@ function makeRouter(opts: { basename?: string } = {}): Rango<any, any> {
         ),
         { name: "raw" },
       ),
+      // A loading() route whose async HANDLER throws the redirect: the
+      // handler result is streamed, so the throw reaches the same render
+      // funnel a component's does (was: a documented limitation).
+      path(
+        "/loading-handler",
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          throw redirect("/login");
+        },
+        { name: "loadingHandler" },
+        () => [loading(<p>skeleton</p>)],
+      ),
       // A ppr route: the shell capture must refuse a page that produced no
       // page, without reporting it as cache degradation.
       path("/ppr-account", AccountPage, {
@@ -153,17 +168,10 @@ function makeRouter(opts: { basename?: string } = {}): Rango<any, any> {
 
 const router = makeRouter();
 
-interface ProbedSignal {
-  to: string;
-  status?: number;
-  external?: boolean;
-  state?: Record<string, unknown>;
-}
-
 /** The redirect signals a served payload carries, in wire order. */
-function signalsIn(flight: string | undefined): ProbedSignal[] {
+function signalsIn(flight: string | undefined): RedirectSignal[] {
   if (!flight) return [];
-  const signals: ProbedSignal[] = [];
+  const signals: RedirectSignal[] = [];
   for (const row of flight.split("\n")) {
     const match = /^[0-9a-z]+:E(\{.*\})$/.exec(row);
     if (!match) continue;
@@ -268,6 +276,19 @@ describe("a component's throw redirect() on a client navigation", () => {
 
     expect(signalsIn(answer.flight)).toEqual([
       { to: "http://localhost/app/login", status: 302 },
+    ]);
+  });
+
+  it("carries the target from an async handler under loading()", async () => {
+    // The handler result is streamed, not awaited at the resolution boundary,
+    // so its Response surfaces during serialization: the render funnel turns
+    // it into the same digest.
+    const answer = await serveShellRequest(router, "/loading-handler", {
+      partial: { from: "/", segments: [] },
+    });
+
+    expect(signalsIn(answer.flight)).toEqual([
+      { to: "http://localhost/login", status: 302 },
     ]);
   });
 
