@@ -486,7 +486,12 @@ in `src/suspense-audit.ts`, to the table above, and to `EMITTERS` in the check.
 - **`I3 resuspended ... with nothing pending`**: the 300 ms skeleton of #1079.
   A held boundary is handed its settled content and loader data since #1080.
 - **`I5 drift at outlet:<id>: wrapper chain link N changed from A to B`**: two lanes build
-  different trees for that segment. Make the wrapper unconditional.
+  different trees for that segment. Make the wrapper unconditional. A node the build puts
+  where the content was goes through the wrapper that renders such nodes on the other lanes,
+  never in its place: a loader fallback `renderSegments` settles (a `notFound()` or
+  `redirect()` on an action or forceAwait lane, an `ssr: "await"` loader's result on the
+  document) is handed to `StreamedLoaderErrorBoundary` as `settledFallback`, and the
+  boundary renders it where it renders a marker a read throws.
 - **`I4 remount`**: the consequence of a drift at or above the segment's outlet. A link
   that changes below the outlet (the loader error boundary, a ViewTransition, the
   content wrapper) remounts the content under it and is reported by I5 alone.

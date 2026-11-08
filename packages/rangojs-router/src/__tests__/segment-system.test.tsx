@@ -448,7 +448,12 @@ describe("segment-system", () => {
         const tree = toTreeNode(await renderSegments(segments));
         const outlets = collectByType(tree, MockOutletProvider);
         expect(outlets).toHaveLength(1);
-        expect(outlets[0].props.children).toBe("not-found-ui");
+        // The segment's loader error boundary renders it in place of the
+        // content it still wraps, so the wrapper chain is the content's (I5).
+        const boundary = outlets[0].props.children;
+        expect(boundary.type).toBe(MockStreamedLoaderErrorBoundary);
+        expect(boundary.props.settledFallback).toBe("not-found-ui");
+        expect(boundary.props.children).toBeTruthy();
         expect(collectByType(tree, LoaderRedirect)).toHaveLength(0);
       });
 
@@ -892,9 +897,10 @@ describe("segment-system", () => {
         const tree = toTreeNode(
           await renderSegments(segments, { isAction: true }),
         );
-        expect(collectByType(tree, MockOutletProvider)[0]!.props.children).toBe(
-          notFoundUi,
-        );
+        const boundary = collectByType(tree, MockOutletProvider)[0]!.props
+          .children;
+        expect(boundary.type).toBe(MockStreamedLoaderErrorBoundary);
+        expect(boundary.props.settledFallback).toBe(notFoundUi);
       });
     });
 

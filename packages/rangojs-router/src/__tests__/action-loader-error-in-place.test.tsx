@@ -22,7 +22,6 @@ vi.mock("../loader-redirect.js", () => ({
 
 import { renderSegments } from "../segment-system.js";
 import { auditTreeCause, auditTreeUpdate } from "../suspense-audit.js";
-import { allowSuspenseAuditViolations } from "./kit/suspense-audit-lock.js";
 import { useLoader } from "../use-loader.js";
 import { Outlet } from "../client.js";
 import type { LoaderDefinition, ResolvedSegment } from "../types.js";
@@ -83,6 +82,13 @@ const failed = (fallback: ReactNode = null) => ({
   fallback,
 });
 const ok = (n: number) => ({ __loaderResult: true, ok: true, data: { n } });
+const notFound = () => ({
+  __loaderResult: true,
+  ok: false,
+  notFound: true,
+  error: { message: "Not found", name: "DataNotFoundError" },
+  fallback: createElement("p", { "data-testid": "not-found" }, "no item"),
+});
 const dslFallback = <p data-testid="dsl-fallback">errorBoundary()</p>;
 
 function segments(opts: {
@@ -206,6 +212,21 @@ describe.each(LANES)(
         expect(routeMounts).toBe(1);
       });
     }
+
+    it("clientUrls() group route: a loader notFound() replaces the route's content, the layout stays, and a later rerun brings the reader back", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const opts = { clientGroup: "g", appBoundary: false };
+      const result = await mount(segments({ entry: ok(1), ...opts }));
+      const layout = result.getByTestId("layout");
+
+      await action(segments({ entry: notFound(), ...opts }));
+      expect(result.getByTestId("not-found").textContent).toBe("no item");
+      expect(result.queryByTestId("reader")).toBeNull();
+
+      await action(segments({ entry: ok(2), ...opts }));
+      expect(result.getByTestId("reader").textContent).toBe("stock:2");
+      expect(result.getByTestId("layout")).toBe(layout);
+    });
 
     it("the app's boundary nearer the read wins over an errorBoundary() fallback, as on a navigation", async () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
@@ -389,13 +410,8 @@ describe.each(LANES)("%s lane: layouts and ancestor loaders", (_, options) => {
   });
 
   for (const loading of [false, true]) {
-    it(`a loader redirect() replaces only the route's content; the layout keeps its instance (${loading ? "with" : "without"} loading())`, async () => {
-      // Router defect: a settle lane plants a settled redirect()
-      // in place of the route's StreamedLoaderErrorBoundary
-      // (segment-system.tsx), so the route's wrapper chain drifts (I5).
-      allowSuspenseAuditViolations(
-        "I5 drift: a settled redirect() drops StreamedLoaderErrorBoundary",
-      );
+    const label = loading ? "with" : "without";
+    it(`a loader redirect() replaces only the route's content; the layout keeps its instance (${label} loading())`, async () => {
       vi.spyOn(console, "error").mockImplementation(() => {});
       const route = createElement(OwnReader);
       const result = await mount(
@@ -418,6 +434,38 @@ describe.each(LANES)("%s lane: layouts and ancestor loaders", (_, options) => {
       );
       expect(result.getByTestId("redirecting").textContent).toBe("/items");
       expect(result.getByTestId("layout")).toBe(layout);
+      expect(layoutMounts).toBe(1);
+    });
+
+    it(`a loader notFound() replaces only the route's content, and a later rerun brings the reader back (${label} loading())`, async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const route = createElement(OwnReader);
+      const result = await mount(
+        chain({ own: Promise.resolve(ok(1)), route, loading }),
+      );
+      const layout = result.getByTestId("layout");
+
+      await action(chain({ own: Promise.resolve(notFound()), route, loading }));
+      expect(result.getByTestId("not-found").textContent).toBe("no item");
+      expect(result.queryByTestId("reader")).toBeNull();
+
+      await action(chain({ own: Promise.resolve(ok(2)), route, loading }));
+      expect(result.queryByTestId("not-found")).toBeNull();
+      expect(result.getByTestId("reader").textContent).toBe("own:2");
+      expect(result.getByTestId("layout")).toBe(layout);
+      expect(layoutMounts).toBe(1);
+    });
+
+    it(`a notFound() a navigation showed at its read keeps its instance when the rerun settles it again (${label} loading())`, async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const route = createElement(OwnReader);
+      const result = await mount(
+        chain({ own: Promise.resolve(notFound()), route, loading }),
+      );
+      const shown = result.getByTestId("not-found");
+
+      await action(chain({ own: Promise.resolve(notFound()), route, loading }));
+      expect(result.getByTestId("not-found")).toBe(shown);
       expect(layoutMounts).toBe(1);
     });
   }

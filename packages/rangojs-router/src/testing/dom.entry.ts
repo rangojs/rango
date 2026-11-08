@@ -21,3 +21,5 @@ export type {
   RenderRouteHydrateResult,
   HandleDataSeed,
 } from "./render-route.js";
+export { loaderFailure } from "./loader-failure.js";
+export type { LoaderFailure, LoaderFailureInit } from "./loader-failure.js";
