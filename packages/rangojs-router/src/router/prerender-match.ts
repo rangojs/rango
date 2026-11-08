@@ -11,6 +11,7 @@ import {
   createPrerenderContext,
   createStaticContext,
   createReverseFunction,
+  withSegmentContext,
 } from "./handler-context.js";
 import { detectPrerenderPassthrough } from "../prerender.js";
 import { isRouteRootScoped } from "../route-map-builder.js";
@@ -524,22 +525,25 @@ export async function matchForPrerender<TEnv = any>(
           const interceptResolvedSegments: typeof nonLoaderSegments = [];
 
           for (const { intercept, entry: parentEntry } of bakedIntercepts) {
-            // setupBuildUse keys handle pushes by ctx._currentSegmentId. The main
-            // segment pass left it on the route's segment id, so pin it
-            // to THIS intercept's slot id before resolving the handler/layout --
-            // otherwise the intercept's ctx.use() handle pushes land in the wrong
-            // bucket and getDataForSegment(seg.id) below drops them from the baked
-            // artifact. Re-pinned per iteration so multiple intercepts targeting
-            // the same route each get their own id (mirrors the walker's
-            // parallel-slot pinning, revalidation.ts).
             const interceptSegmentId = interceptSlotId(parentEntry, intercept);
-            (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
-              interceptSegmentId;
+            // Each intercept's own ctx, as a live render gives it
+            // (intercept-resolution.ts). The main segment pass left the shared
+            // build ctx's _currentSegmentId on the route's segment id, so
+            // re-pinning it here named only whichever intercept came last: a
+            // component the handler hands its ctx to pushes after this loop
+            // moved the pin on, and getDataForSegment(seg.id) below then
+            // dropped the push from the artifact that should hold it. The
+            // owner rides the ctx (segmentPinOf), not the shared pin.
+            const interceptContext = withSegmentContext(
+              buildCtx,
+              interceptSegmentId,
+              undefined,
+            );
 
             // Resolve handler
             const handlerRaw =
               typeof intercept.handler === "function"
-                ? intercept.handler(buildCtx)
+                ? intercept.handler(interceptContext)
                 : intercept.handler;
             const handlerResolved =
               handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
@@ -553,7 +557,7 @@ export async function matchForPrerender<TEnv = any>(
             let layoutElement: ReactNode | undefined;
             if (intercept.layout) {
               if (typeof intercept.layout === "function") {
-                const layoutResult = await intercept.layout(buildCtx);
+                const layoutResult = await intercept.layout(interceptContext);
                 if (layoutResult instanceof Response) {
                   live(intercept, "layout-response");
                   continue;

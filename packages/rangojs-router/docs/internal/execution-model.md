@@ -2612,7 +2612,10 @@ segment, …)`. The handler hands that object to the component it renders, so
   the push function the component creates files under the segment the ctx
   owns, wherever and whenever it is called. `{ ...ctx }` and a destructured
   `use` keep it: the request fields are own copies and `use` closes over the
-  segment, not over the receiver.
+  segment, not over the receiver. The build pass derives the same ctx for
+  each baked intercept (`prerender-match.ts`, two intercepts on one route
+  included), so a component an intercept handler or its layout hands the ctx
+  to files under that intercept, not under whichever one the build baked last.
 
 The readers take `segmentPinOf(ctx)`, the innermost `runAsSegment` scope's
 segment else the ctx's `_owningSegmentId` else the shared pin: a handle
@@ -2645,7 +2648,11 @@ push through a layout's, a slot's, a route's and an intercept's ctx, naming
 the segment that owns it in the `LateHandlePushError`; a `"use cache"` call a
 route handler makes through the layout's ctx, whose HIT replays into the
 layout's segment as its MISS recorded; a handler's `{ ...ctx }` reaching the
-same entry its ctx wrote), and `server/__tests__/segment-pin.test.ts`.
+same entry its ctx wrote),
+`router/__tests__/prerender-intercept-handle-segment.rsc-test.tsx` (a
+`Prerender` route with two baked intercepts: each handler's and each layout's
+late push stays in its own intercept's variant), and
+`server/__tests__/segment-pin.test.ts`.
 
 ### Cache-safety contract for context variables
 

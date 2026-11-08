@@ -274,4 +274,42 @@ describe("a component's late handle push through a handler's ctx", () => {
     });
     expect(namedSegments(errors)).toEqual(["M0L0L0.@modal"]);
   });
+
+  it("names the intercept's segment for the intercept layout's ctx", async () => {
+    const errors: Error[] = [];
+    const router = createRouter({ telemetry: latePushSink(errors) }).routes(
+      urls(({ layout, intercept, path }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            path("/list", () => <ul>list</ul>, { name: "list" }),
+            path("/item/:id", () => <article>item</article>, { name: "item" }),
+            intercept(
+              "@modal",
+              ".item",
+              () => <p>modal</p>,
+              () => [
+                layout((ctx: Ctx) => (
+                  <LatePush ctx={ctx} label="modal-layout" />
+                )),
+              ],
+            ),
+          ],
+        ),
+      ]),
+    );
+    const cacheStore = new MemorySegmentCacheStore();
+    const list = await serveShellRequest(router, "/list", {
+      cacheStore,
+      partial: true,
+    });
+    const { metadata } = await deserializeResult<{
+      metadata: { matched: string[] };
+    }>(list.flight!);
+    await serve(router, "/item/1", {
+      cacheStore,
+      partial: { from: "/list", segments: metadata.matched },
+    });
+    expect(namedSegments(errors)).toEqual(["M0L0L0.@modal"]);
+  });
 });
