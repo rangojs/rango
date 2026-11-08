@@ -106,35 +106,28 @@ export async function answerShellError(
   flight: ReadableStream<Uint8Array> | undefined,
   nonce: string | undefined,
 ): Promise<ShellErrorAnswer> {
-  // A redirect with state keeps the recovery document: the state rides the
-  // history entry the client replace writes, which a 3xx cannot. Without
-  // this branch every loader redirect takes the client replace.
   const redirect = loaderRedirectOf(error);
   // A component's redirect() reaches here as a Flight error row whose digest
   // carries the target (redirect-signal.ts): a document request still has
-  // nothing flushed, so it answers the same 3xx a handler's throw does. An
-  // `{ external: true }` target takes the recovery document below like a
-  // state-carrying one: the 3xx guard neutralizes an unbranded off-host
-  // Location, and LoaderRedirect's location.replace keeps the opt-in.
+  // nothing flushed, so it answers the same 3xx a handler's throw does.
   const signal = redirectSignalOfError(error);
-  const signalAs3xx =
-    signal !== undefined && signal.state === undefined && !signal.external
-      ? signal
-      : undefined;
-  if (redirect && redirect.state === undefined) {
+  // One rule for both lanes: a redirect answers a real 3xx unless it carries
+  // state (the state rides the history entry the client replace writes, which
+  // a 3xx cannot) or the `{ external: true }` opt-in (the 3xx guard neutralizes
+  // an unbranded off-host Location; LoaderRedirect's location.replace keeps
+  // it). Those two fall through to the recovery document below.
+  const answered =
+    redirect !== undefined && redirect.state === undefined
+      ? { to: redirect.to, status: redirect.status ?? 302 }
+      : signal !== undefined && signal.state === undefined && !signal.external
+        ? { to: signal.to, status: signal.status ?? 302 }
+        : undefined;
+  if (answered) {
     flight?.cancel().catch(() => {});
     return {
       body: new Response("").body!,
-      status: redirect.status ?? 302,
-      location: redirect.to,
-    };
-  }
-  if (signalAs3xx) {
-    flight?.cancel().catch(() => {});
-    return {
-      body: new Response("").body!,
-      status: signalAs3xx.status ?? 302,
-      location: signalAs3xx.to,
+      status: answered.status,
+      location: answered.to,
     };
   }
   // A redirect with state answers 200 like the same redirect inside a

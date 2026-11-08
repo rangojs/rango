@@ -31,6 +31,10 @@ nothing: it is control flow, not a failure. (React still logs its own
 "The above error occurred in ..." line when its error boundary catches one, as
 it does for any caught error.)
 
+A redirect's `state` has to be JSON-carryable, as the document lane's one-shot
+cookie already required: a value JSON cannot encode (a BigInt, a cycle) is
+dropped and the target still wins, where it used to make the request hang.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
