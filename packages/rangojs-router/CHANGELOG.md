@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a rewritten request is never served the target's stored document
+
+**Before.** With `createDocumentCacheMiddleware()`, a request middleware
+rewrote (`/public-1` to `/item/1`) was keyed by the target's URL. A direct
+visit's stored `/item/1` document answered `/public-1`, and a rewritten
+request that missed rendered the target's pathname so it could be stored
+there. Either way the page carried `/item/1` while the browser hydrated
+`usePathname()` from the address bar, so a component that renders it
+mismatched on hydration, and `ctx.rewrittenFrom` read `undefined`.
+`.shell("visitor")` changed nothing for the document cache.
+
+**Now.** The document cache follows the rule PPR shells follow: a URL's stored
+document is read and written only by requests on that URL, and the rewrite's
+`.shell()` choice picks an entry for the rewritten request.
+
+- No `.shell()`: the rewritten request neither reads nor stores a document.
+  It renders live at the visitor's URL on every request, and only direct
+  visits store the target's document.
+- `.shell("visitor")`: a document per visitor URL and target, rendered with
+  the visitor's location and `ctx.rewrittenFrom`. A conditional rewrite (an
+  A/B arm) gets one per arm. A custom `keyGenerator` receives the visitor's
+  URL.
+- `.shell("target")`: the target's document, shared with direct visits, as
+  before. It shows the target's URL to the visitor.
+
+```ts
+// Before: stored under /item/1, served to /public-1 with /item/1's pathname
+throw rewrite("item", { id });
+
+// Now: renders live at /public-1; to keep a stored document, key it by the
+// visitor's URL
+throw rewrite("item", { id }).shell("visitor");
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

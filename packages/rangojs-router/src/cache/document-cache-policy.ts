@@ -63,7 +63,10 @@ function parseCacheControl(header: string | null): CacheDirectives | null {
 }
 
 /**
- * Check if response should be cached based on Cache-Control headers
+ * Check if response should be cached based on Cache-Control headers.
+ * `keyCoversVisitorUrl`: the entry is keyed by the visitor's URL (a
+ * `rewrite(...).shell("visitor")` entry, document-cache.ts), so a payload
+ * that shows that URL may be stored.
  */
 export function shouldCacheResponse(
   response: Response,
@@ -75,6 +78,7 @@ export function shouldCacheResponse(
     | "_payloadVisitorLocation"
     | "_documentLocationState"
   >,
+  keyCoversVisitorUrl = false,
 ): CacheDirectives | null {
   // Only cache successful responses
   if (response.status !== 200) {
@@ -99,8 +103,8 @@ export function shouldCacheResponse(
   }
 
   // A rewritten request's render shows the visitor's URL (renderedLocation,
-  // full-payload.ts); this entry is keyed by the rewrite target.
-  if (requestCtx?._payloadVisitorLocation) {
+  // full-payload.ts); unless the key covers that URL, it names the target.
+  if (requestCtx?._payloadVisitorLocation && !keyCoversVisitorUrl) {
     return null;
   }
 

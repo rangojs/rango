@@ -118,6 +118,23 @@ async function expectIdentityKept(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Request `url` as a document until the document cache answers it with a HIT
+ * (its write runs after the MISS response, and KV reads are eventually
+ * consistent).
+ */
+async function warmDocumentToHit(
+  request: APIRequestContext,
+  url: string,
+): Promise<void> {
+  await expect(async () => {
+    const response = await request.get(url, {
+      headers: { Accept: "text/html" },
+    });
+    expect(response.headers()["x-document-cache-status"]).toBe("HIT");
+  }).toPass({ timeout: 15_000 });
+}
+
 /** The node rendering usePathname(): a hydration mismatch replaces it. */
 const LOCATION_NODE = '[data-testid="rw-client-location"]';
 
@@ -190,6 +207,85 @@ function rewriteTests(f: Fixture) {
     // The documented caveat: the shared shell shows the target's location.
     expect(await rewritten.text()).toContain(
       `data-testid="rw-client-location">/rw/ppr/${id}<`,
+    );
+  });
+
+  test("a rewritten page the document cache stores renders live at the visitor's URL, even with the target's entry warm", async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const hydrationErrors = watchHydrationErrors(page);
+    const id = `da1-${crypto.randomUUID().slice(0, 8)}`;
+    await warmDocumentToHit(request, f.url(`/rw/doc/item/${id}`));
+    await markServerNode(page, LOCATION_NODE);
+
+    for (let visit = 0; visit < 2; visit++) {
+      const response = await page.goto(f.url(`/rw/doc/promo/${id}`));
+      expect(response?.headers()["x-rango-rewrite"]).toBe(`/rw/doc/item/${id}`);
+      // No read, no write.
+      expect(response?.headers()["x-document-cache-status"]).toBeUndefined();
+      await waitForHydration(page);
+      await expect(testId(page, "rw-client-location")).toHaveText(
+        `/rw/doc/promo/${id}`,
+      );
+      await expect(testId(page, "rw-doc-public")).toHaveText(
+        `/rw/doc/promo/${id}`,
+      );
+      await expect(testId(page, "rw-doc-from")).toHaveText(
+        `/rw/doc/promo/${id}`,
+      );
+      expect(await serverNodeKept(page, LOCATION_NODE)).toBe(true);
+    }
+    expect(hydrationErrors).toEqual([]);
+  });
+
+  test('a .shell("visitor") rewrite stores its own document, hydrating at the visitor\'s URL', async ({
+    page,
+    request,
+  }) => {
+    using _ = expectNoPageError(page);
+    const hydrationErrors = watchHydrationErrors(page);
+    const id = `drv-${crypto.randomUUID().slice(0, 8)}`;
+    await warmDocumentToHit(request, f.url(`/rw/doc/summer/${id}`));
+    await markServerNode(page, LOCATION_NODE);
+
+    const response = await page.goto(f.url(`/rw/doc/summer/${id}`));
+    expect(response?.headers()["x-document-cache-status"]).toBe("HIT");
+    await waitForHydration(page);
+    await expect(testId(page, "rw-client-location")).toHaveText(
+      `/rw/doc/summer/${id}`,
+    );
+    await expect(testId(page, "rw-doc-public")).toHaveText(
+      `/rw/doc/summer/${id}`,
+    );
+    await expect(testId(page, "rw-doc-from")).toHaveText(
+      `/rw/doc/summer/${id}`,
+    );
+    expect(await serverNodeKept(page, LOCATION_NODE)).toBe(true);
+    expect(hydrationErrors).toEqual([]);
+
+    // The target's own URL has its own entry, stored by a direct visit.
+    const direct = await request.get(f.url(`/rw/doc/item/${id}`), {
+      headers: { Accept: "text/html" },
+    });
+    expect(direct.headers()["x-document-cache-status"]).toBe("MISS");
+  });
+
+  test('a .shell("target") rewrite shares the target\'s stored document with direct visits', async ({
+    request,
+  }) => {
+    const id = `drt-${crypto.randomUUID().slice(0, 8)}`;
+    const html = { headers: { Accept: "text/html" } };
+    const miss = await request.get(f.url(`/rw/doc/shared/${id}`), html);
+    expect(miss.headers()["x-document-cache-status"]).toBe("MISS");
+    // The rewritten request stored the target's entry: a direct visit HITs.
+    await warmDocumentToHit(request, f.url(`/rw/doc/item/${id}`));
+    const rewritten = await request.get(f.url(`/rw/doc/shared/${id}`), html);
+    expect(rewritten.headers()["x-document-cache-status"]).toBe("HIT");
+    // The documented caveat: the shared entry shows the target's location.
+    expect(await rewritten.text()).toContain(
+      `data-testid="rw-client-location">/rw/doc/item/${id}<`,
     );
   });
 

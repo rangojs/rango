@@ -39,11 +39,11 @@ export function describeRewriteTarget(target: RewriteTarget): string {
 }
 
 /**
- * Which PPR shell a rewritten request reads and captures
- * (`rewrite(...).shell()`); without a call, none.
- * - `"visitor"`: its own, keyed by the visitor's URL and the target, captured
+ * Which PPR shell and document-cache entry a rewritten request reads and
+ * stores (`rewrite(...).shell()`); without a call, none.
+ * - `"visitor"`: its own, keyed by the visitor's URL and the target, rendered
  *   with the visitor's location and `ctx.rewrittenFrom`.
- * - `"target"`: the target's shared shell. `usePathname()` reads the target's
+ * - `"target"`: the target's shared one. `usePathname()` reads the target's
  *   path on a HIT, and values set before the throw are baked in: for a page
  *   that renders neither (a lock or promo page).
  */
@@ -74,8 +74,9 @@ export class Rewrite extends Error {
   }
 
   /**
-   * A copy that picks the PPR shell of a `ppr` target ({@link RewriteShell}),
-   * so a rewrite kept in a module constant keeps its own choice:
+   * A copy that picks the PPR shell of a `ppr` target and the document-cache
+   * entry ({@link RewriteShell}), so a rewrite kept in a module constant
+   * keeps its own choice:
    *
    * ```ts
    * throw rewrite("item", { id }).shell("visitor");
@@ -175,8 +176,9 @@ function createRewrite(
  * throw stay readable. `ctx.url` is the target; `ctx.rewrittenFrom` is the
  * visitor's URL. A mutation that global middleware rewrites moves to the
  * target before its action runs, so the page's forms keep working; a lock
- * refuses it with `.disallowMutations()`. A `ppr` target gets no shell unless
- * `.shell()` picks one ({@link RewriteShell}). See the `/middleware` skill.
+ * refuses it with `.disallowMutations()`. A `ppr` target gets no shell, and
+ * the document cache no entry, unless `.shell()` picks one
+ * ({@link RewriteShell}). See the `/middleware` skill.
  */
 export const rewrite: RewriteFunction = createRewrite as RewriteFunction;
 

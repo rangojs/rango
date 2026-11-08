@@ -761,7 +761,11 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   (`visitorShellKey`, `rsc/shell-capture-constants.ts`; testing
   `visitorShellCacheKey`) captured at the visitor's location
   (`_shellCaptureState.forVisitor`, `ShellCacheEntry.pathname`), `"target"` shares
-  the target's shell (#1146). More than 5 hops or a
+  the target's shell (#1146). The document cache follows the same choice
+  (`cache/document-cache.ts`): no `.shell()` skips it on the rewritten pass,
+  `"visitor"` keys an entry by the visitor's URL and the target, rendered at
+  the visitor's location (`rendersForVisitorKey`), `"target"` shares the
+  target's entry. More than 5 hops or a
   same-URL rewrite is a `RewriteLoopError` (onError "routing", 508). A
   global-middleware rewrite of a mutation (JS action, no-JS form post, any
   non-GET request) moves it to the target before the action, which runs on

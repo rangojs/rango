@@ -551,7 +551,7 @@ carries `x-rango-rewrite: <target pathname>`.
 inside a `cache()` boundary or a `"use cache"` function throws (pass what
 you need in from middleware), and a render other visitors may be served (a
 PPR shell capture, a page the document cache stores) reads `undefined`, as a
-direct visit does. A shell keyed by the visitor's URL
+direct visit does. A shell or a stored document keyed by the visitor's URL
 (`rewrite(...).shell("visitor")`, see Caches) reads it, since its key covers
 that URL.
 
@@ -648,14 +648,6 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
 
 **Caches.**
 
-- The document cache keys a rewritten request by the target's URL, as a
-  direct visit. Register the rewriting middleware **before**
-  `createDocumentCacheMiddleware()`: a cache hit for the visitor's URL would
-  be served before your middleware runs. A page the document cache stores
-  is rendered as a direct visit to the target: it carries the target's
-  pathname and `ctx.rewrittenFrom` is `undefined` there, so a component that
-  renders `usePathname()` can mismatch on hydration at the visitor's URL
-  when such a page is served to a rewritten request.
 - A PPR shell (`ppr` target) is read and written only by requests on its
   URL. A rewritten request renders live at the visitor's URL, and a direct
   visit captures the target's shell, so values you set before the throw
@@ -671,6 +663,18 @@ the trail, `/a -> /b -> /a`) through `onError` with phase `"routing"`.
   throw rewrite("item", { id }).shell("visitor");
   ```
 
+- The document cache (`createDocumentCacheMiddleware()`) follows the same
+  rule and the same `.shell()` choice. Without one, a rewritten request
+  neither reads nor stores a document: it renders live at the visitor's URL
+  on every request, even when the target's own document is stored, and only
+  direct visits store the target's. `"visitor"` stores a document per
+  visitor URL and target, rendered with the visitor's location and
+  `ctx.rewrittenFrom` (a conditional rewrite, such as an A/B arm, gets one
+  per arm); `"target"` reads and stores the target's document, which shows
+  the target's URL to the visitor. Register the rewriting middleware
+  **before** the cache when you can: a document stored for the visitor's
+  own URL (a request it did not rewrite) is served before your middleware
+  runs.
 - The client's prefetch and history caches keep a rewritten page under the
   visitor's URL, and nothing tells them about the rewrite: a page prefetched
   during a lock shows the lock page for up to `prefetchCacheTTL` after the
