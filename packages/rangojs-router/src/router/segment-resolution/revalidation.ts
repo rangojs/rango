@@ -69,7 +69,7 @@ import { isRenderableLoading } from "../../types/boundaries.js";
 import { isLayoutLoaderCopy } from "../../client-urls/layout-loader-copies.js";
 import { getRouterContext } from "../router-context.js";
 import { observeEvent, observeSegmentHandler } from "../instrument.js";
-import { withReverseScope } from "../handler-context.js";
+import { withSegmentContext } from "../handler-context.js";
 import { trackStreamedHandler } from "./streamed-handler-boundary.js";
 import {
   track,
@@ -819,7 +819,11 @@ async function resolveParallelSlotComponent<TEnv>(
       (context as InternalHandlerContext<any, TEnv>)._currentSegmentId =
         parallelId;
       handlerRan = true;
-      const slotContext = withReverseScope(context, parallelEntry.reverseScope);
+      const slotContext = withSegmentContext(
+        context,
+        parallelId,
+        parallelEntry.reverseScope,
+      );
       const doneHandler = track(`handler:${parallelEntry.id}.${slot}`, 2);
       const run = () =>
         typeof handler !== "function"
@@ -1193,9 +1197,17 @@ async function resolveRouteComponent<TEnv>(
   // use the build handler from entry.handler.
   const handler =
     !context.build && entry.liveHandler ? entry.liveHandler : entry.handler;
+  // The route's own ctx: a component it hands the ctx to pushes after the
+  // walk moved the shared pin on (its own slot's id among others).
+  const routeContext = withSegmentContext(context, entry.shortCode, undefined);
   if (!entry.loading) {
     const result = handleHandlerResult(
-      await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+      await observeSegmentHandler(
+        entry.shortCode,
+        entry.id,
+        handler,
+        routeContext,
+      ),
     );
     doneHandler();
     return result;
@@ -1203,7 +1215,7 @@ async function resolveRouteComponent<TEnv>(
   if (!actionContext) {
     const result = handleHandlerResult(
       runAsSegment(entry.shortCode, () =>
-        observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+        observeSegmentHandler(entry.shortCode, entry.id, handler, routeContext),
       ),
     );
     if (result instanceof Promise) {
@@ -1229,7 +1241,12 @@ async function resolveRouteComponent<TEnv>(
     entryId: entry.id,
   });
   const actionResult = handleHandlerResult(
-    await observeSegmentHandler(entry.shortCode, entry.id, handler, context),
+    await observeSegmentHandler(
+      entry.shortCode,
+      entry.id,
+      handler,
+      routeContext,
+    ),
   );
   doneHandler();
   return {

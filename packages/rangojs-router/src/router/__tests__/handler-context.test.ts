@@ -22,10 +22,15 @@ import {
   createStaticContext,
   createReverseFunction,
   stripInternalParams,
-  withReverseScope,
+  withSegmentContext,
 } from "../handler-context";
-import { scopeReverse, type ReverseScope } from "../../server/context.js";
+import {
+  scopeReverse,
+  segmentPinOf,
+  type ReverseScope,
+} from "../../server/context.js";
 import type { InternalHandlerContext } from "../../types.js";
+import { NOCACHE_SYMBOL } from "../../cache/taint.js";
 
 beforeEach(() => {
   getSearchSchemaMock.mockReset();
@@ -537,7 +542,7 @@ describe("createReverseFunction", () => {
     });
   });
 
-  describe("segment reverse scope (withReverseScope)", () => {
+  describe("segment ctx (withSegmentContext)", () => {
     // include("/:accountId", account, { name: "account" }) containing
     // include("/:projectId", project, { name: "project" }).
     const nestedMap: Record<string, string> = {
@@ -589,24 +594,104 @@ describe("createReverseFunction", () => {
       );
     });
 
-    it("withReverseScope: the scope rides the ctx; other fields read through live", () => {
+    it("the scope and the owning segment ride the ctx; other fields read through live", () => {
+      const pushed: string[] = [];
       const ctx = {
         params,
         reverse: routeReverse(),
         _currentSegmentId: "L0",
+        // Stands in for setupLoaderAccess's use: it resolves the segment
+        // once, when the push function is created, as the real one does.
+        use: ((_item: unknown) => {
+          const segment = segmentPinOf(ctx as any);
+          return (value: string) => pushed.push(`${segment}:${value}`);
+        }) as unknown as InternalHandlerContext<any, any>["use"],
       } as unknown as InternalHandlerContext<any, any>;
       const scope = { prefix: "account", rootScoped: false };
-      const scoped = withReverseScope(ctx, scope);
+      const scoped = withSegmentContext(ctx, "L0", scope);
       // Destructured and called later, as a component handed the ctx does.
-      const { reverse } = scoped;
-      ctx._currentSegmentId = "L1";
+      const { reverse, use } = scoped;
+      // The walker moves the shared pin on before the component runs.
+      ctx._currentSegmentId = "R0";
       expect(reverse(".settings")).toBe("/acme/settings");
-      expect(scoped._currentSegmentId).toBe("L1");
+      expect(scoped._currentSegmentId).toBe("R0");
+      expect(scoped._owningSegmentId).toBe("L0");
       expect(scoped.params).toBe(params);
       expect(scoped._reverseScope).toBe(scope);
-      // The shared ctx keeps the route's resolution.
+      (use as (item: unknown) => (value: string) => void)({ $$id: "crumb" })(
+        "late",
+      );
+      expect(pushed).toEqual(["L0:late"]);
+      // The shared ctx keeps the route's resolution and the pin's segment.
       expect(ctx.reverse(".settings")).toBe("/acme/web/settings");
-      expect(withReverseScope(ctx, undefined)).toBe(ctx);
+      expect(segmentPinOf(ctx)).toBe("R0");
+      // No reverse scope still gets its own owner.
+      const plain = withSegmentContext(ctx, "R1", undefined);
+      expect(plain).not.toBe(ctx);
+      expect(plain._owningSegmentId).toBe("R1");
+      expect(plain.reverse).toBe(ctx.reverse);
+    });
+
+    it("a handler's spread copy carries the request ctx's own fields", () => {
+      const url = new URL("http://localhost/p/7");
+      const ctx = createHandlerContext(
+        { id: "7" },
+        new Request(url.href),
+        url.searchParams,
+        "/p/7",
+        url,
+        {},
+        { p: "/p/:id" },
+        "p",
+        "document",
+      );
+      // setupLoaderAccess's write, which runs before any handler: the copy a
+      // handler hands a "use cache" call keys the entry by these fields.
+      const claim = () => true;
+      (ctx as any)._claimLoaderPushes = claim;
+      (ctx as any)._currentSegmentId = "M0L0R0";
+      const scope = { prefix: "p", rootScoped: false };
+      const scoped = withSegmentContext(ctx, "M0L0L0", scope);
+      const copy = { ...scoped } as any;
+      expect(copy._routeName).toBe("p");
+      expect(copy._responseType).toBe("document");
+      expect(copy._variables).toBe((ctx as any)._variables);
+      expect(copy._claimLoaderPushes).toBe(claim);
+      expect(copy._reverseScope).toBe(scope);
+      expect(copy[NOCACHE_SYMBOL]).toBe(true);
+      expect(copy.params).toEqual({ id: "7" });
+      // The `_` fields are forwarded, not snapshotted: the pin is the walker's
+      // cursor and the loader cache installs its overrides after handlers
+      // already hold a ctx.
+      expect(scoped._currentSegmentId).toBe("M0L0R0");
+      const overrides = new Map([[1, Promise.resolve(1)]]);
+      (ctx as any)._loaderCacheOverrides = overrides;
+      (ctx as any)._currentSegmentId = "M0L0R1";
+      expect(scoped._currentSegmentId).toBe("M0L0R1");
+      expect(scoped._loaderCacheOverrides).toBe(overrides);
+      // A spread still freezes what it read, as the request ctx's own does.
+      expect(copy._currentSegmentId).toBe("M0L0R0");
+      expect(copy._loaderCacheOverrides).toBeUndefined();
+    });
+
+    it("never reads a getter: a pre-render ctx still builds, and a spread copy does not throw", () => {
+      const ctx = createPrerenderContext(
+        { id: "7" },
+        "/p/7",
+        { p: "/p/:id" },
+        "p",
+      );
+      const scoped = withSegmentContext(ctx, "M0L0L0", undefined);
+      expect(scoped.params).toEqual({ id: "7" });
+      expect(scoped._routeName).toBe("p");
+      // The getter stays on the prototype: reading it refuses, spreading the
+      // ctx does not, and the copy carries what can be read.
+      expect(() => (scoped as any).request).toThrow(
+        'Property "request" is not available during pre-rendering.',
+      );
+      const copy = { ...scoped } as any;
+      expect(copy.params).toEqual({ id: "7" });
+      expect(Object.hasOwn(copy, "request")).toBe(false);
     });
   });
 

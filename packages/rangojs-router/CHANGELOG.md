@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a late handle push names the segment whose ctx it was pushed through
+
+**Before.** An async component that a layout handler handed its `ctx` to, and
+that pushed a handle after its `await`, was rejected with
+`LateHandlePushError` naming the child route's segment. `ctx.use(Handle)`
+resolved the segment when it was called, from the request's shared pin, which
+the walker had already moved on to the route by then. The dev message pointed
+at a handler that pushed nothing.
+
+**Now.** The message names the segment that owns the ctx the push went through
+(the layout's `L<n>`, a slot's, the route's), on a document request and on a
+navigation. The push is rejected exactly as before, and production still
+shows no message. A `Prerender` route's baked intercept variant files each
+intercept handler's and layout's pushes under that intercept's segment, so a
+route with two intercepts keeps each one's late push in its own variant. A
+copy of a handler's ctx keys the same `"use cache"` entry as the ctx itself:
+`{ ...ctx }` carries the fields the key is built from, so `cached({ ...ctx })`
+reads the entry `cached(ctx)` wrote instead of running the function again, for
+a layout's, a slot's and a route's ctx alike.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))
