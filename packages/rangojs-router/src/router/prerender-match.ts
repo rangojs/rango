@@ -536,13 +536,14 @@ export async function matchForPrerender<TEnv = any>(
             (buildCtx as InternalHandlerContext<any, TEnv>)._currentSegmentId =
               interceptSegmentId;
 
-            // Resolve handler
-            const handlerRaw =
+            // Resolve handler. A Response it returns or throws (redirect())
+            // leaves this intercept to render live, as handleHandlerResult
+            // makes the two spellings one on a live request.
+            const handlerResolved = await settleResponse(() =>
               typeof intercept.handler === "function"
                 ? intercept.handler(buildCtx)
-                : intercept.handler;
-            const handlerResolved =
-              handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
+                : intercept.handler,
+            );
             if (handlerResolved instanceof Response) {
               live(intercept, "handler-response");
               continue;
@@ -553,7 +554,10 @@ export async function matchForPrerender<TEnv = any>(
             let layoutElement: ReactNode | undefined;
             if (intercept.layout) {
               if (typeof intercept.layout === "function") {
-                const layoutResult = await intercept.layout(buildCtx);
+                const layout = intercept.layout;
+                const layoutResult = await settleResponse(() =>
+                  layout(buildCtx),
+                );
                 if (layoutResult instanceof Response) {
                   live(intercept, "layout-response");
                   continue;
@@ -633,7 +637,17 @@ export async function matchForPrerender<TEnv = any>(
     }),
   );
   // A build or dev render keeps the throw (the caller's onError policy).
-  if (!onDemand) return rendered;
+  if (!onDemand) {
+    return rendered.catch((error: unknown) => {
+      throw bakeResponseError(
+        error,
+        `The prerender of ${pathname}`,
+        "Leave this param out of getParams() or throw new Skip() for it, " +
+          "and redirect at request time from middleware or from the live " +
+          "handler of a Passthrough() route.",
+      );
+    });
+  }
   // An on-demand refresh reports a notFound() anywhere in the render (a
   // handler's throw, or the only kind of error Flight collected) as an
   // outcome, with the route's onDemand config: the trigger stores the
@@ -651,6 +665,49 @@ export async function matchForPrerender<TEnv = any>(
       onDemandConfig,
     };
   }
+}
+
+/**
+ * Run a build-time intercept handler or layout and settle it to its value,
+ * or to the Response it returned or threw: the caller treats both as the
+ * intercept answering with a Response. Any other throw propagates.
+ */
+async function settleResponse<T>(
+  run: () => T | Promise<T>,
+): Promise<T | Response> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof Response) return error;
+    throw error;
+  }
+}
+
+/**
+ * A build or dev prerender cannot store a Response: the artifact holds Flight
+ * segments only. A redirect() (or any Response) that a handler, layout or
+ * child returns or throws reaches the caller as the thrown Response itself,
+ * which has no message, so the build's FAIL/WARN line, the onError callback
+ * and the dev endpoint's log would read "undefined". This turns it into an
+ * Error naming the URL and the redirect target, with the Response as its
+ * cause; any other error passes through unchanged. On-demand refreshes keep
+ * the Response (create-prerender-trigger.ts reports it as render-failed).
+ */
+function bakeResponseError(
+  error: unknown,
+  subject: string,
+  remedy: string,
+): unknown {
+  if (!(error instanceof Response)) return error;
+  const location = error.headers.get("location");
+  const outcome = location
+    ? `redirected to ${location} (${error.status})`
+    : `answered with a ${error.status} Response`;
+  return new Error(
+    `${subject} ${outcome}. A build cannot store a redirect or other ` +
+      `Response. ${remedy}`,
+    { cause: error },
+  );
 }
 
 /**
@@ -734,7 +791,7 @@ export async function renderStaticSegment<TEnv = any>(
     _routerId: routerId,
   };
 
-  return runWithRequestContext(minimalRequestContext, async () => {
+  const rendered = runWithRequestContext(minimalRequestContext, async () => {
     // Static handlers get only reverse, use(handle), and optionally env.
     const buildCtx = createStaticContext<TEnv>(
       mergedRouteMap,
@@ -797,5 +854,13 @@ export async function renderStaticSegment<TEnv = any>(
     if (flightErrors.length > 0) throw flightErrors[0];
 
     return { encoded: serialized.encoded, handles };
+  });
+  return rendered.catch((error: unknown) => {
+    throw bakeResponseError(
+      error,
+      `Static handler "${routeName ?? handlerId}"`,
+      "Static handlers must return a ReactNode: throw new Skip() to leave " +
+        "it out of the build, and redirect at request time from middleware.",
+    );
   });
 }

@@ -37,6 +37,11 @@ import { x } from "tinyexec";
  * baking) is unit-covered (src/router/__tests__/prerender-render-error.test.tsx).
  * The endpoint's catch/404-fallthrough is therefore a deliberate untested gap.
  *
+ * RANGO_TEST_PRERENDER_REDIRECT registers PrerenderRedirect, whose handler
+ * returns redirect(). A build cannot bake a Response, so it takes the same
+ * policy, and the FAIL/WARN line names the redirect target instead of the
+ * thrown Response's missing message ("undefined").
+ *
  * RANGO_TEST_PRERENDER_LIVE_INTERCEPT registers a Prerender() route with an
  * intercept the build cannot bake, for the build's live-intercept warning
  * (warnLiveIntercepts, vite/utils/prerender-utils.ts). Build-only too: the
@@ -123,6 +128,47 @@ test.describe("prerender render error (production)", () => {
     ).toBe(0);
     expect(out).toMatch(
       /WARN\s+\/prerender-child-boom.*prerender\.onError: "warn"/,
+    );
+    expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
+  });
+
+  test("a handler that returns redirect() fails the build by default, naming the target", async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({ RANGO_TEST_PRERENDER_REDIRECT: "1" }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `build should exit non-zero; output:\n${out}`,
+    ).not.toBe(0);
+    expect(out).toMatch(
+      /FAIL\s+\/prerender-redirect .*The prerender of \/prerender-redirect redirected to \/moved-here \(302\)\. A build cannot store a redirect/,
+    );
+    expect(out).not.toMatch(/FAIL.*- undefined/);
+  });
+
+  test('a handler that returns redirect() under prerender.onError "warn" is skipped, not baked', async () => {
+    const res = await x("pnpm", ["build"], {
+      nodeOptions: {
+        cwd,
+        env: buildEnv({
+          RANGO_TEST_PRERENDER_REDIRECT: "1",
+          RANGO_TEST_PRERENDER_ONERROR: "warn",
+        }),
+      },
+      throwOnError: false,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    expect(
+      res.exitCode,
+      `warn build should succeed (exit 0); output:\n${out}`,
+    ).toBe(0);
+    expect(out).toMatch(
+      /WARN\s+\/prerender-redirect.*prerender\.onError: "warn"\): The prerender of \/prerender-redirect redirected to \/moved-here/,
     );
     expect(out).toContain("Pre-render complete: 0 done, 1 skipped");
   });

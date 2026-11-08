@@ -329,6 +329,11 @@ let runtimePrerenderIdCounter = 0;
 // Explicit params work as before:
 //   Prerender<{ slug: string }> → params = { slug: string }
 
+// The handler may return a Response (`redirect()`), as a path() handler may:
+// it short-circuits like a thrown one. A dev render answers it live; a build
+// cannot bake it, so matchForPrerender rejects with an Error naming the
+// redirect and prerender.onError decides (fail, or skip under "warn").
+
 // Overload 1: Static handler (build-time only)
 export function Prerender<
   T extends
@@ -341,8 +346,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -364,8 +370,9 @@ export function Prerender<
     ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
   ) =>
     | ReactNode
+    | Response
     | PrerenderPassthroughResult
-    | Promise<ReactNode | PrerenderPassthroughResult>,
+    | Promise<ReactNode | Response | PrerenderPassthroughResult>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
