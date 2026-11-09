@@ -198,17 +198,11 @@ export function buildMatchResult<TEnv>(
     }
   }
 
-  // One pass over segmentsToRender: strip the internal _handlerRan marker and
-  // collect the diff ids (id is unchanged by the strip) together.
+  const toWire = createWireSegmentStep();
   const cleanedSegments: ResolvedSegment[] = [];
   const diff: string[] = [];
   for (const s of segmentsToRender) {
-    if (s._handlerRan === undefined) {
-      cleanedSegments.push(s);
-    } else {
-      const { _handlerRan: _drop, ...rest } = s;
-      cleanedSegments.push(rest as ResolvedSegment);
-    }
+    cleanedSegments.push(toWire(s));
     diff.push(s.id);
   }
 
@@ -227,7 +221,7 @@ export function buildMatchResult<TEnv>(
     resolvedIds,
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
+    slots: wireSlots(state.slots, toWire),
     ...(interceptTargets.length > 0 ? { interceptTargets } : {}),
     ...(ctx.interceptTargeted ? { interceptTargeted: true } : {}),
     ...(sourceHeld ? { sourceHeld } : {}),
@@ -237,6 +231,61 @@ export function buildMatchResult<TEnv>(
     routeMiddleware:
       ctx.routeMiddleware.length > 0 ? ctx.routeMiddleware : undefined,
   };
+}
+
+/**
+ * The one step every segment a MatchResult sends goes through, in `segments`
+ * and in every slot's `segments`: it drops each own key that starts with `_`.
+ * Those are server-side markers (`_handlerRan`). A strip that names its fields
+ * misses the next marker someone adds, and one applied to `segments` alone
+ * misses an intercept's slot, which holds the same kind of segment. No `_` key
+ * is part of the wire shape: the browser reads none, and the cache codec
+ * (cache/segment-codec.ts) stores none.
+ *
+ * Returns the input object when it has no such key, and a copy otherwise:
+ * the input may be a record a cache, prerender or held tree keeps. Copies are
+ * memoized per step, so a segment the pipeline put in both `segments` and a
+ * slot (an intercept's) comes out as one object in both.
+ */
+function createWireSegmentStep(): (
+  segment: ResolvedSegment,
+) => ResolvedSegment {
+  const copies = new Map<ResolvedSegment, ResolvedSegment>();
+  return (segment) => {
+    const copied = copies.get(segment);
+    if (copied) return copied;
+    const keys = Object.keys(segment);
+    if (!keys.some(isInternalKey)) return segment;
+    const source = segment as unknown as Record<string, unknown>;
+    const wire: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (!isInternalKey(key)) wire[key] = source[key];
+    }
+    const out = wire as unknown as ResolvedSegment;
+    copies.set(segment, out);
+    return out;
+  };
+}
+
+const isInternalKey = (key: string): boolean => key.startsWith("_");
+
+/**
+ * The pipeline's slots as sent: fresh slot objects whose segments went
+ * through `toWire`, so `state.slots` (and the records it points at) is left
+ * as the pipeline built it.
+ */
+function wireSlots(
+  slots: MatchPipelineState["slots"],
+  toWire: (segment: ResolvedSegment) => ResolvedSegment,
+): MatchResult["slots"] {
+  const names = Object.keys(slots);
+  if (names.length === 0) return undefined;
+  const out: NonNullable<MatchResult["slots"]> = {};
+  for (const name of names) {
+    const slot = slots[name]!;
+    out[name] = { ...slot, segments: slot.segments.map(toWire) };
+  }
+  return out;
 }
 
 /**
