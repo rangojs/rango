@@ -2,6 +2,8 @@
 
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+import { renderRedirectOf } from "./render-redirect.js";
 
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
@@ -224,6 +226,10 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    // A `throw redirect(...)` from a server component is control flow, not a
+    // failure: it is answered here, and reporting it would put a stack in the
+    // console for every signed-out visitor.
+    if (renderRedirectOf(error)) return;
     console.error(
       "[RootErrorBoundary] Unhandled error caught:",
       error,
@@ -250,6 +256,16 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A redirect thrown during the Flight render reaches this boundary as an
+      // error row whose digest carries the target (render-redirect.ts): the
+      // response had already started, so the browser follows it here. It is
+      // the same client replace a loader `redirect()` takes (LoaderRedirect).
+      const renderRedirect = renderRedirectOf(this.state.error);
+      if (renderRedirect) {
+        return (
+          <LoaderRedirect to={renderRedirect.to} state={renderRedirect.state} />
+        );
+      }
       const errorInfo = {
         message: this.state.error.message,
         name: this.state.error.name,

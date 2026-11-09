@@ -6,7 +6,9 @@
  * server paths in production).
  *
  * The answer, in order:
- * - a loader `redirect()` with no state: a real 3xx (nothing has been sent);
+ * - a loader `redirect()`, or a `throw redirect()` from inside the Flight
+ *   render (a server component; its target rides the error row's digest, see
+ *   render-redirect.ts), with no state: a real 3xx (nothing has been sent);
  * - the payload decoded and the tree built: a recovery document carrying the
  *   same Flight payload, which the browser entry renders with createRoot
  *   (`data-rango-ssr-error`), so the router's client boundaries run as on a
@@ -16,6 +18,7 @@
 import React from "react";
 import { isDataNotFoundError } from "../errors.js";
 import { loaderRedirectOf } from "../decode-loader-results.js";
+import { renderRedirectOf } from "../render-redirect.js";
 import { ThemeScript } from "../theme/ThemeScript.js";
 import type { ResolvedThemeConfig } from "../theme/types.js";
 import type { SSRDependencies } from "./index.js";
@@ -104,8 +107,9 @@ export async function answerShellError(
 ): Promise<ShellErrorAnswer> {
   // A redirect with state keeps the recovery document: the state rides the
   // history entry the client replace writes, which a 3xx cannot. Without
-  // this branch every loader redirect takes the client replace.
+  // this branch every redirect takes the client replace.
   const redirect = loaderRedirectOf(error);
+  const renderRedirect = redirect ? null : renderRedirectOf(error);
   if (redirect && redirect.state === undefined) {
     flight?.cancel().catch(() => {});
     return {
@@ -114,9 +118,18 @@ export async function answerShellError(
       location: redirect.to,
     };
   }
+  if (renderRedirect && renderRedirect.state === undefined) {
+    flight?.cancel().catch(() => {});
+    return {
+      body: new Response("").body!,
+      status: renderRedirect.status,
+      location: renderRedirect.to,
+    };
+  }
   // A redirect with state answers 200 like the same redirect inside a
   // <Suspense>: the document, then the client replace.
-  const status = redirect ? 200 : isDataNotFoundError(error) ? 404 : 500;
+  const status =
+    redirect || renderRedirect ? 200 : isDataNotFoundError(error) ? 404 : 500;
   if (recovery && flight) {
     try {
       return {
@@ -134,6 +147,6 @@ export async function answerShellError(
     }
   }
   flight?.cancel().catch(() => {});
-  const failed = redirect ? 500 : status;
+  const failed = redirect || renderRedirect ? 500 : status;
   return { body: staticErrorDocument(failed), status: failed };
 }

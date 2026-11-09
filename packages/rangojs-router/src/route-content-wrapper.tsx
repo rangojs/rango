@@ -10,6 +10,7 @@ import {
   LOADER_REDIRECT,
 } from "./decode-loader-results.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { renderRedirectOf } from "./render-redirect.js";
 import { Defer, readDefer } from "./browser/defer.js";
 import type { BoundaryAudit } from "./suspense-audit.js";
 import {
@@ -75,6 +76,16 @@ export class StreamedLoaderErrorBoundary extends Component<
   render(): ReactNode {
     const { error } = this.state;
     if (error !== null && error !== undefined) {
+      // A `throw redirect(...)` from a server component is an error row whose
+      // digest carries the target (render-redirect.ts). This boundary sits
+      // nearer than RootErrorBoundary, so a redirect inside a loader-bearing
+      // segment navigates here instead of rendering its errorBoundary().
+      const renderRedirect = renderRedirectOf(error);
+      if (renderRedirect) {
+        return (
+          <LoaderRedirect to={renderRedirect.to} state={renderRedirect.state} />
+        );
+      }
       const marked = error as Record<PropertyKey, unknown>;
       const notFoundFallback = marked[LOADER_NOT_FOUND_FALLBACK];
       if (notFoundFallback !== undefined) return notFoundFallback as ReactNode;

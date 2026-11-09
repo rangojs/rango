@@ -18,6 +18,7 @@ import {
   isLoaderSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
+import { renderRedirectOf } from "../render-redirect.js";
 import {
   answerShellError,
   type ShellErrorRecovery,
@@ -1023,7 +1024,9 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // not decode without a Flight error row (no `digest`: the stream broke).
       // A Flight copy printed with its original in the Flight render. The
       // handler's catch skips what the html stage marked printed.
-      if (!isLoaderSignalError(error)) reportRenderError(onError, error);
+      if (!isLoaderSignalError(error) && !renderRedirectOf(error)) {
+        reportRenderError(onError, error);
+      }
       if (originatedHere(error) && !reportedByFizz?.has(error)) {
         console.error(error);
       }
@@ -1058,7 +1061,11 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
  * error as production does.
  */
 function shellErrorReachesHost(error: unknown): boolean {
-  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
+  return (
+    process.env.NODE_ENV !== "production" &&
+    !isLoaderSignalError(error) &&
+    !renderRedirectOf(error)
+  );
 }
 
 /**

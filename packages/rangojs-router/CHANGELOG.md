@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `throw redirect(...)` from a server component sends the visitor to the target instead of the error page
+
+**Before.** A redirect thrown while a server component rendered (an async
+`AccountGate` that checks the session, for example) reached React as an
+ordinary throw: Flight wrote an error row, the router reported and printed it
+as a rendering error, and the visitor got the error page. The URL never
+changed, on a document load and on a link click alike.
+
+**Now.** A redirect thrown during the Flight render is control flow, as it is
+from a loader. A document whose shell fails on it is answered with the
+redirect's own 3xx (the recovery document, then the client replace, when it
+carries `state`); once the response has started, the target rides the error
+row's digest and the browser replaces to it. Nothing is reported or printed,
+and no writer stores a payload that only redirects.
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login"); // signed out -> /login
+  return <AccountSummary session={session} />;
+}
+```
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

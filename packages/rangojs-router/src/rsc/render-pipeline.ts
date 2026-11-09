@@ -3,6 +3,16 @@ import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import { isRedirectResponse } from "../response-utils.js";
+import {
+  getRedirectState,
+  isExternalRedirect,
+  resolveSoftRedirectUrl,
+} from "../redirect-origin.js";
+import {
+  renderRedirectDigest,
+  type RenderRedirect,
+} from "../render-redirect.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -163,6 +173,18 @@ function createFlightStage<TEnv>(
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
       renderErrors?.push(error);
+      const redirect = renderRedirectFromThrown(
+        error,
+        input.url.origin,
+        requestContext?._basename,
+      );
+      if (redirect) {
+        // Control flow, not a failure: a component's `throw redirect(...)` is
+        // answered as a redirect (render-redirect.ts) and never reported or
+        // printed, as a loader's is not. The `_renderErrors` push above keeps
+        // a payload that only redirects out of every store.
+        return renderRedirectDigest(redirect);
+      }
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
@@ -177,6 +199,30 @@ function createFlightStage<TEnv>(
     },
   });
   return { type: "flight", payload: input.payload, stream, init };
+}
+
+/**
+ * The render redirect a thrown value carries, resolved for the wire, or null
+ * when it is not a redirect Response. A component's `throw redirect(...)`
+ * reaches Flight as an ordinary throw; the target goes through the same
+ * basename/same-origin policy as the loader lane (loader-resolution.ts), so no
+ * unresolved or off-origin target leaves in a digest.
+ */
+function renderRedirectFromThrown(
+  error: unknown,
+  requestOrigin: string,
+  basename: string | undefined,
+): RenderRedirect | null {
+  if (!(error instanceof Response) || !isRedirectResponse(error)) return null;
+  const location = error.headers.get("Location")!;
+  const state = getRedirectState(error);
+  const external = isExternalRedirect(error);
+  return {
+    to: resolveSoftRedirectUrl(location, requestOrigin, basename, external),
+    status: error.status,
+    ...(external && { external: true }),
+    ...(state && { state }),
+  };
 }
 
 function expectCommandResult(
