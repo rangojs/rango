@@ -1134,7 +1134,7 @@ Rules that are easy to break:
   Flight render, and so is an error React decoded from Flight
   (`isFlightDecodedError`: it sets `digest`, so the html stage skips its
   copy); a `notFound()`/`redirect()` marker is control flow and is never
-  reported or printed (`isLoaderSignalError`, name-based because the RSC and
+  reported or printed (`isSignalError`, name-based because the RSC and
   SSR environments hold different module instances of the marker symbols).
 - One console line per failure: see "Server errors print once, where they
   originate" below. On the SSR side `renderHTML` prints only what originated

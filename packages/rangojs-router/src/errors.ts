@@ -7,6 +7,7 @@
  */
 
 import { isPrefetchFlag } from "./prefetch-markers.js";
+import { renderRedirectOf } from "./render-redirect.js";
 
 /**
  * Options for error construction
@@ -80,14 +81,17 @@ export function isDataNotFoundError(
 
 /**
  * A loader's notFound() or redirect() rethrown at its read site
- * (decode-loader-results.ts throwSignal): control flow answered with its own
- * status, not an error to print or report. Name-based, so the RSC environment,
- * whose module instances differ from the SSR one's, classifies it too.
+ * (decode-loader-results.ts throwSignal), or a component's redirect() decoded
+ * from its Flight error row (render-redirect.ts): control flow answered with
+ * its own status, not an error to print or report. Name- and digest-based, so
+ * the RSC environment, whose module instances differ from the SSR one's,
+ * classifies it too.
  */
-export function isLoaderSignalError(error: unknown): boolean {
+export function isSignalError(error: unknown): boolean {
   return (
     isDataNotFoundError(error) ||
-    (error instanceof Error && error.name === "LoaderRedirect")
+    (error instanceof Error && error.name === "LoaderRedirect") ||
+    renderRedirectOf(error) !== undefined
   );
 }
 

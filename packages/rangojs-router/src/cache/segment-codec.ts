@@ -17,12 +17,31 @@ import {
   createTemporaryReferenceSet,
 } from "../deps/rsc.js";
 import { createFromReadableStream } from "../deps/rsc-client.js";
+import { _getRequestContext } from "../server/request-context.js";
+import {
+  redirectAwareOnError,
+  renderRedirectOrigin,
+} from "../render-redirect.js";
 
 // Preserve embedded server references on a cache/prerender HIT so they
 // re-serialize to the client instead of resolving to a raw function React
 // refuses to pass to a Client Component. Shared across the deserialize sites so
 // the decode policy has a single owner.
 const PRESERVE_SERVER_REFS = { preserveServerReferences: true } as const;
+
+/**
+ * Every encode's onError: the caller's, plus the digest of a redirect() a
+ * component threw, so the decoded copy (a "use cache" miss renders it) and
+ * the render it lands in still read it as a redirect (render-redirect.ts).
+ */
+function encodeOnError(
+  onError: ((error: unknown) => void) | undefined,
+): (error: unknown) => string | undefined {
+  return redirectAwareOnError(
+    renderRedirectOrigin(_getRequestContext()),
+    onError,
+  );
+}
 
 /**
  * Convert a ReadableStream to a string.
@@ -76,7 +95,7 @@ export async function rscSerialize(
   const temporaryReferences = createTemporaryReferenceSet();
   const stream = renderToReadableStream(value, {
     temporaryReferences,
-    onError,
+    onError: encodeOnError(onError),
   });
   return streamToString(stream);
 }
@@ -114,7 +133,7 @@ export async function serializeResult(
     const temporaryReferences = createTemporaryReferenceSet();
     const stream = renderToReadableStream(value, {
       temporaryReferences,
-      onError,
+      onError: encodeOnError(onError),
     });
     return await streamToString(stream);
   } catch (error) {
@@ -149,7 +168,7 @@ export function teeResult(
   try {
     const stream = renderToReadableStream(value, {
       temporaryReferences: createTemporaryReferenceSet(),
-      onError,
+      onError: encodeOnError(onError),
     });
     const [toCopy, toStore] = stream.tee();
     const decoded = Promise.resolve(
@@ -235,7 +254,7 @@ export async function serializeSegments(
       // Serialize the component to RSC stream
       const stream = renderToReadableStream(componentResolved, {
         temporaryReferences,
-        onError,
+        onError: encodeOnError(onError),
       });
 
       // RSC-serialize loading: "null" string distinguishes explicit null from undefined

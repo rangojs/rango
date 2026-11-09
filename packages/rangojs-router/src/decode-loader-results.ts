@@ -7,6 +7,7 @@ import {
 } from "./types.js";
 import { isPlaceholder } from "./types/segments.js";
 import { LoaderRedirect } from "./loader-redirect.js";
+import { renderRedirectOf } from "./render-redirect.js";
 
 /**
  * Markers for loader-thrown AUTHORITY SIGNALS (notFound()/redirect()) on the
@@ -36,14 +37,22 @@ export const LOADER_NOT_FOUND_FALLBACK: unique symbol = Symbol(
 );
 export const LOADER_REDIRECT: unique symbol = Symbol("rango.loaderRedirect");
 
-/** The redirect a `LoaderRedirect` thrown by throwSignal carries, if any. */
-export function loaderRedirectOf(
+/**
+ * The redirect an error carries, if any: a `LoaderRedirect` thrown by
+ * throwSignal, or a component's redirect() decoded from its Flight error row
+ * (render-redirect.ts). The one check for the SSR shell error answer and the
+ * router's client boundaries, so both redirect channels land the same way.
+ */
+export function redirectSignalOf(
   error: unknown,
-): { to: string; status?: number; state?: unknown } | undefined {
+):
+  | { to: string; status?: number; state?: Record<string, unknown> }
+  | undefined {
   if (error === null || typeof error !== "object") return undefined;
-  return (error as Record<PropertyKey, unknown>)[LOADER_REDIRECT] as
-    | { to: string; status?: number; state?: unknown }
+  const marked = (error as Record<PropertyKey, unknown>)[LOADER_REDIRECT] as
+    | { to: string; status?: number; state?: Record<string, unknown> }
     | undefined;
+  return marked ?? renderRedirectOf(error);
 }
 
 function throwSignal(result: any): void {

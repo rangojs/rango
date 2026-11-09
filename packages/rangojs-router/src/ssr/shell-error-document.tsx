@@ -15,7 +15,7 @@
  */
 import React from "react";
 import { isDataNotFoundError } from "../errors.js";
-import { loaderRedirectOf } from "../decode-loader-results.js";
+import { redirectSignalOf } from "../decode-loader-results.js";
 import { ThemeScript } from "../theme/ThemeScript.js";
 import type { ResolvedThemeConfig } from "../theme/types.js";
 import type { SSRDependencies } from "./index.js";
@@ -105,7 +105,7 @@ export async function answerShellError(
   // A redirect with state keeps the recovery document: the state rides the
   // history entry the client replace writes, which a 3xx cannot. Without
   // this branch every loader redirect takes the client replace.
-  const redirect = loaderRedirectOf(error);
+  const redirect = redirectSignalOf(error);
   if (redirect && redirect.state === undefined) {
     flight?.cancel().catch(() => {});
     return {

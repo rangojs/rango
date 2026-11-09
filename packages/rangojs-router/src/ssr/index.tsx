@@ -15,7 +15,7 @@ import { isThenable } from "../handles/is-thenable.js";
 import {
   isAbortedRender,
   isFlightDecodedError,
-  isLoaderSignalError,
+  isSignalError,
 } from "../errors.js";
 import { isRebuiltLoaderError } from "../decode-loader-results.js";
 import {
@@ -508,7 +508,7 @@ async function settleSsrFalseFirstFlush(
  */
 function originatedHere(error: unknown): boolean {
   return (
-    !isLoaderSignalError(error) &&
+    !isSignalError(error) &&
     !isRebuiltLoaderError(error) &&
     !isFlightDecodedError(error) &&
     !isAbortedRender(error)
@@ -1023,7 +1023,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // not decode without a Flight error row (no `digest`: the stream broke).
       // A Flight copy printed with its original in the Flight render. The
       // handler's catch skips what the html stage marked printed.
-      if (!isLoaderSignalError(error)) reportRenderError(onError, error);
+      if (!isSignalError(error)) reportRenderError(onError, error);
       if (originatedHere(error) && !reportedByFizz?.has(error)) {
         console.error(error);
       }
@@ -1058,7 +1058,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
  * error as production does.
  */
 function shellErrorReachesHost(error: unknown): boolean {
-  return process.env.NODE_ENV !== "production" && !isLoaderSignalError(error);
+  return process.env.NODE_ENV !== "production" && !isSignalError(error);
 }
 
 /**

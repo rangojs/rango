@@ -2,6 +2,8 @@
 
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+import { redirectSignalOf } from "./decode-loader-results.js";
+import { LoaderRedirect } from "./loader-redirect.js";
 
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
@@ -224,6 +226,7 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    if (redirectSignalOf(error)) return;
     console.error(
       "[RootErrorBoundary] Unhandled error caught:",
       error,
@@ -250,6 +253,12 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A redirect() a server component threw (its Flight error row carries
+      // it): control flow, so navigate instead of showing the error page.
+      const redirect = redirectSignalOf(this.state.error);
+      if (redirect) {
+        return <LoaderRedirect to={redirect.to} state={redirect.state} />;
+      }
       const errorInfo = {
         message: this.state.error.message,
         name: this.state.error.name,

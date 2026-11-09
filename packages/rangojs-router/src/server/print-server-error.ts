@@ -5,7 +5,7 @@
  * createErrorInfo, React's Flight error rows). A leaf module: the cache layer
  * reads it too.
  */
-import { isAbortedRender, isLoaderSignalError, isSkip } from "../errors.js";
+import { isAbortedRender, isSignalError, isSkip } from "../errors.js";
 
 /** The request context fields the record reads. */
 interface PrintContext {
@@ -24,7 +24,7 @@ function isControlFlow(
 ): boolean {
   return (
     error instanceof Response ||
-    isLoaderSignalError(error) ||
+    isSignalError(error) ||
     isSkip(error) ||
     isAbortedRender(error, requestContext?.request?.signal)
   );

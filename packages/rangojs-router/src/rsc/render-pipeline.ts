@@ -3,6 +3,10 @@ import type { MetricsStore } from "../server/context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { _getRequestContext } from "../server/request-context.js";
 import { printServerError } from "../server/print-server-error.js";
+import {
+  renderRedirectDigest,
+  renderRedirectOrigin,
+} from "../render-redirect.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
@@ -159,10 +163,16 @@ function createFlightStage<TEnv>(
   // Read once here: onError can fire outside the ALS frame.
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
+  const redirectOrigin = renderRedirectOrigin(requestContext);
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
       renderErrors?.push(error);
+      // A redirect() a component threw after its handler returned: control
+      // flow, so neither printed nor reported. Recorded above all the same,
+      // so no writer stores the answer (it can depend on the request).
+      const redirectDigest = renderRedirectDigest(error, redirectOrigin);
+      if (redirectDigest !== undefined) return redirectDigest;
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,
