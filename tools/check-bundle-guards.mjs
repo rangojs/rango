@@ -299,7 +299,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.125KB on 2026-11-09 for a redirect() thrown by a
+// server component, measured on cloudflare-basic from main 48d708a24
+// 53997B -> 54107B (+110B gzip; main sat 19B under the old limit). The
+// browser reads the redirect off the Flight error row's digest
+// (render-redirect.ts renderRedirectOf, read through
+// decode-loader-results.ts redirectSignalOf), and RootErrorBoundary and the
+// exported ErrorBoundary hand it to LoaderRedirect instead of showing the
+// error page. The writer stays server-only (server/render-redirect-digest.ts).
+// It cannot load lazily: the boundary must navigate in the render that
+// caught the error. By the owner's rule above: 54107B + 256B, rounded up to
+// the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
