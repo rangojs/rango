@@ -6,7 +6,9 @@
  * server paths in production).
  *
  * The answer, in order:
- * - a loader `redirect()` with no state: a real 3xx (nothing has been sent);
+ * - a `redirect()` with no state -- thrown by a loader, or by a component
+ *   (whose throw arrives as a Flight error row, `render-redirect.ts`): a real
+ *   3xx (nothing has been sent);
  * - the payload decoded and the tree built: a recovery document carrying the
  *   same Flight payload, which the browser entry renders with createRoot
  *   (`data-rango-ssr-error`), so the router's client boundaries run as on a
@@ -16,6 +18,7 @@
 import React from "react";
 import { isDataNotFoundError } from "../errors.js";
 import { loaderRedirectOf } from "../decode-loader-results.js";
+import { renderRedirectOf } from "../render-redirect.js";
 import { ThemeScript } from "../theme/ThemeScript.js";
 import type { ResolvedThemeConfig } from "../theme/types.js";
 import type { SSRDependencies } from "./index.js";
@@ -105,8 +108,28 @@ export async function answerShellError(
   // A redirect with state keeps the recovery document: the state rides the
   // history entry the client replace writes, which a 3xx cannot. Without
   // this branch every loader redirect takes the client replace.
-  const redirect = loaderRedirectOf(error);
-  if (redirect && redirect.state === undefined) {
+  //
+  // A `redirect()` thrown from a component arrives as a Flight error row, so
+  // it carries the same answer on the digest (render-redirect.ts): the same
+  // 3xx without state, the same recovery document with it. It also keeps the
+  // recovery document for `{ external: true }`: the opt-in is a brand on the
+  // thrown Response that a 3xx rebuilt here cannot carry, so the outgoing
+  // same-origin guard would neutralize it. The browser's own external channel
+  // (`LoaderRedirect` → `location.replace`) follows it instead.
+  const loaderRedirect = loaderRedirectOf(error);
+  const renderRedirect = loaderRedirect ? undefined : renderRedirectOf(error);
+  const redirect =
+    loaderRedirect ??
+    (renderRedirect && {
+      to: renderRedirect.location,
+      status: renderRedirect.status,
+      state: renderRedirect.state,
+    });
+  if (
+    redirect &&
+    redirect.state === undefined &&
+    renderRedirect?.external !== true
+  ) {
     flight?.cancel().catch(() => {});
     return {
       body: new Response("").body!,

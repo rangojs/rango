@@ -737,9 +737,18 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   object (`WeakSet`, not a wire header) so a proxied upstream's forged header
   cannot forge it. Shared rules (`redirect-origin.ts`:
   `resolveSameOriginRedirect`, `resolveExternalRedirect`,
-  `safeSameOriginLanding`, `resolveSoftRedirectUrl`) back both the client
-  validators and the server 3xx/soft paths. See
+  `safeSameOriginLanding`, `resolveSoftRedirect`, `resolveSoftRedirectUrl`)
+  back both the client validators and the server 3xx/soft paths. See
   `docs/internal/security-checklist.md`.
+- `redirect()` thrown from a SERVER COMPONENT (a per-render gate in an async
+  component) is control flow like a loader's: React's Flight renderer catches
+  the throw, and the target travels in the error row's digest
+  (`render-redirect.ts`: the RESOLVED location — same-origin, or the
+  `{ external: true }` target — status, `state`). `answerShellError` answers a
+  document whose shell fails with the redirect's own 3xx (a recovery document
+  when the call carried `state`); `RootErrorBoundary` mounts the same
+  `LoaderRedirect` on a client navigation, an action's revalidation, and a
+  redirect inside a `<Suspense>`. Not reported, not printed, never stored.
 - `throw rewrite(target)` from middleware (before `await next()`) renders
   another route at the same URL: a path (basename-prefixed, kept under the
   basename) or a global route name with params and search. The `Rewrite`

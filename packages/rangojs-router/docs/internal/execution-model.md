@@ -1093,10 +1093,11 @@ host answered its raw 500 (a stack with server paths in production).
 `renderHTML` (`ssr/index.tsx`) now answers it (`ssr/shell-error-document.tsx`
 `answerShellError`), in this order:
 
-1. A loader `redirect()` with no state: a real 3xx with `Location`, empty body
-   (the marker carries the redirect's own `status`, `loader-resolution.ts`).
-   With `state` it falls through: the state rides the history entry the
-   client replace writes, which a 3xx cannot carry.
+1. A `redirect()` with no state: a real 3xx with `Location`, empty body. It
+   arrives as a loader's marker (which carries the redirect's own `status`,
+   `loader-resolution.ts`) or as a component's throw (which arrives as a
+   Flight error row, below). With `state` it falls through: the state rides
+   the history entry the client replace writes, which a 3xx cannot carry.
 2. The payload decoded and the tree built: a recovery document,
    `<html data-rango-ssr-error>`, a `<noscript>` heading (a JavaScript visitor
    sees the client render's boundary, not a flash of the heading), the theme
@@ -1213,6 +1214,48 @@ Rules that are easy to break:
   not printed twice.
 - A Flight onError can fire outside the request's ALS frame: pass the request
   context captured when the render started.
+
+### A `redirect()` a component throws is control flow, not a render error
+
+A handler returns or throws a `Response`, and a loader's throw is caught by
+`loader-resolution.ts`; both stay `Response`s the router answers itself. A
+`Response` thrown from a COMPONENT is caught by React's Flight renderer
+instead, which reports it through `onError` and emits an ERROR ROW for the
+nearest client boundary -- so it used to reach the browser as an ordinary
+render failure and end on the error boundary.
+
+The digest `onError` returns is the only thing that survives into that row:
+the Flight client rebuilds a fresh Error from it (masked in production) and
+keeps `digest` alone. `createFlightStage` (`rsc/render-pipeline.ts`) therefore
+returns the redirect's own digest for a thrown redirect Response
+(`render-redirect.ts`: location, status, and the `state` the call attached),
+reports it to nothing and prints nothing for it, and still records it in
+`_renderErrors` so no document, shell or prefetch stores a page that
+redirects.
+
+The digest carries the RESOLVED target (`resolveSoftRedirect`, against the
+request origin and basename captured where the render starts), never the raw
+`Location`. The browser read site hands it to `LoaderRedirect`, whose
+off-origin branch is the `{ external: true }` channel, so a raw off-host
+target there would become an unguarded `location.replace` while the document
+lane's outgoing guard neutralizes the same throw to the app root. Resolving
+once, where the digest is built, is what keeps the two lanes on the one rule;
+a blocked target lands on the basename root on both. The two read sites
+resolve the digest into the navigation:
+`answerShellError` (the 3xx above, on a document whose shell fails) and
+`RootErrorBoundary` (`root-error-boundary.tsx`, which mounts the same
+`LoaderRedirect` a loader `redirect()` uses) for every other lane: a client
+navigation, an action's revalidation, and a redirect inside a `<Suspense>` on
+a document load. Dev answers it as production does (`shellErrorReachesHost`).
+
+Pinned by `testing/__tests__/component-thrown-redirect.rsc-test.tsx` (the
+payload the browser receives, both lanes), `ssr/__tests__/shell-error-document.test.tsx`
+(the 3xx, the status, the recovery document with state, the dev gate),
+`__tests__/root-error-boundary-render-redirect.test.tsx` (the client carrier),
+and the `component-redirect` describes in `e2e/component-redirect.test.ts`
+and `tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev and
+production).
+
 - In dev, Vite prints what reaches it (`[vite] Internal server error:`), so a
   shell error rethrown for the overlay prints there too.
 

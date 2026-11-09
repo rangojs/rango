@@ -76,14 +76,57 @@ export function safeSameOriginLanding(basename: string | undefined): string {
   return basename && basename !== "/" ? basename : "/";
 }
 
+/** A soft redirect resolved for the wire, and whether its opt-in survived. */
+export interface SoftRedirectResolution {
+  /**
+   * The URL to write into the soft-redirect wire field: the canonical
+   * same-origin href, the http(s) off-host href the call opted into, or
+   * {@link safeSameOriginLanding} for a target the rule blocks.
+   */
+  to: string;
+  /**
+   * The target really is an http(s) off-host one, so the `external` opt-in
+   * still holds. False for a neutralized landing: an opt-in the rule could not
+   * honor must not be advertised downstream, where the target would be treated
+   * as an approved off-host one.
+   */
+  external: boolean;
+}
+
 /**
  * Resolve a soft (SPA/Flight) redirect target before it leaves the server.
  *
- * Soft redirects are 200/204 (`X-RSC-Redirect` / `metadata.redirect`), not 3xx,
- * so they never hit `guardOutgoingRedirect`. This applies the same policy the
- * 3xx guard uses: same-origin by default, `external` opts into http(s)-only
- * off-host, anything else lands on {@link safeSameOriginLanding}. Returns the
- * URL that should be written into the soft-redirect wire fields.
+ * Soft redirects are 200/204 (`X-RSC-Redirect` / `metadata.redirect`) or a
+ * Flight error-row digest, not 3xx, so they never hit
+ * `guardOutgoingRedirect`. This applies the same policy the 3xx guard uses:
+ * same-origin by default, `external` opts into http(s)-only off-host, anything
+ * else lands on {@link safeSameOriginLanding}. Callers that carry the opt-in
+ * forward (the redirect payload, the component-throw digest) need
+ * {@link SoftRedirectResolution.external} too, so this answers both.
+ */
+export function resolveSoftRedirect(
+  url: string,
+  requestOrigin: string,
+  basename: string | undefined,
+  external?: boolean,
+): SoftRedirectResolution {
+  if (external) {
+    const to = resolveExternalRedirect(url, requestOrigin);
+    if (to !== null) return { to, external: true };
+    return { to: safeSameOriginLanding(basename), external: false };
+  }
+  return {
+    to:
+      resolveSameOriginRedirect(url, requestOrigin) ??
+      safeSameOriginLanding(basename),
+    external: false,
+  };
+}
+
+/**
+ * The URL a soft redirect should be written as. Same rules as
+ * {@link resolveSoftRedirect}; use that one when the `external` opt-in must be
+ * carried forward.
  */
 export function resolveSoftRedirectUrl(
   url: string,
@@ -91,16 +134,7 @@ export function resolveSoftRedirectUrl(
   basename: string | undefined,
   external?: boolean,
 ): string {
-  if (external) {
-    return (
-      resolveExternalRedirect(url, requestOrigin) ??
-      safeSameOriginLanding(basename)
-    );
-  }
-  return (
-    resolveSameOriginRedirect(url, requestOrigin) ??
-    safeSameOriginLanding(basename)
-  );
+  return resolveSoftRedirect(url, requestOrigin, basename, external).to;
 }
 
 /**

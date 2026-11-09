@@ -46,6 +46,7 @@ import { pprHeaderGuardPatterns } from "./urls/ppr-header-guard.js";
 import { shellCacheActionPatterns } from "./urls/shell-cache-action.js";
 import { shellPushOwnershipPatterns } from "./urls/shell-push-ownership.js";
 import { holeyThrowsPatterns } from "./urls/holey-throws.js";
+import { componentRedirectPatterns } from "./urls/component-redirect.js";
 import { pprIncludeBakePatterns } from "./urls/ppr-include-bake.js";
 import { prerenderWarmPatterns } from "./urls/prerender-warm.js";
 import { requestKeyPatterns } from "./urls/request-keys.js";
@@ -1341,6 +1342,8 @@ export const urlpatterns = urls(
       include("/", shellPushOwnershipPatterns, { name: "" }),
       // An ssr: "await" loader that throws with no errorBoundary().
       include("/", holeyThrowsPatterns, { name: "" }),
+      // A redirect() thrown from a server component — /component-redirect.
+      include("/", componentRedirectPatterns, { name: "" }),
 
       // A ppr page under a store layout with an ssr: "await" loader, declared
       // directly and through include() — /ppr-include (issue #1179).

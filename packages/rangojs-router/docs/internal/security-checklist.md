@@ -192,6 +192,19 @@ into the header or Flight metadata. Client validators remain defense-in-depth
 (`metadata.redirect.external` targets are scheme-validated by
 `validateExternalRedirect` before `location.assign`).
 
+A `redirect()` a SERVER COMPONENT throws is a third soft carrier: React's
+Flight renderer catches it, so the target travels to the browser in an error
+row's digest (`render-redirect.ts`). That digest is resolved **at
+construction** too (`resolveSoftRedirect`, against the request origin and
+basename), because the browser read site mounts `LoaderRedirect`, whose
+off-origin branch IS the `{ external: true }` channel and whose precondition
+is a server-resolved target. A raw `Location` in the digest would therefore
+make any off-host target an unguarded `location.replace` on a client
+navigation, while the document lane's outgoing guard neutralized the same
+throw to the app root — the two lanes disagreeing on the one rule. Resolved
+once, both land on the basename root (or, with the opt-in, the `http(s)`
+off-host target).
+
 Two shared, runtime-neutral rules live in `src/redirect-origin.ts` and are
 imported by both the client validators and the server soft/3xx paths so the
 sides cannot drift: `resolveSameOriginRedirect` (same-origin) and
