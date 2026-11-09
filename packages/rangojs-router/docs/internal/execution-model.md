@@ -1025,6 +1025,20 @@ loader, or a synchronous handler return. In development, `warnOnStreamedResponse
 (`segment-resolution/helpers.ts`) logs a warning when a streamed handler resolves
 or rejects with a `Response`, so the swallowed-redirect failure mode is visible.
 
+### Limitation: a `redirect()` thrown from a server component is not a redirect
+
+A server component, async or not, runs while Flight serializes the payload
+(`createFlightStage` in `rsc/render-pipeline.ts`), after the handler returned
+and outside every router catch. A `Response` it throws, `redirect()` included,
+reaches Flight's `onError` like any render error: it is recorded in
+`_renderErrors`, the client gets an error row with an empty digest, and the
+nearest error boundary renders it (`RootErrorBoundary` when none is declared).
+Nothing reads it as a redirect, on a document load or a client navigation.
+
+Redirect authority sits before rendering: middleware, a handler's return (a
+synchronous one on a `loading()` route, see above), or a loader's throw. The
+route skill's "Redirects" section says the same to consumers.
+
 ### Streamed handler rejections render the declared boundary
 
 The same non-awaited promise carries failures. `trackStreamedHandler`
@@ -2468,6 +2482,9 @@ set these rules.
   reported through onError (phase `"loader"`), its message pointing to route
   middleware. A rewrite that depends on data goes in the route's middleware,
   reading the data through a cached function the loader shares.
+- A `redirect()` thrown while a server component renders is not a redirect:
+  it is a render error the nearest error boundary renders (see "Limitation: a
+  `redirect()` thrown from a server component is not a redirect").
 - Route middleware is not an action guard.
 - Partial revalidation does not implicitly recompute non-revalidated ancestors.
 - A fill request (`prefetch: false`) does not recompute the handlers the
