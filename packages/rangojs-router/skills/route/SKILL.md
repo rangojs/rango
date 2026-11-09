@@ -584,7 +584,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
-Return it from a handler or middleware, or throw it from a loader.
+Return it from a handler or middleware, or throw it from a loader or from a
+server component.
 
 ### Basic redirect
 
@@ -624,6 +625,16 @@ path(
 > (A loader `throw redirect()` also navigates the user, but it is ALWAYS a
 > client-side replace on document loads — 200 document, never a 302; see
 > `/loader` → "Loader Authority". Dev logs a warning if this is hit.)
+>
+> **A redirect from a server component** (`if (!session) throw redirect("/login")`
+> in an async component) is control flow too: React's Flight renderer catches
+> the throw, and the router carries the target to the browser, so the visitor
+> ends on it instead of the error boundary. A document load whose server render
+> fails answers the redirect's own status with `Location`; a client navigation,
+> an action's revalidation, and a redirect inside a `<Suspense>` end with a
+> replace. A page whose component redirects is never stored. Use it for a
+> per-render gate; a request-shaped auth gate still belongs in middleware,
+> which answers a real pre-stream 302.
 
 ### Redirect with location state
 

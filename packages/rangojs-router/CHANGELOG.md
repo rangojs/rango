@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: `redirect()` thrown from a server component sends the visitor to the target
+
+**Before.** A `redirect()` thrown while a server component rendered was caught
+by React's Flight renderer and arrived at the browser as an ordinary render
+error row. A signed-out visitor gated by an async component
+(`if (!session) throw redirect("/login")`) landed on the error page instead of
+`/login`, on a document load and on a client navigation alike. Only a handler
+(returning or throwing it) and a loader (throwing it) redirected.
+
+**Now.** A redirect thrown from a component is control flow, like a loader's:
+the render reports it to nothing and prints nothing for it, and the visitor
+ends on the target. A document load whose server render fails answers the
+redirect's own status with `Location` (a recovery document, then a client
+replace, when the call carried `state`); a client navigation, an action's
+revalidation and a redirect inside a `<Suspense>` end with a replace to the
+target. A page whose component redirects is never stored.
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+```
+
+A `redirect()` a component throws carries the same same-origin rule as every
+other one, and `redirect(url, { state })` still delivers its state to the
+target.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

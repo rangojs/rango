@@ -2,6 +2,8 @@
 
 import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+import { LoaderRedirect } from "./loader-redirect.js";
+import { renderRedirectOf } from "./render-redirect.js";
 
 function isNetworkError(error: Error): boolean {
   return error.name === "NetworkError";
@@ -224,6 +226,9 @@ export class RootErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    // A redirect a server component threw is control flow, not a failure: it
+    // navigates below (render()) and prints nothing.
+    if (renderRedirectOf(error)) return;
     console.error(
       "[RootErrorBoundary] Unhandled error caught:",
       error,
@@ -250,6 +255,20 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      // A `redirect()` thrown from a server component arrives as the Flight
+      // error row's digest (render-redirect.ts). It is the same navigation a
+      // loader's redirect() makes, so it mounts the same carrier: a client
+      // navigation lands here when the payload's route content throws, and so
+      // does a document whose shell streamed (a redirect inside a <Suspense>).
+      const renderRedirect = renderRedirectOf(this.state.error);
+      if (renderRedirect) {
+        return (
+          <LoaderRedirect
+            to={renderRedirect.location}
+            state={renderRedirect.state}
+          />
+        );
+      }
       const errorInfo = {
         message: this.state.error.message,
         name: this.state.error.name,

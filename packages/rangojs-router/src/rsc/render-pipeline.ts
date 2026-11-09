@@ -7,6 +7,7 @@ import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";
 import { createResponseWithMergedHeaders } from "./helpers.js";
+import { renderRedirectDigest } from "../render-redirect.js";
 import type { RscPayload } from "./types.js";
 import type { RoutineTrace, RoutineTraceEntry } from "./routine-plan.js";
 
@@ -162,7 +163,14 @@ function createFlightStage<TEnv>(
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
+      // A `redirect()` thrown from a COMPONENT is control flow, not a failure:
+      // React catches it here and its return value becomes the error row's
+      // digest, the only channel to the read site (see render-redirect.ts).
+      // Reported to nothing, printed nowhere -- but still recorded as a render
+      // error so no document, shell or prefetch stores a page that redirects.
+      const redirectDigest = renderRedirectDigest(error);
       renderErrors?.push(error);
+      if (redirectDigest !== undefined) return redirectDigest;
       // The client gets a masked copy (an error row); the original prints here.
       printServerError(
         error,

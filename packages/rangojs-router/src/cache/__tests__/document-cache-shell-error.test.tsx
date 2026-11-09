@@ -255,6 +255,45 @@ describe("document cache: a shell error's answer is never stored", () => {
     expect(callOnError).not.toHaveBeenCalled();
   });
 
+  it("a redirect() a component threw answers a real redirect and is not stored", async () => {
+    // What the Flight client rebuilds for the row a component's redirect
+    // became (`render-redirect.ts`).
+    shellError = Object.assign(
+      new Error("An error occurred in the Server Components render."),
+      {
+        digest: 'rango-redirect:{"location":"/elsewhere","status":302}',
+      },
+    );
+
+    const result = await serve();
+
+    expect(result.response.status).toBe(302);
+    expect(result.response.headers.get("location")).toBe("/elsewhere");
+    expect(result.body).toBe("");
+    expect(store.cache.has(KEY)).toBe(false);
+    // Control flow, not a failure: not reported, not printed.
+    expect(callOnError).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("a redirect() a component threw with state answers 200 and is not stored", async () => {
+    shellError = Object.assign(
+      new Error("An error occurred in the Server Components render."),
+      {
+        digest:
+          'rango-redirect:{"location":"/elsewhere","status":302,"state":{"a":1}}',
+      },
+    );
+
+    const result = await serve();
+
+    expect(result.response.status).toBe(200);
+    expect(result.body).toContain('<html data-rango-ssr-error="">');
+    // A 200 passes shouldCacheResponse; the render's error list refuses it.
+    expect(store.cache.has(KEY)).toBe(false);
+    expect(callOnError).not.toHaveBeenCalled();
+  });
+
   it("an error React decoded from Flight is reported once: the Flight render reported it", async () => {
     // What the Flight client builds for an error row: it sets `digest`.
     shellError = Object.assign(new Error("flight error row"), {

@@ -83,6 +83,31 @@ function markedError(name: string, message: string): Error {
   return error;
 }
 
+/**
+ * The error React's Flight client rebuilds for an error row: a fresh Error
+ * carrying the row's `digest` alone. A `redirect()` thrown from a component
+ * reaches this render exactly this way (`render-redirect.ts`).
+ */
+function decodedFlightError(digest: string): Error {
+  return Object.assign(
+    new Error("An error occurred in the Server Components render."),
+    { digest },
+  );
+}
+
+function componentRedirect(
+  location: string,
+  extra: {
+    status?: number;
+    state?: Record<string, unknown>;
+    external?: true;
+  } = {},
+): Error {
+  return decodedFlightError(
+    `rango-redirect:${JSON.stringify({ location, status: extra.status ?? 302, ...(extra.state && { state: extra.state }), ...(extra.external && { external: true }) })}`,
+  );
+}
+
 let consoleError: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
@@ -242,6 +267,81 @@ describe("renderHTML: a shell error in production", () => {
     });
   });
 
+  it("answers a redirect() a component threw with a real redirect and no body", async () => {
+    const redirect = componentRedirect("/login");
+    shellThrows(redirect);
+    const onError = vi.fn();
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps({ onError }));
+
+    const body = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(body).toBe("");
+    expect(onShellError).toHaveBeenCalledWith({
+      error: redirect,
+      originated: false,
+      status: 302,
+      location: "/login",
+    });
+    // Control flow, not a failure: not reported, not printed.
+    expect(onError).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("keeps the redirect's own status", async () => {
+    shellThrows(componentRedirect("/login", { status: 303 }));
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 303,
+      location: "/login",
+    });
+  });
+
+  it("answers a component's redirect() with state with the recovery document as a 200: the client replace carries the state", async () => {
+    const redirect = componentRedirect("/login", {
+      state: { flash: { text: "signed out" } },
+    });
+    shellThrows(redirect);
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    const html = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(html).toContain('<html data-rango-ssr-error="">');
+    expect(html).toContain(FLIGHT_MARKER);
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 200,
+      location: undefined,
+    });
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("answers a component's { external: true } redirect with the recovery document: the 3xx would lose the opt-in", async () => {
+    // The opt-in is an out-of-band brand on the thrown Response, which a 3xx
+    // rebuilt here cannot carry, so the outgoing same-origin guard would
+    // neutralize it. The browser's own external channel follows it.
+    shellThrows(
+      componentRedirect("https://accounts.example.com/oauth", {
+        external: true,
+      }),
+    );
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    const html = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(html).toContain('<html data-rango-ssr-error="">');
+    expect(html).toContain(FLIGHT_MARKER);
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 200,
+      location: undefined,
+    });
+  });
+
   it("answers a payload that did not decode with a static document: no scripts, nothing from the error", async () => {
     const error = new Error(
       "root payload failed at /srv/app/dist/rsc/index.js",
@@ -349,6 +449,22 @@ describe("renderHTML: a shell error in dev", () => {
     expect(onError).toHaveBeenCalledWith(error, { phase: "rendering" });
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(error);
+  });
+
+  it("answers a redirect() a component threw as production does: control flow, not an overlay", async () => {
+    shellThrows(componentRedirect("/login"));
+    const onError = vi.fn();
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps({ onError }));
+
+    const body = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(body).toBe("");
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 302,
+      location: "/login",
+    });
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it("answers a loader's notFound() as production does: control flow, not an overlay", async () => {
