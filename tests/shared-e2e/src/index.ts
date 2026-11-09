@@ -27,6 +27,8 @@ export { defineFlaggedLoaderDefaultBoundaryTests } from "./flagged-loader-defaul
 export type { FlaggedLoaderDefaultBoundaryFixture } from "./flagged-loader-default-boundary.js";
 export { defineSsrShellErrorTests } from "./ssr-shell-error.js";
 export type { SsrShellErrorFixture } from "./ssr-shell-error.js";
+export { defineComponentRedirectTests } from "./component-redirect-scenario.js";
+export type { ComponentRedirectFixture } from "./component-redirect-scenario.js";
 import { guardHydrationErrors } from "./hydration-guard.js";
 import {
   byTestId,

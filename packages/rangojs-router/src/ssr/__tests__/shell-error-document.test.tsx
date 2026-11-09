@@ -24,6 +24,9 @@ import {
   loaderResultError,
 } from "../../decode-loader-results.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
+import { renderRedirectDigest } from "../../render-redirect.js";
+import { redirect } from "../../route-definition/redirect.js";
+import { attachRedirectState } from "../../redirect-origin.js";
 
 const mockedRenderSegments = vi.mocked(renderSegments);
 
@@ -329,6 +332,115 @@ describe("renderHTML: a shell error in production", () => {
     expect(head).toContain("storageKey");
   });
 });
+
+/**
+ * What React's Flight client builds from the error row of a redirect() a
+ * server component threw: the row's digest is the one createFlightStage's
+ * onError returned for the Response.
+ */
+function componentRedirect(response: Response): Error {
+  const digest = renderRedirectDigest(response, {
+    origin: "http://localhost",
+    basename: undefined,
+  });
+  return Object.assign(
+    new Error("An error occurred in the Server Components render."),
+    { digest },
+  );
+}
+
+describe.each([
+  ["production", "production"],
+  ["dev", "development"],
+])(
+  "renderHTML %s: a server component's redirect() failing the shell",
+  (_label, env) => {
+    beforeEach(() => {
+      vi.stubEnv("NODE_ENV", env);
+    });
+
+    it("answers a real redirect with no body, and reports and prints nothing", async () => {
+      shellThrows(componentRedirect(redirect("/login")));
+      const onError = vi.fn();
+      const onShellError = vi.fn();
+      const renderHTML = createSSRHandler(deps({ onError }));
+
+      const body = await read(
+        await renderHTML(flightStream(), { onShellError }),
+      );
+
+      expect(body).toBe("");
+      expect(onShellError.mock.calls[0]![0]).toMatchObject({
+        originated: false,
+        status: 302,
+        location: "http://localhost/login",
+      });
+      expect(onError).not.toHaveBeenCalled();
+      expect(consoleError).not.toHaveBeenCalled();
+    });
+
+    it("keeps the redirect's status", async () => {
+      shellThrows(componentRedirect(redirect("/login", 308)));
+      const onShellError = vi.fn();
+      const renderHTML = createSSRHandler(deps());
+
+      await read(await renderHTML(flightStream(), { onShellError }));
+
+      expect(onShellError.mock.calls[0]![0]).toMatchObject({
+        status: 308,
+        location: "http://localhost/login",
+      });
+    });
+
+    it("with state, answers the recovery document as a 200: the client replace carries the state", async () => {
+      const withState = redirect("/login");
+      attachRedirectState(withState, { __rsc_ls_flash: { text: "hi" } });
+      shellThrows(componentRedirect(withState));
+      const onShellError = vi.fn();
+      const renderHTML = createSSRHandler(deps());
+
+      const html = await read(
+        await renderHTML(flightStream(), { onShellError }),
+      );
+
+      expect(html).toContain('<html data-rango-ssr-error="">');
+      expect(html).toContain(FLIGHT_MARKER);
+      expect(onShellError.mock.calls[0]![0]).toMatchObject({
+        status: 200,
+        location: undefined,
+      });
+    });
+
+    it("inside a Suspense boundary, leaves it to the client and prints nothing", async () => {
+      const error = componentRedirect(redirect("/login"));
+      function Boom(): never {
+        throw error;
+      }
+      mockedRenderSegments.mockImplementation(() =>
+        Promise.resolve(
+          <html>
+            <body>
+              <React.Suspense fallback={<p>fallback</p>}>
+                <Boom />
+              </React.Suspense>
+            </body>
+          </html>,
+        ),
+      );
+      const onShellError = vi.fn();
+      const renderHTML = createSSRHandler(deps());
+
+      const html = await read(
+        await renderHTML(flightStream(), { onShellError }),
+      );
+
+      expect(html).toContain("<p>fallback</p>");
+      expect(html).toContain(FLIGHT_MARKER);
+      expect(onShellError).not.toHaveBeenCalled();
+      expect(consoleError).not.toHaveBeenCalled();
+    });
+  },
+);
 
 describe("renderHTML: a shell error in dev", () => {
   it("rethrows the original error instance to the host, after reporting it once", async () => {
