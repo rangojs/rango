@@ -31,7 +31,7 @@ import type { EntryData } from "../../server/context.js";
 import type { ErrorInfo, HandlerContext } from "../../types/index.js";
 import type { SegmentResolutionDeps } from "../types.js";
 import { observeStreamedHandler } from "./streamed-handler-telemetry.js";
-import { markStreamedHandlerResponse } from "../../render-redirect.js";
+import { markStreamedHandlerResponse } from "../../server/render-redirect-digest.js";
 
 export interface StreamedHandlerOptions<TEnv> {
   /**
@@ -65,9 +65,9 @@ export function trackStreamedHandler<TEnv>(
 ): ReactNode {
   const { segmentId, segmentType, context } = options;
   // A Response the handler settles with stays on the error path, not a
-  // component redirect's (render-redirect.ts). A direct reaction on `result`
-  // runs before any reaction on the promises derived from it, which are all
-  // Flight reads, so the mark always lands first.
+  // component redirect's (server/render-redirect-digest.ts). A direct
+  // reaction on `result` runs before any reaction on the promises derived
+  // from it, which are all Flight reads, so the mark always lands first.
   result.then(markStreamedHandlerResponse, markStreamedHandlerResponse);
   const tracked = deps.trackHandler(result as Promise<ReactNode>, {
     segmentId,

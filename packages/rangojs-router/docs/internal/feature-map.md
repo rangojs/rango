@@ -816,8 +816,9 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   authority stays with middleware).
 - Component-thrown redirects: an async server component that throws
   `redirect()` while Flight serializes the payload. Its error row's digest
-  carries the resolved redirect (`render-redirect.ts`, returned by
-  `createFlightStage` and every `segment-codec.ts` encode); the SSR shell error
+  carries the resolved redirect (written by `server/render-redirect-digest.ts`
+  from `createFlightStage` and every `segment-codec.ts` encode, read by
+  `render-redirect.ts`); the SSR shell error
   answer turns it into a real 3xx (or the 200 recovery document with state),
   and `RootErrorBoundary` / the exported `ErrorBoundary` into a
   `LoaderRedirect` replace (`redirectSignalOf`). Control flow: never printed or

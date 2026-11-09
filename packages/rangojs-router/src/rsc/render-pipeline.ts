@@ -6,7 +6,7 @@ import { printServerError } from "../server/print-server-error.js";
 import {
   renderRedirectDigest,
   renderRedirectOrigin,
-} from "../render-redirect.js";
+} from "../server/render-redirect-digest.js";
 import type { TraceSpan } from "../router/tracing.js";
 import type { RenderMode, RenderPhase } from "../router/timeout.js";
 import type { HandlerContext } from "./handler-context.js";

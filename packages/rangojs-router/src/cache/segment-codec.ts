@@ -21,7 +21,7 @@ import { _getRequestContext } from "../server/request-context.js";
 import {
   redirectAwareOnError,
   renderRedirectOrigin,
-} from "../render-redirect.js";
+} from "../server/render-redirect-digest.js";
 
 // Preserve embedded server references on a cache/prerender HIT so they
 // re-serialize to the client instead of resolving to a raw function React
@@ -32,7 +32,8 @@ const PRESERVE_SERVER_REFS = { preserveServerReferences: true } as const;
 /**
  * Every encode's onError: the caller's, plus the digest of a redirect() a
  * component threw, so the decoded copy (a "use cache" miss renders it) and
- * the render it lands in still read it as a redirect (render-redirect.ts).
+ * the render it lands in still read it as a redirect
+ * (server/render-redirect-digest.ts).
  */
 function encodeOnError(
   onError: ((error: unknown) => void) | undefined,

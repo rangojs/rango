@@ -4,7 +4,7 @@ import { cleanup, waitFor } from "@testing-library/react";
 import { ErrorBoundary, useParams } from "../../client.js";
 import { renderRoute } from "../dom.entry.js";
 import { redirect } from "../../route-definition/redirect.js";
-import { renderRedirectDigest } from "../../render-redirect.js";
+import { renderRedirectDigest } from "../../server/render-redirect-digest.js";
 
 // Userland contract for a redirect() an async server component throws after
 // its handler returned. The browser receives it as a Flight error row whose

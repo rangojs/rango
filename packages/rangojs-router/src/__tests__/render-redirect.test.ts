@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { renderRedirectOf } from "../render-redirect.js";
 import {
   redirectAwareOnError,
   renderRedirectDigest,
-  renderRedirectOf,
   renderRedirectOrigin,
-} from "../render-redirect.js";
+} from "../server/render-redirect-digest.js";
 import { redirect } from "../route-definition/redirect.js";
 import { attachRedirectState } from "../redirect-origin.js";
 import { redirectSignalOf } from "../decode-loader-results.js";

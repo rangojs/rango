@@ -1175,12 +1175,14 @@ saw the error page instead of the sign-in page a session check sent them to.
 
 So the error row carries the redirect. `createFlightStage`
 (`rsc/render-pipeline.ts`) returns `renderRedirectDigest`
-(`render-redirect.ts`) from its onError: `rango.redirect;` and the JSON of
-`{ to, status, state? }`, the target already resolved by
+(`server/render-redirect-digest.ts`) from its onError: `rango.redirect;` and
+the JSON of `{ to, status, state? }`, the target already resolved by
 `resolveSoftRedirectUrl` (same-origin unless `{ external: true }`, the
 basename kept), as the loader redirect marker resolves it. The digest is the
 one field of an error row React keeps in production; Fizz and the browser
-both get it on the decoded error. Readers:
+both get it on the decoded error. The read, `renderRedirectOf`, lives apart
+in `render-redirect.ts`, so the browser bundle carries only the read.
+Readers:
 
 - `redirectSignalOf` (`decode-loader-results.ts`) reads both redirect
   channels, the loader marker and this digest. The SSR shell error answer

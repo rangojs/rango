@@ -6,7 +6,8 @@
  * server paths in production).
  *
  * The answer, in order:
- * - a loader `redirect()` with no state: a real 3xx (nothing has been sent);
+ * - a loader's or a server component's `redirect()` with no state
+ *   (redirectSignalOf): a real 3xx (nothing has been sent);
  * - the payload decoded and the tree built: a recovery document carrying the
  *   same Flight payload, which the browser entry renders with createRoot
  *   (`data-rango-ssr-error`), so the router's client boundaries run as on a
@@ -104,7 +105,7 @@ export async function answerShellError(
 ): Promise<ShellErrorAnswer> {
   // A redirect with state keeps the recovery document: the state rides the
   // history entry the client replace writes, which a 3xx cannot. Without
-  // this branch every loader redirect takes the client replace.
+  // this branch every loader or component redirect takes the client replace.
   const redirect = redirectSignalOf(error);
   if (redirect && redirect.state === undefined) {
     flight?.cancel().catch(() => {});

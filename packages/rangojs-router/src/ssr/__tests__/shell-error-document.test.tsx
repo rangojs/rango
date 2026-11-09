@@ -24,7 +24,7 @@ import {
   loaderResultError,
 } from "../../decode-loader-results.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
-import { renderRedirectDigest } from "../../render-redirect.js";
+import { renderRedirectDigest } from "../../server/render-redirect-digest.js";
 import { redirect } from "../../route-definition/redirect.js";
 import { attachRedirectState } from "../../redirect-origin.js";
 
