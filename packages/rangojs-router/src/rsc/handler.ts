@@ -32,11 +32,7 @@ import {
   buildRouteMiddlewareEntries,
 } from "./helpers.js";
 import { renderRscFlightStage, renderRscResponse } from "./render-pipeline.js";
-import {
-  resolveSoftRedirectUrl,
-  resolveExternalRedirect,
-  safeSameOriginLanding,
-} from "../redirect-origin.js";
+import { resolveSoftRedirect } from "../redirect-origin.js";
 import { resolvedHandleStream } from "../handles/deferred-resolution.js";
 import {
   isWebSocketUpgradeResponse,
@@ -222,9 +218,9 @@ export function createRSCHandler<
    * Used when a partial/action request results in a redirect -- fetch
    * auto-follows 3xx so we send the redirect as payload metadata instead.
    *
-   * The redirect URL is resolved with {@link resolveSoftRedirectUrl} against
-   * the current request origin so an unsafe target never leaves as Flight
-   * metadata (client validators remain defense-in-depth).
+   * The redirect URL is resolved with {@link resolveSoftRedirect} against the
+   * current request origin so an unsafe target never leaves as Flight metadata
+   * (client validators remain defense-in-depth).
    */
   function createRedirectFlightResponse(
     redirectUrl: string,
@@ -237,24 +233,12 @@ export function createRSCHandler<
     // Resolve with the same policy as 3xx guardOutgoingRedirect. Keep
     // external:true only when the external scheme check passed; a neutralized
     // landing (javascript:/blocked) must not advertise external.
-    let resolvedUrl: string;
-    let resolvedExternal = false;
-    if (external) {
-      const ext = resolveExternalRedirect(redirectUrl, requestOrigin);
-      if (ext !== null) {
-        resolvedUrl = ext;
-        resolvedExternal = true;
-      } else {
-        resolvedUrl = safeSameOriginLanding(router.basename);
-      }
-    } else {
-      resolvedUrl = resolveSoftRedirectUrl(
-        redirectUrl,
-        requestOrigin,
-        router.basename,
-        false,
-      );
-    }
+    const { to: resolvedUrl, external: resolvedExternal } = resolveSoftRedirect(
+      redirectUrl,
+      requestOrigin,
+      router.basename,
+      external,
+    );
     const redirectPayload: RscPayload = {
       metadata: {
         pathname: resolvedUrl,

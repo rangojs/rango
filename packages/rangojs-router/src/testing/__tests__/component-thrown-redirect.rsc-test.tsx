@@ -36,9 +36,18 @@ import {
 } from "../../index.rsc.js";
 import { renderRedirectOf } from "../../render-redirect.js";
 import { Outlet, ParallelOutlet } from "../../client.js";
+import { MemorySegmentCacheStore } from "../../cache/index.js";
+import type { InterceptSelectorContext } from "../../server/context.js";
 
 /** The state a gated page carries onto /login. */
 const Flash = createLocationState<{ text: string }>({ flash: true });
+
+/**
+ * The target the browser is handed: RESOLVED by the server
+ * (`resolveSoftRedirect` against the request origin), so both read sites -- the
+ * shell's 3xx and the client boundary -- land on the same URL.
+ */
+const LOGIN = "http://localhost/login";
 
 /**
  * The reported shape: an async server component that resolves a session and
@@ -106,12 +115,44 @@ function SlotHost(): React.ReactNode {
   );
 }
 
+/** A gate whose target is off-host with no `{ external: true }` opt-in. */
+async function OffHostGate(): Promise<React.ReactNode> {
+  await Promise.resolve();
+  throw redirect("https://evil.example/x");
+}
+
+function OffHostPage(): React.ReactNode {
+  return (
+    <main>
+      <h1>Off-host</h1>
+      <OffHostGate />
+    </main>
+  );
+}
+
+/** A gate that opts into an off-host target. */
+async function ExternalGate(): Promise<React.ReactNode> {
+  await Promise.resolve();
+  throw redirect("https://accounts.example.com/oauth", { external: true });
+}
+
+function ExternalPage(): React.ReactNode {
+  return (
+    <main>
+      <h1>External</h1>
+      <ExternalGate />
+    </main>
+  );
+}
+
 function makeRouter() {
   return createRouter().routes(
     urls(({ path, layout, parallel }) => [
       path("/", () => <p>home</p>, { name: "home" }),
       path("/account", AccountPage, { name: "account" }),
       path("/account/state", StatefulPage, { name: "accountState" }),
+      path("/account/off-host", OffHostPage, { name: "accountOffHost" }),
+      path("/account/external", ExternalPage, { name: "accountExternal" }),
       layout(GatedLayout, () => [
         path("/gated-layout", () => <p>account</p>, {
           name: "gatedLayout",
@@ -164,7 +205,7 @@ describe("a component that throws redirect()", () => {
 
     expect(result.flight).toBeDefined();
     expect(redirectOfPayload(result.flight!)).toEqual({
-      location: "/login",
+      location: LOGIN,
       status: 302,
     });
     // Not an ordinary render failure: the empty digest is the error page.
@@ -177,7 +218,7 @@ describe("a component that throws redirect()", () => {
     });
 
     expect(redirectOfPayload(result.flight!)).toEqual({
-      location: "/login",
+      location: LOGIN,
       status: 302,
     });
     expect(errorDigests(result.flight!)).not.toContain("");
@@ -189,7 +230,7 @@ describe("a component that throws redirect()", () => {
     });
 
     expect(redirectOfPayload(result.flight!)).toEqual({
-      location: "/login",
+      location: LOGIN,
       status: 302,
     });
   });
@@ -204,7 +245,7 @@ describe("a component that throws redirect()", () => {
       status: number;
       state?: Record<string, unknown>;
     };
-    expect(redirect.location).toBe("/login");
+    expect(redirect.location).toBe(LOGIN);
     expect(redirect.status).toBe(302);
     // A bare test has no injected location-state key, so read the value.
     expect(Object.values(redirect.state ?? {})).toEqual([
@@ -216,7 +257,7 @@ describe("a component that throws redirect()", () => {
     const result = await serveShellRequest(makeRouter(), "/gated-layout");
 
     expect(redirectOfPayload(result.flight!)).toEqual({
-      location: "/login",
+      location: LOGIN,
       status: 302,
     });
   });
@@ -225,9 +266,104 @@ describe("a component that throws redirect()", () => {
     const result = await serveShellRequest(makeRouter(), "/gated-slot");
 
     expect(redirectOfPayload(result.flight!)).toEqual({
-      location: "/login",
+      location: LOGIN,
       status: 302,
     });
+  });
+
+  it("lands an off-host target with no opt-in on the app root, as the document lane does", async () => {
+    // The same-origin rule applies to a component throw as to every other
+    // redirect, and it is applied where the digest is built: the browser read
+    // site (`LoaderRedirect`) treats an off-origin target as the external
+    // opt-in, so a raw one there would navigate off-origin while the document
+    // lane's outgoing guard neutralizes the same throw.
+    const result = await serveShellRequest(makeRouter(), "/account/off-host");
+
+    expect(redirectOfPayload(result.flight!)).toEqual({
+      location: "/",
+      status: 302,
+    });
+  });
+
+  it("lands an off-host target on the app root on an action's revalidation too", async () => {
+    const result = await serveShellRequest(makeRouter(), "/account/off-host", {
+      partial: { from: "/", stale: true },
+    });
+
+    expect(redirectOfPayload(result.flight!)).toEqual({
+      location: "/",
+      status: 302,
+    });
+  });
+
+  it("lands an off-host target thrown inside an INTERCEPT on the app root", async () => {
+    const router = createRouter().routes(
+      urls(({ path, layout, intercept }) => [
+        layout(
+          () => <main>shell</main>,
+          () => [
+            path("/list", () => <ul>list</ul>, { name: "list" }),
+            path("/item/:id", () => <article>item</article>, { name: "item" }),
+            intercept("@modal", ".item", () => <OffHostGate />, {
+              when: (ctx: InterceptSelectorContext) =>
+                ctx.from.routeName === "list",
+            }),
+          ],
+        ),
+      ]),
+    );
+
+    const result = await serveShellRequest(router, "/item/1", {
+      partial: { from: "/list" },
+    });
+
+    expect(redirectOfPayload(result.flight!)).toEqual({
+      location: "/",
+      status: 302,
+    });
+  });
+
+  it("keeps an opted-in { external: true } target off-host", async () => {
+    const result = await serveShellRequest(makeRouter(), "/account/external");
+
+    expect(redirectOfPayload(result.flight!)).toEqual({
+      location: "https://accounts.example.com/oauth",
+      status: 302,
+      external: true,
+    });
+  });
+
+  it("lands a blocked target on the basename root", async () => {
+    const router = createRouter({ basename: "/app" }).routes(
+      urls(({ path }) => [
+        path("/account/off-host", OffHostPage, { name: "offHost" }),
+      ]),
+    );
+
+    const result = await serveShellRequest(router, "/app/account/off-host");
+
+    expect(redirectOfPayload(result.flight!)).toEqual({
+      location: "/app",
+      status: 302,
+    });
+  });
+
+  it("stores no ppr shell for a page whose component redirects", async () => {
+    // The digest carries a resolved, origin-bearing target, so a stored shell
+    // would send a later visitor to the origin it was built at. The render
+    // records the throw in `_renderErrors`, which the capture refuses on.
+    const cacheStore = new MemorySegmentCacheStore();
+    const router = createRouter({ cache: { store: cacheStore } }).routes(
+      urls(({ path }) => [
+        path("/ppr-off-host", OffHostPage, { name: "pprOffHost", ppr: true }),
+      ]),
+    );
+
+    const result = await serveShellRequest(router, "/ppr-off-host", {
+      cacheStore,
+    });
+
+    expect(await result.readEntry()).toBeNull();
   });
 
   it("reports nothing to onError and prints nothing: control flow, not a failure", async () => {

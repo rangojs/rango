@@ -6,7 +6,10 @@ import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import { RootErrorBoundary } from "../root-error-boundary.js";
 import { renderRedirectDigest } from "../render-redirect.js";
-import { attachRedirectState } from "../redirect-origin.js";
+import {
+  attachRedirectState,
+  markExternalRedirect,
+} from "../redirect-origin.js";
 
 /**
  * A `redirect()` thrown from a server component arrives in the browser as the
@@ -14,6 +17,9 @@ import { attachRedirectState } from "../redirect-origin.js";
  * boundary is where it lands, so it must navigate there instead of rendering
  * the error page.
  */
+
+/** The origin the server resolved the digest against (this window's). */
+const REQUEST_ORIGIN = "http://localhost:3000";
 
 const navigations: Array<{ url: string; options?: unknown }> = [];
 
@@ -70,6 +76,8 @@ describe("RootErrorBoundary: a redirect a component threw", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const digest = renderRedirectDigest(
       new Response(null, { status: 302, headers: { Location: "/login" } }),
+      REQUEST_ORIGIN,
+      undefined,
     )!;
 
     const container = renderBoundary(decodedRedirect(digest));
@@ -89,7 +97,11 @@ describe("RootErrorBoundary: a redirect a component threw", () => {
     });
     attachRedirectState(response, { flash: { text: "signed out" } });
 
-    renderBoundary(decodedRedirect(renderRedirectDigest(response)!));
+    renderBoundary(
+      decodedRedirect(
+        renderRedirectDigest(response, REQUEST_ORIGIN, undefined)!,
+      ),
+    );
 
     expect(navigations[0]!.url).toBe(
       "http://localhost:3000/login?next=%2Faccount",
@@ -106,6 +118,8 @@ describe("RootErrorBoundary: a redirect a component threw", () => {
       .mockImplementation(() => {});
     const digest = renderRedirectDigest(
       new Response(null, { status: 302, headers: { Location: "/login" } }),
+      REQUEST_ORIGIN,
+      undefined,
     )!;
 
     renderBoundary(decodedRedirect(digest));
@@ -115,6 +129,52 @@ describe("RootErrorBoundary: a redirect a component threw", () => {
         String(message).includes("[RootErrorBoundary]"),
       ),
     ).toEqual([]);
+  });
+
+  it("lands an off-host target with no opt-in on the app root, never off-origin", () => {
+    // LoaderRedirect's off-origin branch is the `{ external: true }` channel:
+    // a raw off-host target here would be an unguarded window.location.replace,
+    // while the document lane's outgoing guard neutralizes the same throw. The
+    // digest carries the resolved landing, so the two agree.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const replace = vi
+      .spyOn(window.location, "replace")
+      .mockImplementation(() => {});
+    const digest = renderRedirectDigest(
+      new Response(null, {
+        status: 302,
+        headers: { Location: "https://evil.example/x" },
+      }),
+      REQUEST_ORIGIN,
+      undefined,
+    )!;
+
+    const container = renderBoundary(decodedRedirect(digest));
+
+    expect(replace).not.toHaveBeenCalled();
+    expect(navigations.map((n) => n.url)).toEqual(["http://localhost:3000/"]);
+    expect(container.textContent).not.toContain("Internal Server Error");
+  });
+
+  it("leaves for an opted-in { external: true } target, not through the router", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const replace = vi
+      .spyOn(window.location, "replace")
+      .mockImplementation(() => {});
+    const response = new Response(null, {
+      status: 302,
+      headers: { Location: "https://accounts.example.com/oauth" },
+    });
+    markExternalRedirect(response);
+
+    renderBoundary(
+      decodedRedirect(
+        renderRedirectDigest(response, REQUEST_ORIGIN, undefined)!,
+      ),
+    );
+
+    expect(replace).toHaveBeenCalledWith("https://accounts.example.com/oauth");
+    expect(navigations).toEqual([]);
   });
 
   it("still renders the error page for an ordinary render error", () => {

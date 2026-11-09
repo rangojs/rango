@@ -184,6 +184,7 @@ export const routes = {
   componentRedirect: "/component-redirect",
   componentRedirectGated: "/component-redirect/gated",
   componentRedirectLoading: "/component-redirect/loading",
+  componentRedirectOffHost: "/component-redirect/off-host",
   componentRedirectTarget: "/component-redirect/target",
   "constrainedOptionalInclude.index": "/coi/:locale(en|gb)?",
   "contentOwnership.errorJson": "/content-ownership/error-json",

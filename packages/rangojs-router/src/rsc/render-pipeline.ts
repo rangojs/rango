@@ -160,6 +160,14 @@ function createFlightStage<TEnv>(
   // Read once here: onError can fire outside the ALS frame.
   const requestContext = _getRequestContext();
   const renderErrors = requestContext?._renderErrors;
+  // The same-origin rule a component-thrown redirect obeys is applied where
+  // its digest is built (render-redirect.ts), so both read sites land where a
+  // loader redirect does. Captured here, with the context, for the same reason.
+  const requestOrigin =
+    requestContext?.originalUrl?.origin ??
+    requestContext?.url.origin ??
+    input.url.origin;
+  const basename = requestContext?._basename;
   const stream = input.ctx.renderToReadableStream<RscPayload>(input.payload, {
     temporaryReferences: input.temporaryReferences,
     onError: (error: unknown) => {
@@ -168,7 +176,11 @@ function createFlightStage<TEnv>(
       // digest, the only channel to the read site (see render-redirect.ts).
       // Reported to nothing, printed nowhere -- but still recorded as a render
       // error so no document, shell or prefetch stores a page that redirects.
-      const redirectDigest = renderRedirectDigest(error);
+      const redirectDigest = renderRedirectDigest(
+        error,
+        requestOrigin,
+        basename,
+      );
       renderErrors?.push(error);
       if (redirectDigest !== undefined) return redirectDigest;
       // The client gets a masked copy (an error row); the original prints here.

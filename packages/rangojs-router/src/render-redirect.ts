@@ -21,15 +21,24 @@
  *
  * Control flow, never a failure: the render reports it to nothing, prints
  * nothing for it, and refuses to store the document (a redirect can depend on
- * the request). `Location` is already resolved and basename-prefixed by
- * `redirect()` itself, and the outgoing 3xx still passes the same-origin
- * guard (`rsc/redirect-guard.ts`) like every other browser-followed redirect.
+ * the request). The digest carries the RESOLVED target
+ * (`resolveSoftRedirect`), never the raw `Location`: the browser read site
+ * hands it to `LoaderRedirect`, whose off-origin branch is the
+ * `{ external: true }` channel, so a raw off-host target there would become an
+ * unguarded `location.replace` while the document lane's outgoing guard
+ * (`rsc/redirect-guard.ts`) neutralizes the same throw to the app root. One
+ * resolution, here, keeps both read sites on the one rule.
  *
  * Kept at the `src/` root, runtime-neutral and import-light, because the RSC
  * render, the SSR shell answer and the browser boundary all need the one
- * format.
+ * format. The request origin and basename are passed in, not read from the
+ * request context: this module runs in the browser too.
  */
-import { getRedirectState, isExternalRedirect } from "./redirect-origin.js";
+import {
+  getRedirectState,
+  isExternalRedirect,
+  resolveSoftRedirect,
+} from "./redirect-origin.js";
 import { isRedirectResponse } from "./response-utils.js";
 
 /**
@@ -40,7 +49,13 @@ const PREFIX = "rango-redirect:";
 
 /** What a component-thrown `redirect()` resolves to. */
 export interface RenderRedirect {
-  /** The redirect's `Location`, basename-prefixed and unresolved (soft). */
+  /**
+   * The redirect's RESOLVED target (`resolveSoftRedirect`): the canonical
+   * same-origin href, the http(s) off-host href the call opted into, or the
+   * app's basename root when the same-origin rule blocks it. Never the raw
+   * `Location` -- a client navigation cannot re-apply the rule (see
+   * `renderRedirectDigest`).
+   */
   location: string;
   /** The redirect's status (`302` unless the call passed one). */
   status: number;
@@ -52,12 +67,15 @@ export interface RenderRedirect {
    */
   state?: Record<string, unknown>;
   /**
-   * The call passed `redirect(url, { external: true })`. The opt-in is an
+   * The call passed `redirect(url, { external: true })` AND the target is an
+   * http(s) off-host one, so the opt-in still holds. The opt-in is an
    * out-of-band brand on the thrown Response (`redirect-origin.ts`), which a
-   * 3xx rebuilt from this digest cannot carry, so an off-host target answers
-   * the recovery document and leaves through the browser's external channel
+   * 3xx rebuilt from this digest cannot carry, so such a target answers the
+   * recovery document and leaves through the browser's external channel
    * (`LoaderRedirect` → `location.replace`) instead of being neutralized by
-   * the outgoing same-origin guard.
+   * the outgoing same-origin guard. A branded target the scheme rule
+   * neutralizes (a `javascript:` one) is not marked: it lands on the app root
+   * like every other blocked target.
    */
   external?: true;
 }
@@ -65,18 +83,33 @@ export interface RenderRedirect {
 /**
  * The digest for a redirect Response thrown in a render, or `undefined` when
  * `value` is not one (the render's `onError` then reports it as an error).
+ *
+ * `requestOrigin` and `basename` are the request's, captured where the render
+ * starts: a Flight `onError` can fire outside the request's ALS frame, so the
+ * digest is built from values passed in, never from ambient state.
  */
-export function renderRedirectDigest(value: unknown): string | undefined {
+export function renderRedirectDigest(
+  value: unknown,
+  requestOrigin: string,
+  basename: string | undefined,
+): string | undefined {
   if (!(value instanceof Response) || !isRedirectResponse(value)) {
     return undefined;
   }
+  const external = isExternalRedirect(value);
+  const resolved = resolveSoftRedirect(
+    value.headers.get("Location")!,
+    requestOrigin,
+    basename,
+    external,
+  );
   const redirect: RenderRedirect = {
-    location: value.headers.get("Location")!,
+    location: resolved.to,
     status: value.status,
   };
   const state = getRedirectState(value);
   if (state) redirect.state = state;
-  if (isExternalRedirect(value)) redirect.external = true;
+  if (resolved.external) redirect.external = true;
   return PREFIX + JSON.stringify(redirect);
 }
 

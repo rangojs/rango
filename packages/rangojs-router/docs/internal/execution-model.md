@@ -1231,7 +1231,17 @@ returns the redirect's own digest for a thrown redirect Response
 (`render-redirect.ts`: location, status, and the `state` the call attached),
 reports it to nothing and prints nothing for it, and still records it in
 `_renderErrors` so no document, shell or prefetch stores a page that
-redirects. The two read sites resolve the digest into the navigation:
+redirects.
+
+The digest carries the RESOLVED target (`resolveSoftRedirect`, against the
+request origin and basename captured where the render starts), never the raw
+`Location`. The browser read site hands it to `LoaderRedirect`, whose
+off-origin branch is the `{ external: true }` channel, so a raw off-host
+target there would become an unguarded `location.replace` while the document
+lane's outgoing guard neutralizes the same throw to the app root. Resolving
+once, where the digest is built, is what keeps the two lanes on the one rule;
+a blocked target lands on the basename root on both. The two read sites
+resolve the digest into the navigation:
 `answerShellError` (the 3xx above, on a document whose shell fails) and
 `RootErrorBoundary` (`root-error-boundary.tsx`, which mounts the same
 `LoaderRedirect` a loader `redirect()` uses) for every other lane: a client

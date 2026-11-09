@@ -28,8 +28,11 @@ async function AccountGate() {
 ```
 
 A `redirect()` a component throws carries the same same-origin rule as every
-other one, and `redirect(url, { state })` still delivers its state to the
-target.
+other one: the target is resolved where it is carried to the browser, so the
+`Location` a document load answers is the resolved URL, and an off-host target
+without `{ external: true }` lands on the app root on a document load and on a
+client navigation alike. `redirect(url, { state })` still delivers its state
+to the target.
 
 ## 0.35.0 (2026-11-04)
 

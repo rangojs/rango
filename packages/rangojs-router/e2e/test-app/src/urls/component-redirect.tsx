@@ -32,6 +32,32 @@ function ComponentRedirectIndex(): React.ReactNode {
       >
         gated
       </Link>
+      <Link
+        to="/component-redirect/off-host"
+        data-testid="component-redirect-offhost-link"
+      >
+        off-host
+      </Link>
+    </main>
+  );
+}
+
+/**
+ * A gate whose target is off-host with no `{ external: true }` opt-in. The
+ * same-origin rule applies to a component throw as to every other redirect, and
+ * it is applied where the digest is built, so both lanes land on the app root
+ * instead of following the target.
+ */
+async function OffHostGate(): Promise<React.ReactNode> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  throw redirect("https://evil.example/component-redirect");
+}
+
+function OffHostPage(): React.ReactNode {
+  return (
+    <main data-testid="component-redirect-offhost">
+      <h1>Off-host</h1>
+      <OffHostGate />
     </main>
   );
 }
@@ -74,5 +100,8 @@ export const componentRedirectPatterns = urls(({ path, loading }) => [
   ),
   path("/component-redirect/target", ComponentRedirectTarget, {
     name: "componentRedirectTarget",
+  }),
+  path("/component-redirect/off-host", OffHostPage, {
+    name: "componentRedirectOffHost",
   }),
 ]);

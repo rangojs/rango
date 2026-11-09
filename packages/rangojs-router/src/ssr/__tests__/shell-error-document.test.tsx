@@ -23,6 +23,11 @@ import {
   LOADER_REDIRECT,
   loaderResultError,
 } from "../../decode-loader-results.js";
+import { renderRedirectDigest } from "../../render-redirect.js";
+import {
+  attachRedirectState,
+  markExternalRedirect,
+} from "../../redirect-origin.js";
 import { resolveThemeConfig } from "../../theme/constants.js";
 
 const mockedRenderSegments = vi.mocked(renderSegments);
@@ -95,6 +100,10 @@ function decodedFlightError(digest: string): Error {
   );
 }
 
+/** The request origin the digest is resolved against (the one the render saw). */
+const REQUEST_ORIGIN = "http://localhost";
+
+/** The digest the production encoder writes for a component-thrown redirect. */
 function componentRedirect(
   location: string,
   extra: {
@@ -103,8 +112,14 @@ function componentRedirect(
     external?: true;
   } = {},
 ): Error {
+  const response = new Response(null, {
+    status: extra.status ?? 302,
+    headers: { Location: location },
+  });
+  if (extra.state) attachRedirectState(response, extra.state);
+  if (extra.external) markExternalRedirect(response);
   return decodedFlightError(
-    `rango-redirect:${JSON.stringify({ location, status: extra.status ?? 302, ...(extra.state && { state: extra.state }), ...(extra.external && { external: true }) })}`,
+    renderRedirectDigest(response, REQUEST_ORIGIN, undefined)!,
   );
 }
 
@@ -281,7 +296,9 @@ describe("renderHTML: a shell error in production", () => {
       error: redirect,
       originated: false,
       status: 302,
-      location: "/login",
+      // The digest carries the resolved target (`resolveSoftRedirect`), so the
+      // document lane and the browser lane land on the same URL.
+      location: "http://localhost/login",
     });
     // Control flow, not a failure: not reported, not printed.
     expect(onError).not.toHaveBeenCalled();
@@ -297,8 +314,26 @@ describe("renderHTML: a shell error in production", () => {
 
     expect(onShellError.mock.calls[0]![0]).toMatchObject({
       status: 303,
-      location: "/login",
+      location: "http://localhost/login",
     });
+  });
+
+  it("answers an off-host target with no opt-in with the same 3xx the outgoing guard gives: the app root", async () => {
+    // The same-origin rule applies to a component throw as to every other
+    // redirect, and it is applied where the digest is built, so the client
+    // lane cannot follow the off-host target either.
+    shellThrows(componentRedirect("https://evil.example/x"));
+    const onShellError = vi.fn();
+    const renderHTML = createSSRHandler(deps());
+
+    const body = await read(await renderHTML(flightStream(), { onShellError }));
+
+    expect(body).toBe("");
+    expect(onShellError.mock.calls[0]![0]).toMatchObject({
+      status: 302,
+      location: "/",
+    });
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("answers a component's redirect() with state with the recovery document as a 200: the client replace carries the state", async () => {
@@ -462,7 +497,7 @@ describe("renderHTML: a shell error in dev", () => {
     expect(body).toBe("");
     expect(onShellError.mock.calls[0]![0]).toMatchObject({
       status: 302,
-      location: "/login",
+      location: "http://localhost/login",
     });
     expect(onError).not.toHaveBeenCalled();
   });

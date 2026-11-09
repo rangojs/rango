@@ -3,6 +3,7 @@ export const routes = {
   componentRedirect: "/component-redirect",
   componentRedirectGated: "/component-redirect/gated",
   componentRedirectLoading: "/component-redirect/loading",
+  componentRedirectOffHost: "/component-redirect/off-host",
   componentRedirectTarget: "/component-redirect/target",
 } as const;
 export type routes = typeof routes;

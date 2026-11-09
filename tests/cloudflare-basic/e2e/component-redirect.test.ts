@@ -27,7 +27,44 @@ function componentRedirectTests(f: ReturnType<typeof useFixture>) {
       });
 
       expect(response.status()).toBe(302);
-      expect(response.headers()["location"]).toBe("/component-redirect/target");
+      // The digest carries the resolved target, so the document lane answers
+      // the canonical same-origin URL the browser lane navigates to.
+      expect(response.headers()["location"]).toBe(
+        new URL("/component-redirect/target", f.url("/")).href,
+      );
+    });
+
+    test("a document load of an off-host target lands on the app root, not off-origin", async ({
+      page,
+      request,
+    }) => {
+      // No `{ external: true }`: the same-origin rule applies to a component
+      // throw as to every other redirect, on both lanes.
+      const response = await request.get(
+        f.url("/component-redirect/off-host"),
+        { maxRedirects: 0 },
+      );
+      expect(response.status()).toBe(302);
+      expect(response.headers()["location"]).toBe("/");
+
+      await page.goto(f.url("/component-redirect/off-host"));
+
+      await expect(page).toHaveURL(f.url("/"), { timeout: 10000 });
+      expect(new URL(page.url()).origin).toBe(new URL(f.url("/")).origin);
+      await expect(page.getByText("Internal Server Error")).toHaveCount(0);
+    });
+
+    test("a click on an off-host link lands on the app root, not off-origin", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/component-redirect"));
+      await waitForHydration(page);
+
+      await testId(page, "component-redirect-offhost-link").click();
+
+      await expect(page).toHaveURL(f.url("/"), { timeout: 10000 });
+      expect(new URL(page.url()).origin).toBe(new URL(f.url("/")).origin);
+      await expect(page.getByText("Internal Server Error")).toHaveCount(0);
     });
 
     test("a gate under a route that declares loading() answers the document and then replaces", async ({

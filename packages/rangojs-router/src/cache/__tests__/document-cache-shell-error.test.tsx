@@ -30,8 +30,23 @@ import { wasServerErrorPrinted } from "../../server/print-server-error.js";
 import type { RscPayload, SSRModule } from "../../rsc/types.js";
 import { createSSRHandler } from "../../ssr/index.js";
 import { LOADER_REDIRECT } from "../../decode-loader-results.js";
+import { renderRedirectDigest } from "../../render-redirect.js";
+import { attachRedirectState } from "../../redirect-origin.js";
 
 const PAGE = "http://localhost/product";
+
+/** The digest the production encoder writes for a component-thrown redirect. */
+function componentRedirectDigest(
+  location: string,
+  state?: Record<string, unknown>,
+): string {
+  const response = new Response(null, {
+    status: 302,
+    headers: { Location: location },
+  });
+  if (state) attachRedirectState(response, state);
+  return renderRedirectDigest(response, new URL(PAGE).origin, undefined)!;
+}
 const KEY = "localhost/product:html";
 const CACHE_CONTROL = "s-maxage=60, stale-while-revalidate=300";
 
@@ -257,18 +272,18 @@ describe("document cache: a shell error's answer is never stored", () => {
 
   it("a redirect() a component threw answers a real redirect and is not stored", async () => {
     // What the Flight client rebuilds for the row a component's redirect
-    // became (`render-redirect.ts`).
+    // became (`render-redirect.ts`), built by the production encoder.
     shellError = Object.assign(
       new Error("An error occurred in the Server Components render."),
-      {
-        digest: 'rango-redirect:{"location":"/elsewhere","status":302}',
-      },
+      { digest: componentRedirectDigest("/elsewhere") },
     );
 
     const result = await serve();
 
     expect(result.response.status).toBe(302);
-    expect(result.response.headers.get("location")).toBe("/elsewhere");
+    expect(result.response.headers.get("location")).toBe(
+      "http://localhost/elsewhere",
+    );
     expect(result.body).toBe("");
     expect(store.cache.has(KEY)).toBe(false);
     // Control flow, not a failure: not reported, not printed.
@@ -279,10 +294,7 @@ describe("document cache: a shell error's answer is never stored", () => {
   it("a redirect() a component threw with state answers 200 and is not stored", async () => {
     shellError = Object.assign(
       new Error("An error occurred in the Server Components render."),
-      {
-        digest:
-          'rango-redirect:{"location":"/elsewhere","status":302,"state":{"a":1}}',
-      },
+      { digest: componentRedirectDigest("/elsewhere", { a: 1 }) },
     );
 
     const result = await serve();
