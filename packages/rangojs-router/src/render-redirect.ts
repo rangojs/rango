@@ -70,6 +70,20 @@ export function redirectAwareOnError(
   };
 }
 
+/**
+ * Responses a handler streamed behind loading() rejected or resolved with.
+ * They stay on the error path, as execution-model.md's "Limitation: a
+ * Response from an async handler under loading() is not a redirect" states:
+ * no digest is written for them. Marked by trackStreamedHandler, upstream of
+ * every chain Flight reads, so the mark lands before Flight sees the value.
+ */
+const streamedHandlerResponses = new WeakSet<Response>();
+
+/** Keep `value`, if it is a Response, out of the redirect digest. */
+export function markStreamedHandlerResponse(value: unknown): void {
+  if (value instanceof Response) streamedHandlerResponses.add(value);
+}
+
 function digestOf(error: unknown): string | undefined {
   if (error === null || typeof error !== "object") return undefined;
   const digest = (error as { digest?: unknown }).digest;
@@ -101,7 +115,9 @@ export function renderRedirectDigest(
   request: RenderRedirectOrigin,
 ): string | undefined {
   if (error instanceof Response) {
-    if (!isRedirectResponse(error)) return undefined;
+    if (!isRedirectResponse(error) || streamedHandlerResponses.has(error)) {
+      return undefined;
+    }
     const location = error.headers.get("Location")!;
     const to = request.origin
       ? resolveSoftRedirectUrl(

@@ -584,7 +584,8 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ## Redirects
 
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
-Return it from a handler or middleware, or throw it from a loader.
+Return it from a handler or middleware, or throw it from a loader or a server
+component (see "Redirect from a server component" below).
 
 ### Basic redirect
 
@@ -624,6 +625,38 @@ path(
 > (A loader `throw redirect()` also navigates the user, but it is ALWAYS a
 > client-side replace on document loads — 200 document, never a 302; see
 > `/loader` → "Loader Authority". Dev logs a warning if this is hit.)
+
+### Redirect from a server component
+
+An async server component below the handler may throw `redirect()` too, for
+example a session check inside the page:
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+
+path(
+  "/account",
+  () => (
+    <main>
+      <h1>Account</h1>
+      <AccountGate />
+    </main>
+  ),
+  { name: "account" },
+);
+```
+
+The component runs after the handler returned, while the page streams, so the
+answer depends on where it sits. Outside every `<Suspense>`, a document load
+answers a real 3xx. Inside one, or with `state`, the document answers 200 and
+the browser replaces it with the target, as a loader's redirect does. A client
+navigation lands on the target. The router's error boundaries follow it; an
+error boundary class of your own above the component catches it like any
+error. For a redirect before anything streams, use middleware or the handler.
 
 ### Redirect with location state
 

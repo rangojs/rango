@@ -57,4 +57,22 @@ describe("reportCacheError: printing", () => {
       "cache-write",
     );
   });
+  it("reports a redirect a writer refuses without printing it: control flow", () => {
+    const ctx = makeRequestContext({ url: "https://shop.example/account" });
+    ctx._reportBackgroundError = vi.fn();
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { Location: "/login" },
+    });
+
+    runWithRequestContext(ctx, () =>
+      reportCacheError(redirect, "cache-write", "[CacheScope] Failed to cache"),
+    );
+
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(ctx._reportBackgroundError).toHaveBeenCalledWith(
+      redirect,
+      "cache-write",
+    );
+  });
 });

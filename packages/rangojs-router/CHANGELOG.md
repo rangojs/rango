@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a `redirect()` thrown by a server component sends the visitor to its target
+
+**Before.** An async server component that threw `redirect()` after its
+handler returned, such as a session check below the page, showed the router's
+error page ("Internal Server Error"), on a document load and on a client
+navigation alike, in dev and production. The router reported it to `onError`
+as a rendering error.
+
+**Now.** The visitor lands on the target. A document load whose server render
+the component fails (no `<Suspense>` above it) answers a real 3xx with
+`Location`. Behind `<Suspense>`, or for a redirect with `state`, the document
+answers 200 and the browser replaces it with the target, as for a loader's
+`redirect()`. A client navigation lands on the target. The target follows the
+same rules as every other redirect: same-origin unless `{ external: true }`,
+under the router's `basename`. The redirect is control flow: it is not
+printed and not reported to `onError` as a rendering error, and no cache
+stores the answer, so the next signed-in visitor gets the page (a `cache()`
+scope that refuses the write still reports it with phase `"cache"`, as for
+every render it refuses).
+
+```tsx
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+
+function AccountPage() {
+  return (
+    <main>
+      <h1>Account</h1>
+      <AccountGate />
+    </main>
+  );
+}
+```
+
+The router's error boundaries follow it (`RootErrorBoundary` and the
+`ErrorBoundary` exported from `@rangojs/router/client`); an error boundary
+class of your own above the component catches it as any other error. A
+`Response` thrown or returned by an async handler on a route with `loading()`
+is unchanged: it still renders the error, as the execution model documents.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

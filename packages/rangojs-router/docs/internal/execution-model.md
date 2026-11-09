@@ -1133,9 +1133,10 @@ Rules that are easy to break:
   rethrows it (`wasServerErrorPrinted`). A payload failure was reported by the
   Flight render, and so is an error React decoded from Flight
   (`isFlightDecodedError`: it sets `digest`, so the html stage skips its
-  copy); a `notFound()`/`redirect()` marker is control flow and is never
-  reported or printed (`isSignalError`, name-based because the RSC and
-  SSR environments hold different module instances of the marker symbols).
+  copy); a `notFound()`/`redirect()` marker, or a component redirect's
+  digest, is control flow and is never reported or printed (`isSignalError`,
+  name- and digest-based because the RSC and SSR environments hold different
+  module instances of the marker symbols).
 - One console line per failure: see "Server errors print once, where they
   originate" below. On the SSR side `renderHTML` prints only what originated
   in its render (`originatedHere`: not a loader's rebuild, not a Flight copy,
@@ -1162,6 +1163,66 @@ once), `vite/__tests__/virtual-entry-browser.test.ts`,
 e2e describes in `e2e/ssr-shell-error.test.ts`,
 `e2e/ssr-shell-error-mini.test.ts` and
 `tests/cloudflare-basic/e2e/ssr-shell-error.test.ts` (dev + production).
+
+### A server component's redirect() is a redirect
+
+A handler's `redirect()` is caught where the handler is awaited and becomes a
+3xx. An async server component below it is another matter: it runs while
+Flight serializes the payload, after every router catch has returned and
+possibly after the status line went out. Its thrown `Response` reaches only
+Flight's onError. It used to become an anonymous error row, and the visitor
+saw the error page instead of the sign-in page a session check sent them to.
+
+So the error row carries the redirect. `createFlightStage`
+(`rsc/render-pipeline.ts`) returns `renderRedirectDigest`
+(`render-redirect.ts`) from its onError: `rango.redirect;` and the JSON of
+`{ to, status, state? }`, the target already resolved by
+`resolveSoftRedirectUrl` (same-origin unless `{ external: true }`, the
+basename kept), as the loader redirect marker resolves it. The digest is the
+one field of an error row React keeps in production; Fizz and the browser
+both get it on the decoded error. Readers:
+
+- `redirectSignalOf` (`decode-loader-results.ts`) reads both redirect
+  channels, the loader marker and this digest. The SSR shell error answer
+  uses it, so a component redirect outside every `<Suspense>` answers a 3xx,
+  or the 200 recovery document when it carries state, exactly as a loader's.
+  Inside a `<Suspense>` the document answers 200 and the browser takes over.
+- `RootErrorBoundary` and the exported `ErrorBoundary` render
+  `LoaderRedirect` for it: a replace navigation, never the error page. A
+  boundary class of the app's own catches it like any error.
+- `isSignalError` (`errors.ts`) classifies it as control flow: never printed,
+  never reported to `onError`.
+
+Rules that are easy to break:
+
+- Every encode of a component tree returns the digest, not only the
+  response's. `segment-codec.ts` routes each encode's onError through
+  `redirectAwareOnError`: a `"use cache"` miss renders the decoded copy of its
+  encode, so without it the redirect reached the response as an error row
+  with an empty digest. An error that already carries the digest passes it
+  on.
+- Recorded, never stored. The Flight onError still pushes the error to
+  `_renderErrors`, and `redirectAwareOnError` still calls the writer's
+  onError, so the document cache, `cacheRoute`, a `ppr` capture, a prerender
+  warm and `"use cache"` all refuse the answer: a redirect depends on the
+  request. The page stored before keeps serving. A prefetch carrying one is
+  not kept (`markPrefetchOnRenderError`); the click asks again. A refusing
+  writer reports its skipped write as usual (phase `"cache"`) but prints
+  nothing: `reportCacheError` skips control flow (`isControlFlow`,
+  `server/print-server-error.ts`).
+- A `Response` a handler streamed behind `loading()` settles with is not a
+  component redirect: `trackStreamedHandler` marks it
+  (`markStreamedHandlerResponse`) so it keeps the limitation above.
+
+Pinned by `__tests__/render-redirect.test.ts`,
+`ssr/__tests__/shell-error-document.test.tsx` (a decoded component redirect
+in production and dev), the userland
+`testing/__tests__/component-redirect.rsc-test.tsx` (every segment kind and
+delivery path, never stored, the loading() limitation kept) and
+`render-route-component-redirect.test.tsx` (the boundaries navigate), and
+the `component redirect` e2e describes in `e2e/component-redirect.test.ts`
+and `tests/cloudflare-basic/e2e/component-redirect.test.ts` (dev +
+production).
 
 ### Server errors print once, where they originate
 
@@ -1191,8 +1252,9 @@ The origins that call it:
 
 Rules that are easy to break:
 
-- Control flow never prints: `notFound()`, a thrown `Response` or a loader's
-  redirect marker, `Skip`, and the render's own cancellation
+- Control flow never prints: `notFound()`, a thrown `Response`, a loader's
+  redirect marker or a component redirect's digest, `Skip`, and the render's
+  own cancellation
   (`isAbortedRender` in `errors.ts`: React's "The render was aborted by the
   server", or an `AbortError` once the request's signal is aborted). A
   loader's own `AbortController` or fetch timeout on a live request is a

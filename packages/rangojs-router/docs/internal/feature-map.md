@@ -814,6 +814,16 @@ Route-local schema definitions (`search` option), typed route param types (`Rout
   rejection settles before response construction (opportunistic `_setStatus`);
   loader redirects are always client-side navigations (document-lane 302
   authority stays with middleware).
+- Component-thrown redirects: an async server component that throws
+  `redirect()` while Flight serializes the payload. Its error row's digest
+  carries the resolved redirect (`render-redirect.ts`, returned by
+  `createFlightStage` and every `segment-codec.ts` encode); the SSR shell error
+  answer turns it into a real 3xx (or the 200 recovery document with state),
+  and `RootErrorBoundary` / the exported `ErrorBoundary` into a
+  `LoaderRedirect` replace (`redirectSignalOf`). Control flow: never printed or
+  reported; recorded in `_renderErrors`, so never stored. A `Response` a
+  `loading()` handler settles with keeps the documented limitation
+  (`markStreamedHandlerResponse`).
 - Loader errors as render errors: a loader that throws (not a signal) resolves
   to an `ok: false` envelope rendered in place inside a 200, which neither
   Flight nor Fizz reports. `wrapLoaderWithErrorHandling` pushes the error to

@@ -8,7 +8,7 @@
  * every error it holds is read with redirectSignalOf, as the boundaries read
  * it.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { Suspense } from "react";
 
 vi.mock(
@@ -32,9 +32,13 @@ import {
   redirect,
   urls,
 } from "../../index.rsc.js";
-import { MemorySegmentCacheStore } from "../../cache/index.js";
+import {
+  MemorySegmentCacheStore,
+  createDocumentCacheMiddleware,
+} from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { redirectSignalOf } from "../../decode-loader-results.js";
+import { PREFETCH_FAILED_ROW } from "../../prefetch-markers.js";
 import { serveEveryShape } from "./helpers/response-shapes.js";
 import { gate, getCachedGate } from "./fixtures/component-redirect-data.js";
 
@@ -211,6 +215,10 @@ function makeRouter(options: { basename?: string } = {}) {
   );
 }
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 beforeEach(async () => {
   gate.signedIn = false;
   gate.runs = 0;
@@ -348,11 +356,78 @@ describe("a server component's redirect() reaches the visitor as a redirect", ()
     expect(await redirectsIn(form.flight)).toEqual([LOGIN]);
   });
 
+  it("a prefetch carries it and is not kept: the click asks again, as for any answer that can depend on the request", async () => {
+    const result = await serveShellRequest(makeRouter(), "/account", {
+      partial: { from: "/", prefetch: true },
+    });
+
+    expect(await redirectsIn(result.flight)).toEqual([LOGIN]);
+    expect(result.body.endsWith(PREFETCH_FAILED_ROW)).toBe(true);
+  });
+
   it("an error that is not a redirect stays an error", async () => {
     const result = await serveShellRequest(makeRouter(), "/broken");
 
     expect(await redirectsIn(result.flight)).toEqual(["not a redirect"]);
   });
+});
+
+// execution-model.md, "Limitation: a Response from an async handler under
+// loading() is not a redirect": the handler's own Response, thrown or
+// returned, keeps the error path. Only a component below the handler is a
+// component redirect.
+describe("a Response a handler streamed behind loading() settles with", () => {
+  const streamed = createRouter({}).routes(
+    urls(({ path, layout, parallel, loading }) => [
+      path("/", () => <p>home</p>, { name: "home" }),
+      path(
+        "/thrown",
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          throw redirect("/login");
+        },
+        { name: "thrown" },
+        () => [loading(<p>loading</p>)],
+      ),
+      path(
+        "/returned",
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return redirect("/login") as unknown as React.ReactNode;
+        },
+        { name: "returned" },
+        () => [loading(<p>loading</p>)],
+      ),
+      layout(
+        () => <section>shell</section>,
+        () => [
+          parallel(
+            {
+              "@side": async () => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                throw redirect("/login");
+              },
+            },
+            () => [loading(<p>side loading</p>)],
+          ),
+          path("/slot", () => <p>child</p>, { name: "slot" }),
+        ],
+      ),
+    ]),
+  );
+
+  for (const url of ["/thrown", "/returned", "/slot"]) {
+    it(`${url}: stays the documented limitation, on a document and a navigation`, async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const document = await serveShellRequest(streamed, url);
+      const navigation = await serveShellRequest(streamed, url, {
+        partial: { from: "/" },
+      });
+
+      expect(await redirectsIn(document.flight)).toEqual(["not a redirect"]);
+      expect(await redirectsIn(navigation.flight)).toEqual(["not a redirect"]);
+    });
+  }
 });
 
 describe("a component's redirect() is never stored", () => {
@@ -383,24 +458,88 @@ describe("a component's redirect() is never stored", () => {
   }
 });
 
+/** A store a warm may write to: shared by every visitor. */
+class SharedMemoryStore extends MemorySegmentCacheStore {
+  readonly scope = "global" as const;
+}
+
+describe("a component's redirect() is never stored by the document cache or a warm", () => {
+  const storedRouter = () =>
+    createRouter({
+      cache: { store: new SharedMemoryStore() },
+      cacheProfiles: { default: { ttl: 300 } },
+    })
+      .use("/doc/*", createDocumentCacheMiddleware())
+      .use("/doc/*", async (ctx, next) => {
+        ctx.header("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
+        await next();
+      })
+      .routes(
+        urls(({ path, cache }) => [
+          path("/doc/account", AccountPage, { name: "docAccount" }),
+          cache({ ttl: 300 }, () => [
+            path("/warm/account", AccountPage, { name: "warmAccount" }),
+          ]),
+        ]),
+      );
+
+  it("document cache: the next signed-in visitor gets the page, not a stored redirect", async () => {
+    const router = storedRouter();
+
+    const signedOut = await serveShellRequest(router, "/doc/account");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    gate.signedIn = true;
+    const signedIn = await serveShellRequest(router, "/doc/account");
+
+    expect(await redirectsIn(signedOut.flight)).toEqual([LOGIN]);
+    expect(signedIn.response.headers.get("x-document-cache-status")).toBe(
+      "MISS",
+    );
+    expect(signedIn.flight).toContain("summary");
+  });
+
+  it("router.prerender(): a warm of the redirecting page fails and writes nothing", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const router = storedRouter();
+
+    const result = await router.prerender({ env: {} })(
+      "http://localhost/warm/account",
+    );
+
+    expect(result).toMatchObject({ ok: false, status: "render-failed" });
+    gate.signedIn = true;
+    const signedIn = await serveShellRequest(router, "/warm/account");
+    expect(signedIn.flight).toContain("summary");
+  });
+});
+
 describe("a component's redirect() is control flow", () => {
-  it("is neither reported to onError nor printed", async () => {
+  it("is neither printed nor reported to onError as a failure, a cache() route's refused write included", async () => {
     const onError = vi.fn();
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    try {
-      const router = createRouter({ onError }).routes(
-        urls(({ path }) => [path("/account", AccountPage, { name: "a" })]),
-      );
+    const router = createRouter({ onError }).routes(
+      urls(({ path, cache }) => [
+        path("/account", AccountPage, { name: "a" }),
+        cache({ ttl: 300 }, () => [
+          path("/cached", AccountPage, { name: "c" }),
+        ]),
+      ]),
+    );
+    const cacheStore = new MemorySegmentCacheStore();
 
-      await serveShellRequest(router, "/account");
-      await serveShellRequest(router, "/account", { partial: true });
-
-      expect(onError).not.toHaveBeenCalled();
-      expect(consoleError).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
+    for (const url of ["/account", "/cached"]) {
+      await serveShellRequest(router, url, { cacheStore });
+      await serveShellRequest(router, url, { cacheStore, partial: true });
     }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(consoleError).not.toHaveBeenCalled();
+    // The refusing cache() write reports its skipped write (phase "cache"),
+    // as for every render it refuses; nothing else reaches onError.
+    expect(
+      onError.mock.calls.filter(([context]) => context?.phase !== "cache"),
+    ).toEqual([]);
   });
 });

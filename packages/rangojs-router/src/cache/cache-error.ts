@@ -16,7 +16,10 @@
  */
 
 import { _getRequestContext } from "../server/request-context.js";
-import { wasServerErrorPrinted } from "../server/print-server-error.js";
+import {
+  isControlFlow,
+  wasServerErrorPrinted,
+} from "../server/print-server-error.js";
 
 /**
  * Minimal shape of a request context for error reporting. Passed explicitly by
@@ -79,8 +82,11 @@ export function reportCacheError(
   } catch {
     // Reporting must never itself break the cache path.
   }
-  // A render error a writer refuses to store printed where it originated.
-  if (!wasServerErrorPrinted(error, target)) console.error(`${label}:`, error);
+  // A render error a writer refuses to store printed where it originated;
+  // control flow (a redirect a component threw) never prints.
+  if (!wasServerErrorPrinted(error, target) && !isControlFlow(error, target)) {
+    console.error(`${label}:`, error);
+  }
   try {
     target?._reportBackgroundError?.(error, category);
   } catch {

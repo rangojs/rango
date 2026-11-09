@@ -15,10 +15,12 @@ interface PrintContext {
 }
 
 /**
- * Control flow, never printed: notFound(), a redirect (a thrown Response or a
- * loader's redirect marker), Skip, and the render's own cancellation.
+ * Control flow, never printed: notFound(), a redirect (a thrown Response, a
+ * loader's redirect marker or a component redirect's digest), Skip, and the
+ * render's own cancellation. A writer that refuses to store one prints
+ * nothing either (cache-error.ts reportCacheError).
  */
-function isControlFlow(
+export function isControlFlow(
   error: unknown,
   requestContext: PrintContext | undefined,
 ): boolean {
