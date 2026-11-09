@@ -39,9 +39,19 @@ import { shallowEqual } from "./browser/react/shallow-equal.js";
  * - LOADER_REDIRECT (redirect()): mounts LoaderRedirect, which navigates.
  *
  * Errors without any marker rethrow to the app's own boundaries.
+ *
+ * `settledFallback` is the same kind of node when the tree build already
+ * decoded it (segment-system buildLoaderStreams: a notFound()/redirect() on a
+ * forceAwait or action lane, an `ssr: "await"` loader's result on the
+ * document lane). The boundary renders it in place of its children, where it
+ * renders a caught marker, so the segment's wrapper chain is the same on
+ * every lane and a fallback a read threw on one lane keeps its instance when
+ * the next lane settles it. Planted above the boundary instead, the fallback
+ * dropped the boundary (suspense-audit I5 drift) and was mounted again on
+ * each lane change.
  */
 export class StreamedLoaderErrorBoundary extends Component<
-  { children: ReactNode; reset: unknown[] },
+  { children: ReactNode; reset: unknown[]; settledFallback?: ReactNode },
   { error: unknown; reset: unknown[] }
 > {
   state: { error: unknown; reset: unknown[] } = {
@@ -87,7 +97,8 @@ export class StreamedLoaderErrorBoundary extends Component<
       if (fallback !== undefined) return fallback as ReactNode;
       throw error;
     }
-    return this.props.children;
+    const { settledFallback, children } = this.props;
+    return settledFallback !== undefined ? settledFallback : children;
   }
 }
 
@@ -314,6 +325,12 @@ function AuditedLoaderResolver({
  * resolves ABOVE via use() (parallel/intercept slots still take this path —
  * ResolvedSegment carries only the aggregate for slots), and a resolved
  * array decodes synchronously (a slot on the forceAwait/action lanes).
+ *
+ * The errorFallback swap below is a slot's only loader-error position: a
+ * slot decodes here on every lane, so its fallback takes the content's place
+ * under this OutletProvider on each of them. A segment with loaders always
+ * has streams (segment-system buildLoaderStreams), and its settled fallback
+ * goes to StreamedLoaderErrorBoundary instead.
  */
 function LoaderResolver({
   loaderDataPromise,

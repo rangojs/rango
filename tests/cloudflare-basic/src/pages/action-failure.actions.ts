@@ -1,7 +1,10 @@
 "use server";
 
 import { setActionFailure } from "./action-failure.defs.js";
-import { deleteActionFailureItem } from "./action-failure.items.js";
+import {
+  archiveActionFailureItem,
+  deleteActionFailureItem,
+} from "./action-failure.items.js";
 
 // Both succeed; the page's loaders rerun after them and fail while the run's
 // switch is on.
@@ -36,4 +39,13 @@ export async function actionFailureDeleteItem(
 ): Promise<{ deleted: string }> {
   deleteActionFailureItem(run, id);
   return { deleted: id };
+}
+
+// Archives an item; the item page's loader then throws notFound().
+export async function actionFailureArchiveItem(
+  run: string,
+  id: string,
+): Promise<{ archived: string }> {
+  archiveActionFailureItem(run, id);
+  return { archived: id };
 }
