@@ -2061,9 +2061,13 @@ Here is how each hook gets there:
   `tx.commit()` clears the navigation, which the flush above delivers
   inside the page's update, so it ends with the page. A link reads the
   visible navigation in flight (`getCurrentNavigation()`, none for a
-  `skipLoadingState` one): its URL, or the URL a server redirect led it from
-  (`_redirectFrom`, set in `followServerRedirect`), so the clicked link stays
-  pending through the hop. It sets its value once per navigation, so a
+  `skipLoadingState` one). A `<Link>` click names the link instance
+  (`_linkId`, the Link's `useId()`, carried through `followServerRedirect`),
+  and only that link is pending: two links to the same URL do not both
+  light up. A navigation no link started (Back/Forward, `router.push`, an
+  action's redirect) matches by URL: its URL, or the URL a server redirect
+  led it from (`_redirectFrom`, set in `followServerRedirect`), so the link
+  stays pending through the hop. It sets its value once per navigation, so a
   newer visible one ends a link whose `false` React still holds with an
   earlier page; an action's background refetch does not.
 - One rule covers `useLinkStatus` and `useNavigation` alike: a notification

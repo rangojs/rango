@@ -5,13 +5,14 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
 import { NavigationStoreContext } from "./context.js";
-import { LinkContext } from "./use-link-status.js";
+import { LinkContext, type LinkTarget } from "./use-link-status.js";
 import type { HistoryState } from "../types.js";
 import {
   isHashOnlyNavigation,
@@ -258,6 +259,14 @@ export const Link: ForwardRefExoticComponent<
     [to, isExternal, ctx?.basename],
   );
 
+  // This instance's id: its click names it on the navigation, so
+  // useLinkStatus marks this link and not every link to the same URL.
+  const linkId = useId();
+  const linkTarget = useMemo<LinkTarget>(
+    () => ({ to: resolvedTo, id: linkId }),
+    [resolvedTo, linkId],
+  );
+
   // No explicit `prefetch` prop: fall back to the router-wide default from
   // the router store. Adaptive is resolved against the input capability when a
   // prefetch is armed or triggered, never during render.
@@ -344,10 +353,12 @@ export const Link: ForwardRefExoticComponent<
         state,
         revalidate,
         transition,
+        _linkId: linkId,
       });
     },
     [
       resolvedTo,
+      linkId,
       isExternal,
       reloadDocument,
       replace,
@@ -494,7 +505,7 @@ export const Link: ForwardRefExoticComponent<
       data-transition={transition === false ? "false" : undefined}
       {...props}
     >
-      <LinkContext.Provider value={resolvedTo}>{children}</LinkContext.Provider>
+      <LinkContext.Provider value={linkTarget}>{children}</LinkContext.Provider>
     </a>
   );
 });

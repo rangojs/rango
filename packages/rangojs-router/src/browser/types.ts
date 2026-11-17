@@ -525,6 +525,8 @@ export interface NavigateOptionsInternal extends Omit<
   _redirectHops?: number;
   /** The URL a redirected navigation chain started from: a link to it stays pending (useLinkStatus) */
   _redirectFrom?: string;
+  /** The Link instance whose click started this navigation chain: only that link is pending (useLinkStatus) */
+  _linkId?: string;
 }
 
 /**

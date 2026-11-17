@@ -82,7 +82,7 @@ function tree(): ReactNode {
   return (
     <NavigationStoreContext.Provider value={value}>
       <Readers />
-      <LinkContext.Provider value="/items/8?tab=b">
+      <LinkContext.Provider value={{ to: "/items/8?tab=b", id: "link" }}>
         <Pending />
       </LinkContext.Provider>
     </NavigationStoreContext.Provider>

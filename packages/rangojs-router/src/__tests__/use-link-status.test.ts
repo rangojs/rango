@@ -37,11 +37,14 @@ import { useContext } from "react";
 import {
   useLinkStatus,
   LinkContext,
+  type LinkTarget,
 } from "../browser/react/use-link-status.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationEntry } from "../browser/event-controller.js";
 
 const mockedUseContext = vi.mocked(useContext);
+
+const DASHBOARD: LinkTarget = { to: "/dashboard", id: "link-a" };
 
 function entry(
   url: string,
@@ -71,9 +74,9 @@ function createMockEventController(initial: NavigationEntry | null = null) {
  * useLinkStatus calls useContext(LinkContext) then
  * useContext(NavigationStoreContext). Route each context to its value.
  */
-function wireContexts(linkTo: string | null, ctx: any) {
+function wireContexts(link: LinkTarget | null, ctx: any) {
   mockedUseContext.mockImplementation((context: any) => {
-    if (context === LinkContext) return linkTo as any;
+    if (context === LinkContext) return link as any;
     if (context === NavigationStoreContext) return ctx;
     return null as any;
   });
@@ -81,7 +84,7 @@ function wireContexts(linkTo: string | null, ctx: any) {
 
 /** Mount the hook and run its effect; returns the setter and the listener. */
 function mount(ec: ReturnType<typeof createMockEventController>) {
-  wireContexts("/dashboard", { eventController: ec });
+  wireContexts(DASHBOARD, { eventController: ec });
   const result = useLinkStatus();
   const setPending = stateSlots[0][1];
   capturedEffectFn!();
@@ -107,7 +110,7 @@ describe("useLinkStatus", () => {
 
   it("seeds pending from the controller for a matching link", () => {
     const ec = createMockEventController(entry("http://localhost/dashboard"));
-    wireContexts("/dashboard", { eventController: ec });
+    wireContexts(DASHBOARD, { eventController: ec });
 
     expect(useLinkStatus()).toEqual({ pending: true });
   });
@@ -115,20 +118,24 @@ describe("useLinkStatus", () => {
   it("seeds not pending while the document hydrates", () => {
     const ec = createMockEventController(entry("/dashboard"));
     ec.getHydrationSnapshot.mockReturnValue({});
-    wireContexts("/dashboard", { eventController: ec });
+    wireContexts(DASHBOARD, { eventController: ec });
 
     expect(useLinkStatus()).toEqual({ pending: false });
   });
 
-  it("subscribes with [linkTo, origin] dependency array", () => {
+  it("subscribes with [linkTo, linkId, origin] dependency array", () => {
     const ec = createMockEventController();
-    wireContexts("/dashboard", { eventController: ec });
+    wireContexts(DASHBOARD, { eventController: ec });
 
     useLinkStatus();
     capturedEffectFn!();
 
     expect(ec.subscribe).toHaveBeenCalledOnce();
-    expect(capturedEffectDeps).toHaveLength(2);
+    expect(capturedEffectDeps).toEqual([
+      "/dashboard",
+      "link-a",
+      "http://localhost",
+    ]);
   });
 
   /**
@@ -139,7 +146,7 @@ describe("useLinkStatus", () => {
    */
   it("catches up on a navigation that started between render and effect commit", () => {
     const ec = createMockEventController(null);
-    wireContexts("/dashboard", { eventController: ec });
+    wireContexts(DASHBOARD, { eventController: ec });
 
     // Seeding render: idle, not pending.
     useLinkStatus();
@@ -200,6 +207,38 @@ describe("useLinkStatus", () => {
     ec.navigation = entry("/login", { _redirectFrom: "/dashboard" });
     notify();
     expect(setPending).toHaveBeenLastCalledWith(true);
+  });
+
+  it("a click on this link marks it; a click on another link to the same URL does not", () => {
+    const ec = createMockEventController(null);
+    const { setPending, notify } = mount(ec);
+
+    ec.navigation = entry("/dashboard", { _linkId: "link-b" });
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(false);
+
+    ec.navigation = entry("/dashboard", { _linkId: "link-a" });
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(true);
+  });
+
+  it("stays pending through a server redirect from this link's click", () => {
+    const ec = createMockEventController(null);
+    const { setPending, notify } = mount(ec);
+
+    ec.navigation = entry("/login", {
+      _redirectFrom: "/dashboard",
+      _linkId: "link-a",
+    });
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(true);
+
+    ec.navigation = entry("/login", {
+      _redirectFrom: "/dashboard",
+      _linkId: "link-b",
+    });
+    notify();
+    expect(setPending).toHaveBeenLastCalledWith(false);
   });
 
   it("a navigation that shows no loading state neither makes a link pending nor ends one", () => {

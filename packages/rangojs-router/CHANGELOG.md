@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed: `useLinkStatus()` marks only the clicked link
+
+**Before.** With two `<Link>`s to the same address on a page, a click on one
+made `useLinkStatus().pending` true under both: a link's pending state was
+matched by URL alone.
+
+**Now.** Only the clicked link reads `pending`, through a server redirect too,
+until its page commits; a click on the other link moves it there. A navigation
+no link started (Back/Forward, `router.push()` or `replace()`, an action's
+redirect) still marks every link to its URL, as before. Nothing changes in
+your code: a spinner inside a `<Link>` that reads `useLinkStatus()` now shows
+on the link the user clicked.
+
 ## 0.35.0 (2026-11-04)
 
 ### Breaking: `loader(Def, { ssr: false })` is now `loader(Def, { ssr: "await" })` ([#1378](https://github.com/rangojs/rango/pull/1378))

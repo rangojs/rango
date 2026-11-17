@@ -166,6 +166,8 @@ export type { TxIdleViewTransitionScenarioOptions } from "./tx-idle-view-transit
 export { runTransitionKindsTests } from "./transition-kinds-scenario.js";
 export { runOptimisticSettleTests } from "./optimistic-settle-scenario.js";
 export type { OptimisticSettleScenarioOptions } from "./optimistic-settle-scenario.js";
+export { runLinkStatusClickedTests } from "./link-status-clicked-scenario.js";
+export type { LinkStatusClickedScenarioOptions } from "./link-status-clicked-scenario.js";
 export type { TransitionKindsScenarioOptions } from "./transition-kinds-scenario.js";
 export {
   countViewTransitions,

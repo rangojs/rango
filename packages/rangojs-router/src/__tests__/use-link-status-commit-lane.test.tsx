@@ -90,7 +90,7 @@ function Shell(): ReactNode {
   return (
     <>
       {["/items/1", "/items/2", "/items/3"].map((to) => (
-        <LinkContext.Provider key={to} value={to}>
+        <LinkContext.Provider key={to} value={{ to, id: to }}>
           <Reader to={to} />
         </LinkContext.Provider>
       ))}

@@ -25,8 +25,9 @@
  *     This exercises the context read path, not the run path.
  *   - navigate() drives the navigation lifecycle as a click does:
  *     useNavigation() reads loading from the call and idle with the commit,
- *     and useLinkStatus().pending is true for a link to the destination until
- *     the commit, which React holds with it. A `transition` spec plus a pending
+ *     and useLinkStatus().pending is true for every link to the destination
+ *     (for a <Link> click, the clicked link only) until the commit, which
+ *     React holds with it. A `transition` spec plus a pending
  *     Promise seeded via navigate(url, { loaders }) commits through
  *     production's commitInTransition (browser/partial-update.ts), which React
  *     holds: useNavigation() stays loading and the held reader's
@@ -1057,6 +1058,8 @@ export async function renderRoute(
     /** The loader data the response carries: a prefetch's (prefetch()). */
     seeds?: Record<string, unknown>;
     history?: Pick<NavigateOptionsInternal, "state" | "replace" | "transition">;
+    /** A <Link> click: the clicked instance, as production's entry carries it. */
+    linkId?: string;
     kind?: TransitionWhenKind;
     transition?: boolean;
     streamUntil?: Promise<unknown>;
@@ -1152,6 +1155,9 @@ export async function renderRoute(
     }
     const handle = eventController.startNavigation(
       new URL(target, TEST_ORIGIN).href,
+      navOptions?.linkId === undefined
+        ? undefined
+        : { _linkId: navOptions.linkId },
     );
     // An action made the prefetch stale: once this navigation settled (its
     // commit and its stream), the page revalidates. Production's own guards
@@ -1546,7 +1552,10 @@ export async function renderRoute(
   let prefetchRoot: HTMLElement | undefined;
   const bridge: NavigationBridge = {
     navigate: (target, navigateOptions) =>
-      navigate(target, { history: navigateOptions ?? {} }),
+      navigate(target, {
+        history: navigateOptions ?? {},
+        linkId: navigateOptions?._linkId,
+      }),
     refresh: () => refresh(),
     // Back/forward onto the entry history.state holds. Its page is restored
     // when the mount or a navigation wrote the entry, history still holds that
