@@ -57,6 +57,15 @@ describe("startFetchedLoaderRead", () => {
     );
   });
 
+  it("clears the loader's values when the read pushed nothing", async () => {
+    const page = mountPage();
+    startFetchedLoaderRead("title", page)({});
+    await settle();
+    const { data } = page.eventController.getHandleState();
+    expect(data.Meta).toEqual({ L0: [{ title: "Site" }] });
+    expect(data.Crumbs).toEqual({ L0: ["Home"], R0: ["Page"] });
+  });
+
   it("applies a pending push once it settles, and drops a rejected one", async () => {
     const page = mountPage();
     let resolveTitle!: (value: unknown) => void;

@@ -92,6 +92,21 @@ describe("mergeLoaderReadHandleData", () => {
     expect(out![pushedByKey("Crumbs")]).toBeUndefined();
   });
 
+  it("clears the loader's values when the read pushed nothing", () => {
+    const out = mergeLoaderReadHandleData(
+      page(),
+      segmentOrder,
+      matched,
+      "title",
+      {},
+    );
+    expect(out).toEqual({
+      Meta: { L0: [{ title: "Site" }], R0: [{ desc: "x" }] },
+      [pushedByKey("Meta")]: { R0: ["other"] },
+      Crumbs: { L0: ["Home"], R0: ["Page"] },
+    });
+  });
+
   it("appends a first push to the segment that registers the loader", () => {
     const out = mergeLoaderReadHandleData(
       page(),

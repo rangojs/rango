@@ -34,9 +34,10 @@ import type { MiddlewareFn } from "../../router/middleware.js";
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 
 let renames = 0;
-
+// From its third run on, the chat is untitled: the loader pushes nothing.
 const ChatTitle = createLoader(async (ctx) => {
   renames += 1;
+  if (renames > 2) return { name: null };
   ctx.use(Meta)({ title: `Chat ${renames}` });
   ctx.use(Breadcrumbs)({ label: `Chat ${renames}`, href: "/chat" });
   return { name: `Chat ${renames}` };
@@ -142,6 +143,13 @@ describe("a fetchable loader read carries its handle pushes", () => {
     expect((await read(ChatTitle)).answer?.handles[Meta.$$id]).toEqual([
       { title: "Chat 2" },
     ]);
+    // A run that pushes nothing answers with no values: the browser clears
+    // the loader's earlier ones.
+    expect((await read(ChatTitle)).answer).toEqual({
+      result: { name: null },
+      error: null,
+      handles: {},
+    });
   });
 
   it("carries the pushes of a loader it reads, and pending ones once settled", async () => {
