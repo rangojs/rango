@@ -262,9 +262,8 @@ after its commit, as handle values do (see
 
 ### useLinkStatus()
 
-Track pending state inside a Link component. `pending` is `true` while a
-navigation to the link's `to` is in flight, until the page it brings
-commits:
+Track pending state inside a Link component. `pending` is `true` while this
+link's navigation is in flight, until the page it brings commits:
 
 ```tsx
 "use client";
@@ -281,6 +280,14 @@ function LoadingIndicator() {
   <LoadingIndicator />
 </Link>;
 ```
+
+A click marks the link that was clicked: with two links to the same `to` on
+the page, only the clicked one reads `pending`, and a click on the other moves
+it there. A navigation no link started (Back/Forward, `router.push()` or
+`replace()`, a form post, an action's redirect) marks every link to its URL.
+The mark belongs to the `<Link>` instance: a link that remounts while its
+navigation is in flight (a new `key`, a parent of another type) is a new link
+and reads `false`, so keep it mounted where a spinner should stay.
 
 The spinner ends in the commit that shows the destination: its `loading()`
 skeleton without `transition()`, or the page itself under `transition()`,

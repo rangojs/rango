@@ -440,6 +440,18 @@ describe("navigation-bridge: a server redirect loop", () => {
     expect((navigate.mock.calls[1][1] as any)._redirectHops).toBe(1);
     expect(updates).toEqual([]);
   });
+
+  it("every hop keeps the clicked Link's id, so only that link stays pending (useLinkStatus)", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { bridge, navigate } = loop();
+
+    await bridge.navigate("http://localhost/ping", { _linkId: "link-a" });
+
+    expect(navigate).toHaveBeenCalledTimes(HOP_LIMIT + 1);
+    expect(navigate.mock.calls.map(([, o]) => (o as any)._linkId)).toEqual(
+      Array(HOP_LIMIT + 1).fill("link-a"),
+    );
+  });
 });
 
 describe("navigation-bridge: Back/Forward onto an intercept entry the history cache holds", () => {

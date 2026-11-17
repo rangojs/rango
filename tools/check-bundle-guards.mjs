@@ -299,7 +299,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // observer marks the entry first and the link does not name its ids as held.
 // It cannot load lazily: it runs on every link. By the owner's rule above:
 // 53633B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 52.75 * 1024;
+//
+// Raised 52.75KB -> 53.125KB on 2026-11-17 for useLinkStatus marking only the
+// clicked link, measured on cloudflare-basic from main 48d708a 53997B ->
+// 54090B (+93B gzip; main sat 19B under the old limit). Each Link takes a
+// useId() instance id, hands `{ to, id }` to LinkContext and passes `_linkId`
+// on its click (browser/react/Link.tsx); useLinkStatus matches it before the
+// URL (browser/react/use-link-status.ts isPendingFor), and
+// followServerRedirect carries it (browser/navigation-bridge.ts). None of it
+// can load lazily: it runs on every Link render and click. By the owner's
+// rule above: 54090B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -285,7 +285,7 @@ export function createNavigationBridge(
     hops: number,
     options: Pick<
       NavigateOptionsInternal,
-      "replace" | "transition" | "_redirectFrom"
+      "replace" | "transition" | "_redirectFrom" | "_linkId"
     >,
   ): Promise<void> {
     const redirectUrl = validateRedirectOrigin(
@@ -715,6 +715,7 @@ export function createNavigationBridge(
               replace: options?.replace,
               transition: options?.transition,
               _redirectFrom: options?._redirectFrom,
+              _linkId: options?._linkId,
             },
           );
         }

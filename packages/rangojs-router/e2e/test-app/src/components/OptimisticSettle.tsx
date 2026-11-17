@@ -6,6 +6,7 @@ import {
   useAction,
   useLinkStatus,
   useLoader,
+  useRouter,
 } from "@rangojs/router/client";
 import type { LoaderDefinition } from "@rangojs/router";
 import { optimisticSettleSave } from "../actions/optimistic-settle.js";
@@ -16,6 +17,8 @@ import { optimisticSettleSave } from "../actions/optimistic-settle.js";
  *   "<link>:<pending|idle>:<page on screen>".
  * - window.__optSettleVt: every commit that animates the page's push-keyed
  *   <ViewTransition>, "<event>:<page>:<types>".
+ * Links 2b and rb go to the same addresses as 2 and r, and the push button
+ * navigates to page 2 with no link (link-status-clicked-scenario.ts).
  */
 
 function onScreen(): string {
@@ -63,7 +66,22 @@ const LINKS: { to: string; id: string; spinner: boolean }[] = [
   { to: "4", id: "4", spinner: false },
   { to: "r", id: "r", spinner: true },
   { to: "f", id: "f", spinner: true },
+  { to: "2", id: "2b", spinner: true },
+  { to: "r", id: "rb", spinner: true },
 ];
+
+function PushButton({ to }: { to: string }): ReactNode {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      data-testid="opt-settle-push-2"
+      onClick={() => router.push(to)}
+    >
+      push 2
+    </button>
+  );
+}
 
 export function OptimisticSettleShell({
   base,
@@ -88,6 +106,7 @@ export function OptimisticSettleShell({
         ))}
       </nav>
       <SaveButton />
+      <PushButton to={`${base}/2`} />
       {children}
     </div>
   );
