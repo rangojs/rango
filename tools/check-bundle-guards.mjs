@@ -309,7 +309,20 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // followServerRedirect carries it (browser/navigation-bridge.ts). None of it
 // can load lazily: it runs on every Link render and click. By the owner's
 // rule above: 54090B + 256B, rounded up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 53.125 * 1024;
+//
+// Raised 53.125KB -> 53.625KB on 2026-11-17 for a loader read on its own
+// applying the handle values it pushes, measured on cloudflare-basic from
+// main e27d1d2 54088B -> 54610B (+522B gzip): router code +480B, and +42B
+// from cloudflare-basic's loader-read-handles fixture (main's router source
+// with the fixture measures 54130B). load() and a group refresh hand the
+// reply's handle values to browser/fetched-loader-handles.ts (the page and
+// newest-read gate, the history entry's copy), which files them through
+// EventController.setLoaderReadHandleData and mergeLoaderReadHandleData
+// (handles/pushed-by.ts). None of it can load lazily: it runs on every
+// load() and group refresh, and use-loader.tsx and the event controller are
+// in the eager runtime. By the owner's rule above: 54610B + 256B, rounded up
+// to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 53.625 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
