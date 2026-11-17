@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a loader read on its own applies the handle values it pushes
+
+**Before.** A loader that wrote a handle (`ctx.use(Meta)({ title })`, a
+breadcrumb) had it applied on a document load and on a navigation, but a read
+of the same loader on its own, `load()` / `refetch()` or a
+`useRefreshLoaders()` group refresh, failed: the `_rsc_loader` request renders
+no segment, so the push threw "Handle ... used outside of handler context" and
+the read rejected with a 500 instead of delivering the loader's data. An app
+that refreshes a live part of its page through the loader that names it (a
+renamed chat, a cart count in the title) kept the old title and lost the
+refresh.
+
+**Now.** The read's reply carries what the loader's body pushed, the loaders
+it reads with `ctx.use()` included. The browser applies it after the data, in
+place of the loader's earlier values in the segment that registers it, so
+`useHandle()` readers and `<Html.Meta />` (the document's `<title>`) show the
+new values. A pushed promise applies once it settles, and never holds the data.
+The values apply only while the page the read was sent from is still on
+screen, and a newer read of the loader wins. A loader that no segment on the
+page registers with `loader()` (`useFetchLoader()` of an unregistered loader)
+has no segment to own its values: they are not applied, and development warns
+once. Nothing changes in your code.
+
+Testing: `serveShellRequest(router, "/page?_rsc_loader=<id>", { headers: {
+accept: "text/x-component" } })` now has `readLoader()`, the read's answer as
+the browser reads it: `{ result, error, handles }`.
+
 ## 0.36.0 (2026-11-17)
 
 ### Changed: `useLinkStatus()` marks only the clicked link ([#1441](https://github.com/rangojs/rango/pull/1441))

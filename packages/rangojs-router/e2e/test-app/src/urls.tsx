@@ -33,6 +33,7 @@ import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
 import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
 import { actionPersistsPatterns } from "./urls/action-persists.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
+import { loaderReadHandlesPatterns } from "./urls/loader-read-handles.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { hookFieldsPatterns } from "./urls/hook-fields.js";
 import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
@@ -1305,6 +1306,8 @@ export const urlpatterns = urls(
       include("/", handlesOverlapPatterns, { name: "" }),
       // Async handle values: awaited in SSR, held then swapped on navs.
       include("/", asyncHandlesPatterns, { name: "" }),
+      // A loader read on its own applies its handle pushes.
+      include("/", loaderReadHandlesPatterns, { name: "" }),
       // A cached back/forward animates under transition().
       include("/", vtBackPatterns, { name: "" }),
 

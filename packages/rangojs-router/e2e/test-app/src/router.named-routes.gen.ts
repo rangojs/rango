@@ -373,6 +373,7 @@ export const NamedRoutes = {
   "loaderCookie.mwReadsCookie": "/loader-cookie/mw-reads-cookie",
   "loaderCookie.reverseTest": "/loader-cookie/reverse-test",
   loaderParams: "/loader-params",
+  loaderReadHandlesChat: "/loader-read-handles/chat",
   "loaderReverse.detail": "/loader-reverse/:id",
   "loaderReverse.index": "/loader-reverse",
   loadingElementClientTest: "/loading-element-client-test",

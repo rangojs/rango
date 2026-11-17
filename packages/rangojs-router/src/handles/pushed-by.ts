@@ -76,6 +76,61 @@ export function withSegmentHandles(
 }
 
 /**
+ * The handle data after a fetched read of loader `loaderId` (the `_rsc_loader`
+ * lane: `load()`, a `refreshGroup` refresh) pushed `values` (by handle $$id).
+ * The read renders no segment, so its pushes go where the page's run of the
+ * loader put its own: the first segment of `segmentOrder` holding a value the
+ * loader pushed, else the first segment of `matched` (the raw list `current`
+ * was built from) that registers it, where a render files them
+ * (loader-resolution.ts loaderOwner). The loader's earlier values give way to
+ * these in their position, in every segment that registers it, and every
+ * other run keeps its own (mergePartialHandleData, with the loader as the run
+ * that ran). Undefined when no segment registers the loader: its pushes have
+ * no segment to belong to.
+ */
+export function mergeLoaderReadHandleData(
+  current: HandleData,
+  segmentOrder: readonly string[],
+  matched: readonly string[],
+  loaderId: string,
+  values: Readonly<Record<string, readonly unknown[]>>,
+): HandleData | undefined {
+  const registrations: string[] = [];
+  const registers = new Set<string>();
+  for (const id of matched) {
+    const marker = LOADER_SEGMENT_ID.exec(id);
+    if (!marker || id.slice(marker.index + marker[0].length) !== loaderId) {
+      continue;
+    }
+    registrations.push(id);
+    registers.add(id.slice(0, marker.index));
+  }
+  if (registrations.length === 0) return undefined;
+  const pushedHere = (segmentId: string): boolean =>
+    Object.keys(current).some(
+      (name) =>
+        isPushedByKey(name) &&
+        current[name][segmentId]?.includes(loaderId) === true,
+    );
+  const owner =
+    segmentOrder.find((id) => registers.has(id) && pushedHere(id)) ??
+    [...registers][0]!;
+  const incoming: HandleData = {};
+  for (const name in values) {
+    if (values[name].length === 0) continue;
+    incoming[name] = { [owner]: [...values[name]] };
+    incoming[pushedByKey(name)] = { [owner]: values[name].map(() => loaderId) };
+  }
+  return mergePartialHandleData(
+    current,
+    incoming,
+    segmentOrder,
+    matched,
+    registrations,
+  );
+}
+
+/**
  * The handle data after a partial response's snapshot `incoming` (each stream
  * yield holds everything the response pushed so far). A segment outside
  * `segmentOrder` loses its buckets. In the others a value stands for the run

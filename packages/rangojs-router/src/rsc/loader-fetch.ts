@@ -39,6 +39,15 @@ import {
 import type { HandlerContext } from "./handler-context.js";
 import { WIRE } from "../wire-params.js";
 
+/**
+ * A successful read's reply: the loader's value, and the values its body
+ * pushed to each handle (by handle $$id, in push order).
+ */
+interface LoaderFetchPayload {
+  loaderResult: unknown;
+  handles: Record<string, unknown[]>;
+}
+
 export interface LoaderErrorMeta<TEnv> {
   request: Request;
   url: URL;
@@ -255,6 +264,17 @@ export async function handleLoaderFetch<TEnv>(
         variables,
         async () => {
           const reqCtx = getRequestContext();
+          // ctx.use(Handle) pushes file under the request context's segment
+          // (request-context.ts createUseFunction), and this lane renders no
+          // segment: without one the push threw and the read was a 500. The
+          // body's pushes, and those of the loaders it reads with ctx.use,
+          // file under the loader's id and ride the reply; the browser files
+          // them under the segments that register the loader
+          // (browser/fetched-loader-handles.ts). Set before the copy below:
+          // a "use cache" function handed the loader's ctx replays a HIT's
+          // pushes into its segment (cache-runtime.ts callerSegmentId).
+          (reqCtx as { _currentSegmentId?: string })._currentSegmentId =
+            loaderId;
           // Merge route params (from previewMatch) with explicit loader params.
           // Explicit params take precedence over route-matched params.
           const resolvedRouteParams = routeParams ?? {};
@@ -299,13 +319,15 @@ export async function handleLoaderFetch<TEnv>(
             fn(loaderCtx),
           );
 
-          interface LoaderPayload {
-            loaderResult: unknown;
-          }
-          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const loaderPayload: LoaderFetchPayload = {
+            loaderResult: result,
+            // The pushes the body made, a pending one as its promise: the
+            // browser applies them once they settle, after the data.
+            handles: reqCtx._handleStore.getDataForSegment(loaderId),
+          };
           // Read once here: onError can fire outside the ALS frame.
           const requestContext = _getRequestContext();
-          const rscStream = ctx.renderToReadableStream<LoaderPayload>(
+          const rscStream = ctx.renderToReadableStream<LoaderFetchPayload>(
             loaderPayload,
             {
               onError: (error: unknown) => {

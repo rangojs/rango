@@ -1113,6 +1113,20 @@ no hydration mismatch there. A loader body may push after an `await`; a server
 component that does throws `LateHandlePushError`, so it resolves a slot its
 handler reserved with `.defer()` instead (`/breadcrumbs`, "Deferred content").
 
+A fetchable loader read on its own — `load()` / `refetch()`, or a
+`useRefreshLoaders()` group refresh — carries its pushes too (those of the
+loaders it awaits included). The browser applies them after the read's data,
+in place of the loader's earlier values in the segment that registers it, so
+`useHandle` readers and `<Html.Meta />` (the tab title) show them; a pushed
+promise applies once it settles. This is how a live part of a page keeps its
+title current: a rename that reaches the page through a refresh renames the
+tab too. They apply only while the page the read was sent from is still on
+screen, and the newest read of the loader wins. A loader that no segment on
+the page registers with `loader()` (a `useFetchLoader()` of an unregistered
+loader) has no segment to own its values: they are not applied, and
+development warns once. Register the loader on the route or layout whose
+title or crumbs it writes.
+
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
 the pushes of an `ssr: "await"` loader, and of the loaders it awaits, in the

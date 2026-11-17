@@ -53,6 +53,8 @@ vi.mock("../../server/request-context.js", () => ({
     params: {},
     _routeName: "test-route",
     _onResponseCallbacks: [],
+    // The reply carries what the loader pushed (none here).
+    _handleStore: { getDataForSegment: () => ({}) },
     res: { headers: new Headers(), status: 200 },
   }),
   _getRequestContext: () => null,

@@ -180,6 +180,8 @@ export type { DocumentLocationStateScenarioOptions } from "./document-location-s
 export { runUseLoaderSettledReadTests } from "./use-loader-settled-read-scenario.js";
 export { runLoaderRemountRefreshTests } from "./loader-remount-refresh-scenario.js";
 export type { LoaderRemountRefreshScenarioOptions } from "./loader-remount-refresh-scenario.js";
+export { runLoaderReadHandlesTests } from "./loader-read-handles-scenario.js";
+export type { LoaderReadHandlesScenarioOptions } from "./loader-read-handles-scenario.js";
 export type { UseLoaderSettledReadScenarioOptions } from "./use-loader-settled-read-scenario.js";
 export { readFlash, readProbe, watchFlash } from "./flash-probe.js";
 export type { CacheVersionScenarioOptions } from "./cache-version-scenario.js";

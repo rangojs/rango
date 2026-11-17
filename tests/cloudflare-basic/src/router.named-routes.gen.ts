@@ -193,6 +193,7 @@ export const NamedRoutes = {
   loaderCacheTag: "/loader-cache-tag",
   loaderCtxItem: "/loader-ctx/:id",
   loaderParams: "/loader-params",
+  loaderReadHandlesChat: "/loader-read-handles/chat",
   loaderRemountA: "/loader-remount/a",
   loaderRemountB: "/loader-remount/b",
   loaderRemountNone: "/loader-remount/none",

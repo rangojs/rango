@@ -41,6 +41,7 @@ A `Prerender` route is served as in production: from the artifact `router.matchF
 | `readHandles`       | `() => Promise<ShellRequestHandles \| undefined>`     | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                                                            |
 | `readDeferred`      | `() => Promise<string[] \| undefined>`                | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered.                                        |
 | `readAction`        | `() => Promise<ShellRequestAction \| undefined>`      | For an `action` request, the call's answer as the browser reads it: `{ ok, result, revalidationError }` (see "A server action called from the page"). `undefined` when no Flight rendered or the payload carries no action result. |
+| `readLoader`        | `() => Promise<ShellRequestLoader \| undefined>`      | For a fetchable loader read (`?_rsc_loader=<id>`), its answer as the browser reads it: `{ result, error, handles }` (see "A loader read from the page"). `undefined` when no Flight rendered or the payload is not a loader's.     |
 | `readLocationState` | `() => Promise<Record<string, unknown> \| undefined>` | The payload's location state as the browser reads it: `{ [Def.__rsc_ls_key]: value }` (see "Location state on a document"). `undefined` when it carries none or no Flight rendered.                                                |
 | `response`          | `Response`                                            | Status and headers. Its body is already read.                                                                                                                                                                                      |
 | `body`              | `string`                                              | The body text.                                                                                                                                                                                                                     |
@@ -490,6 +491,23 @@ expect(answer).toEqual({
   result: { saved: true },
   // a build redacts the message; onError gets the error itself
   revalidationError: expect.objectContaining({ message: "An error occurred" }),
+});
+```
+
+## A loader read from the page
+
+`load()`, `refetch()` and a `useRefreshLoaders()` group refresh send a GET for the page's URL with `_rsc_loader=<the loader's $$id>`. Serve it with an `accept: text/x-component` header and read the answer with `result.readLoader()`: `result` (what the read resolves with, `null` when it rejects), `error` (the message it rejects with, or `null`) and `handles`, the values the loader's body pushed to each handle (by handle `$$id`, in push order, a pushed promise settled), which the browser applies to the segment that registers the loader. The pinned example is `src/testing/__tests__/loader-read-handles.rsc-test.tsx`.
+
+```tsx
+const answer = await (
+  await serveShellRequest(router, `/chat?_rsc_loader=${ChatLoader.$$id}`, {
+    headers: { accept: "text/x-component" },
+  })
+).readLoader();
+expect(answer).toEqual({
+  result: { name: "Renamed" },
+  error: null,
+  handles: { [Meta.$$id]: [{ title: "Renamed" }] },
 });
 ```
 

@@ -1869,6 +1869,20 @@ group refresh would write the shared loader-id bucket and leak into unrelated
 unkeyed reads of the same loader, which the fan-out table keeps local. Sharing a
 value within a group is therefore opt-in via a common `key`.
 
+**Handle values from a read.** Every `_rsc_loader` read (`load()`, a group
+refresh) runs the body with the request context's segment pinned to the
+loader's id (`rsc/loader-fetch.ts`), so `ctx.use(Handle)` pushes, the body's
+and those of the loaders it reads, land in one bucket, and the reply carries
+it as `handles` beside `loaderResult`. The browser applies it after the data
+(`browser/fetched-loader-handles.ts`), once its pushed promises settle, only
+while the page the read was sent from is on screen (same history key and nav
+instance) and no newer read of the loader was sent. The values go to the
+first segment that holds the loader's earlier values, else the first that
+registers it, and replace the loader's values in every segment that registers
+it (`mergeLoaderReadHandleData`, `handles/pushed-by.ts`, the partial merge
+with the loader as the run that ran). A loader no segment registers has
+nowhere to file them: they are dropped, with a development warning.
+
 ## Client Route-State Commits
 
 This one is client-only too: which React commit brings the router's hook

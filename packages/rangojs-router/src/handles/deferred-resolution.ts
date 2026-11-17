@@ -68,6 +68,23 @@ export async function resolveDeferredHandleValues(
   return out;
 }
 
+/**
+ * One run's pushes (values by handle name, as a fetched loader read's reply
+ * carries them) with deferred values awaited as resolveDeferredHandleValues
+ * awaits them.
+ */
+export async function resolveDeferredPushes(
+  pushes: Readonly<Record<string, readonly unknown[]>>,
+): Promise<Record<string, unknown[]>> {
+  const out: Record<string, unknown[]> = {};
+  await Promise.all(
+    Object.entries(pushes).map(async ([handleName, values]) => {
+      out[handleName] = keptValues(await resolveValues(values));
+    }),
+  );
+  return out;
+}
+
 interface ResolvedValue {
   keep: boolean;
   value: unknown;
@@ -78,7 +95,7 @@ interface ResolvedValue {
 // A thenable is awaited and dropped when it rejects OR resolves to null/undefined
 // (the `.defer({ else })` skip semantics: a forgotten resolver times out to
 // `else ?? undefined`), so a nullish deferred slot never reaches a collector.
-function resolveValues(values: unknown[]): Promise<ResolvedValue[]> {
+function resolveValues(values: readonly unknown[]): Promise<ResolvedValue[]> {
   return Promise.all(
     values.map(async (v) => {
       if (!isThenable(v)) return { keep: true, value: v };

@@ -119,6 +119,7 @@ function createSsrEventController(opts: {
     releaseRouteState: () => {},
     setHandleData: () => {},
     getHandleState: () => handleState,
+    setLoaderReadHandleData: () => false,
     lockHydration: () => {},
     getHydrationSnapshot: () => undefined,
     releaseHydrationLock: () => {},
