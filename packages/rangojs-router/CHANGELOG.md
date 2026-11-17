@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.36.0 (2026-11-17)
 
-### Changed: `useLinkStatus()` marks only the clicked link
+### Changed: `useLinkStatus()` marks only the clicked link ([#1441](https://github.com/rangojs/rango/pull/1441))
 
 **Before.** With two `<Link>`s to the same address on a page, a click on one
 made `useLinkStatus().pending` true under both: a link's pending state was
