@@ -1887,7 +1887,12 @@ every segment that registers it (`mergeLoaderReadHandleData`,
 ran). A value another loader the page registers pushed is left out: that
 loader's own run, which the read did not refresh, keeps its values. A loader
 no segment registers has nowhere to file them: they are dropped, with a
-development warning.
+development warning. Only a read the page itself would make applies them: a
+group refresh, or a `load()` / `refetch()` with no `params` and no body (GET)
+(`isPlainRefetch` in `use-loader.tsx`). A `load()` with `params`, a body or
+another method reads data the page does not show: its result goes to the
+reader, and its pushes are not applied, nor does it count as the loader's
+newest read.
 
 ## Client Route-State Commits
 

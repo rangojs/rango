@@ -638,7 +638,8 @@ server projection.
   the browser applies them in place of the loader's earlier values in the
   segment that registers it (`browser/fetched-loader-handles.ts`,
   `mergeLoaderReadHandleData` in `handles/pushed-by.ts`,
-  `EventController.setLoaderReadHandleData`)
+  `EventController.setLoaderReadHandleData`); a `load()` with params or a
+  body reads data the page does not show, and its values are not applied
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group
   tags, and the inverted hook takes the group(s) at call time)

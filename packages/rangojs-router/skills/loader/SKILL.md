@@ -1127,7 +1127,11 @@ which the read did not refresh: the page keeps that run's values, as it keeps
 its data. A loader that no segment on the page registers with `loader()` (a
 `useFetchLoader()` of an unregistered loader) has no segment to own its
 values: they are not applied, and development warns once. Register the loader
-on the route or layout whose title or crumbs it writes.
+on the route or layout whose title or crumbs it writes. A read for data the
+page does not show — `load()` with `params` (a hover preview of another
+item), or with a `body` or a method other than GET (a form post) — keeps its
+data and drops its pushes: the page's title and crumbs stay those of what it
+shows.
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps

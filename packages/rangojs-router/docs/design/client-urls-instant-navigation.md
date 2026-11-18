@@ -305,7 +305,8 @@ beside the data, and the browser files them under the segment that registers
 the loader, in place of the loader's earlier values there
 (`browser/fetched-loader-handles.ts`): the same owner, not a bucket of the
 loader's own. A loader no segment on the page registers has no owner, and its
-pushes are not applied.
+pushes are not applied; nor are those of a `load()` with params or a body,
+which reads data the page does not show.
 
 ## Future Design: Parallel Routes
 

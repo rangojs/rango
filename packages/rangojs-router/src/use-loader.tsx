@@ -567,7 +567,12 @@ function useLoaderInternal<T>(
           };
         }
 
-        const applyHandles = startFetchedLoaderRead(id, page);
+        // Only a refetch of the page's own read (the page's params, no body)
+        // applies its handle values: a read with other params or a body is
+        // data the page does not show, and its pushes would retitle the page.
+        const applyHandles = isPlainRefetch(loadOptions)
+          ? startFetchedLoaderRead(id, page)
+          : undefined;
         const response = fetch(url.toString(), fetchOptions);
 
         const { createFromFetch } = await import("./deps/browser.js");
@@ -586,7 +591,7 @@ function useLoaderInternal<T>(
             setLocalIsLoading(false);
           });
         }
-        applyHandles(payload.handles, payload.pushedBy);
+        applyHandles?.(payload.handles, payload.pushedBy);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));

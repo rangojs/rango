@@ -25,7 +25,10 @@ body awaits that the page also registers stays that loader's: the page keeps
 its own run's value instead of adding the read's copy. A loader that no
 segment on the page registers with `loader()` (`useFetchLoader()` of an
 unregistered loader) has no segment to own its values: they are not applied,
-and development warns once. Nothing changes in your code.
+and development warns once. A read for data the page does not show, a
+`load()` with `params` (a hover preview of another item) or with a body (a
+form post), keeps its data and drops its pushes, so the title and crumbs stay
+those of what the page shows. Nothing changes in your code.
 
 Testing: `serveShellRequest(router, "/page?_rsc_loader=<id>", { headers: {
 accept: "text/x-component" } })` now has `readLoader()`, the read's answer as
