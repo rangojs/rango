@@ -652,6 +652,13 @@ export interface NavigationStore {
   getHistoryEntryMemory(entryKey?: string): HistoryEntryMemory | undefined;
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
+  /**
+   * Begin a fetched read of `loaderId` (`load()`, a group refresh) from the
+   * page on screen. The returned check is true while that page is still on
+   * screen (same history entry, no commit since) and no newer read of the
+   * loader began on this router (browser/fetched-loader-handles.ts).
+   */
+  beginLoaderRead(loaderId: string): () => boolean;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
