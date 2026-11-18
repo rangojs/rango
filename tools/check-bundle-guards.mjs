@@ -322,7 +322,20 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // load() and group refresh, and use-loader.tsx and the event controller are
 // in the eager runtime. By the owner's rule above: 54610B + 256B, rounded up
 // to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 53.625 * 1024;
+//
+// Raised 53.625KB -> 54.5KB on 2026-11-18 for usePushHandle (client
+// components push handle values), measured on cloudflare-basic from main
+// 5e2de0f 54718B -> 55497B (+779B gzip): router code +600B (the branch
+// without cloudflare-basic's push-handle fixture measures 55318B), and +179B
+// from the fixture. The hook (browser/react/use-push-handle.ts), the event
+// controller's client layer (setClientHandle, withClientHandles, the held
+// state), the read-time merge and structural equality
+// (handles/client-pushes.ts), useHandle's merge and SlotSegment
+// (client.tsx). None of it can load lazily: useHandle reads the layer on
+// every handle read, and the controller and useHandle are in the eager
+// runtime. Production error text is shortened to its rule. By the owner's
+// rule above: 55497B + 256B, rounded up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 54.5 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
