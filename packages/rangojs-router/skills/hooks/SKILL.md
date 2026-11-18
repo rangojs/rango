@@ -1,6 +1,6 @@
 ---
 name: hooks
-description: Client-side React hooks for navigation, loaders, and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, or loader data — e.g. "how do I read the route param in a component".
+description: Client-side React hooks for navigation, loaders, handles and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, loader data, or handle data (useHandle), or pushes a handle value from client state (usePushHandle, for a page title, Meta tag or breadcrumb from a live value, a draft or a fetch) — e.g. "how do I read the route param in a component", "set the page title from a client component".
 argument-hint: [hook-name]
 ---
 
@@ -40,6 +40,7 @@ the one for your case.
 | Loader data with on-demand fetch                   | `useFetchLoader()`          | [`./data.md`](./data.md)                             |
 | Refresh multiple loaders across groups             | `useRefreshLoaders()`       | [`./data.md`](./data.md)                             |
 | Accumulated handle data from route segments        | `useHandle()`               | [`./handle-and-actions.md`](./handle-and-actions.md) |
+| Push a handle value from a client component        | `usePushHandle()`           | [`./handle-and-actions.md`](./handle-and-actions.md) |
 | Server action invocation state                     | `useAction()`               | [`./handle-and-actions.md`](./handle-and-actions.md) |
 | Type-safe history state (persistent or flash)      | `useLocationState()`        | [`./state.md`](./state.md)                           |
 | Force the client's caches to miss after a mutation | `invalidateClientCache()`   | [`./state.md`](./state.md)                           |
@@ -59,8 +60,9 @@ the one for your case.
 - [`./data.md`](./data.md) — `useLoader`, `useFetchLoader` (shared refetch
   scoping, `key`, `refreshGroup` + `useRefreshLoaders`, load options, file
   uploads).
-- [`./handle-and-actions.md`](./handle-and-actions.md) — `useHandle`,
-  `useAction`. For the full server-action guide (defining actions,
+- [`./handle-and-actions.md`](./handle-and-actions.md) — handles (what they
+  are, how values are ordered, who writes them, where a value should come
+  from), `useHandle`, `usePushHandle`, `useAction`. For the full server-action guide (defining actions,
   `useActionState`, `useOptimistic`, validation, revalidation, error
   handling, file uploads), see `/server-actions`; `useAction()` here is the
   Rango-specific hook for tracking actions called outside a
@@ -94,6 +96,7 @@ the one for your case.
 | `useFetchLoader()`        | Loader with on-demand fetch                                    | data, load, isLoading, error, refetch                                           |
 | `useRefreshLoaders()`     | Refresh cross-loader group(s)                                  | `() => (groups: string \| string[]) => Promise<void>`                           |
 | `useHandle()`             | Accumulated handle data                                        | T (handle type)                                                                 |
+| `usePushHandle()`         | Push handle values from a client component, during render      | `(value: T \| Promise<T>) => void`                                              |
 | `useAction()`             | Server action state                                            | state, actionId, payload, error, result                                         |
 | `useLocationState()`      | History state (persists or flash)                              | T \| undefined                                                                  |
 | `invalidateClientCache()` | Force client caches to miss (function, not a hook; root entry) | `void`                                                                          |
@@ -111,7 +114,8 @@ cannot mismatch its server HTML.
 
 - Navigation state, params and action state: the component shows the live
   value right after it hydrates.
-- Handle data a loader pushed late, and the entry's location state: both wait
+- Handle data a loader pushed late, values a client component pushes
+  (`usePushHandle`), and the entry's location state: all wait
   until the whole document has streamed and been revealed, and every boundary
   has hydrated, including any boundary still suspended on the client (a lazy
   chunk, a deferred-hydration gate; that wait has no upper bound). Then

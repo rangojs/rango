@@ -124,6 +124,10 @@ function createSsrEventController(opts: {
     getHydrationSnapshot: () => undefined,
     releaseHydrationLock: () => {},
     setRouteSegmentIds: () => {},
+    setClientHandle: () => {},
+    withClientHandles: (data) => data,
+    subscribeToClientHandles: () => () => {},
+    getHeldHandleState: () => undefined,
     setParams: (nextParams) => {
       params = nextParams;
     },

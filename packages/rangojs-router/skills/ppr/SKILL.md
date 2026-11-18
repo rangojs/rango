@@ -1073,6 +1073,7 @@ Four things follow, in this order of scope:
 | a handler's push, a pinned `ssr: "await"` loader's push (`push(promise)` and `.defer()` too) | yes (the shell has it) | hydrates with it              |
 | a push by an `ssr: "await"` loader whose value holds a promise                               | no                     | gets it right after hydration |
 | a live-lane loader's push                                                                    | no                     | gets it right after hydration |
+| a client component's `usePushHandle` value                                                   | no                     | gets it right after hydration |
 
 So a title an `ssr: "await"` loader pushes to `Meta`, promise or not, is in
 every HIT's `<head>`: a crawler and a link preview see it. It bakes with the

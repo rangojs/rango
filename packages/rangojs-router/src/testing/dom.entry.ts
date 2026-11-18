@@ -20,4 +20,6 @@ export type {
   RenderRouteResult,
   RenderRouteHydrateResult,
   HandleDataSeed,
+  HandleSeed,
+  HandleSegment,
 } from "./render-route.js";

@@ -2079,6 +2079,35 @@ Here is how each hook gets there:
   sets nothing and does not render (the `hook-render-stability` e2e pins
   that: an earlier version gave every reader an update in the page's lane
   and re-rendered all of them on a search change).
+- A client handle push (`usePushHandle`) commits with the render that made
+  it, and that rule beats the anchor's wait. The pusher publishes its
+  render's values from its layout effect into the controller's client layer
+  (`setClientHandle`), kept apart from the server's handle data, and every
+  `useHandle` reader merges them after the server's values of their segment
+  when it reads (`withClientHandles`). Readers hear the publish at once, in
+  that layout effect, so the update commits before the browser paints; a
+  reader subscribes in a layout effect of its own, so one mounted in the
+  same commit as the pusher reads the value before paint too (the
+  `push-handle` e2e samples every frame of a navigation that mounts both).
+  While a page is held, a client push comes from the page on screen (the
+  held page's components have not committed), so the reader merges it with
+  the server state shown there (`getHeldHandleState`, taken at the first
+  "anchor" before the payload's handle writes, cleared at the release) and
+  sets it at once (`useCommitAnchoredState`'s `now`), instead of waiting for
+  the held page. A `load()` during a held navigation used to paint the new
+  data beside the old title. The held page's own pushers publish in its
+  commit, before `NavigationProvider`'s layout effect releases, so the
+  release's update and theirs commit together. The client layer is hidden
+  during the hydration window (the document's HTML has the server's values)
+  and is never written into a history entry. Two pushers of one handle in
+  one segment follow tree order, not commit order: a sibling that suspends
+  commits after the one behind it, so a join renders every pusher of that
+  segment again, in one sync commit before paint, and their layout effects
+  publish in tree order. Limitation: a pusher nested inside another of the
+  same handle comes before it (React runs a child's effects first), so the
+  outer one wins a last-wins collect. A pushed promise keeps its place and
+  shows nothing new until it settles, as a server push(promise) on a
+  navigation.
 - `useLinkStatus` shows work at once and settles with the page. It sets its
   value in the lane of the notification that carries it and starts no
   transition of its own. The click's notification runs in a task of its

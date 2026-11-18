@@ -154,7 +154,10 @@ const HomePage: Handler<"home"> = (ctx) => {
 RR's data-derived `meta({ data })` maps to the same push from the LOADER that
 owns the data — `ctx.use(Meta)({ title: data.name })` in the loader body, with
 `loader(Def, { ssr: "await" })` when the title must be in the SSR'd
-head. See `/loader` → "Writing Handles from Loaders". The loader flag is
+head. See `/loader` → "Writing Handles from Loaders". A title the client
+changes after render (a draft, a live count; what RR apps set with
+`document.title` in an effect) is pushed from the component with
+`usePushHandle(Meta)` (`/hooks` → "Where should a handle value come from?"). The loader flag is
 unrelated to RR7's `ssr: "await"` (SPA mode), which has no route-wide Rango
 equivalent: it makes the server settle that loader before the first flush.
 

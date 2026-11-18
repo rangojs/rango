@@ -77,7 +77,8 @@ export function startFetchedLoaderRead(
             `(load(), useRefreshLoaders()), but no segment on this page ` +
             `registers it with loader(), so they have no segment to belong to ` +
             `and are not applied. Register the loader on the route or layout ` +
-            `whose handle values it writes.`,
+            `whose handle values it writes, or push them from the component ` +
+            `that renders the data with usePushHandle.`,
         );
       }
       return;

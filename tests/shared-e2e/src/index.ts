@@ -4037,3 +4037,5 @@ export { runInterceptSourceKeyTests } from "./intercept-source-key-scenario.js";
 export type { InterceptSourceKeyScenarioOptions } from "./intercept-source-key-scenario.js";
 export { runOnErrorBackgroundTests } from "./onerror-background-scenario.js";
 export type { OnErrorBackgroundScenarioOptions } from "./onerror-background-scenario.js";
+export { runPushHandleTests } from "./push-handle-scenario.js";
+export type { PushHandleScenarioOptions } from "./push-handle-scenario.js";
