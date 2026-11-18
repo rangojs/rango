@@ -17,6 +17,7 @@ import {
   render,
 } from "@testing-library/react";
 import { Outlet, ParallelOutlet } from "../../client.js";
+import { OutletProvider } from "../../outlet-provider.js";
 import { collectHandleData, createHandle, type Handle } from "../../handle.js";
 import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
 import { Meta } from "../../handles/meta.js";
@@ -936,6 +937,45 @@ describe("push() belongs to the render that called usePushHandle", () => {
     expect(String(caught)).toContain(
       "push() was called after the render that created it committed",
     );
+  });
+});
+
+describe("usePushHandle under an outlet provider with no segment", () => {
+  it("files its values under the nearest segment above, as a clientUrls group's page does", async () => {
+    // ClientUrlsRoot (client-urls/client-root.tsx) wraps a group's page and
+    // layouts in OutletProviders that carry no segment of their own.
+    function GroupPage(): ReactNode {
+      usePushHandle(Titles)("Client group");
+      return null;
+    }
+    function GroupRoot(): ReactNode {
+      return (
+        <OutletProvider content={null}>
+          <OutletProvider content={null}>
+            <GroupPage />
+          </OutletProvider>
+        </OutletProvider>
+      );
+    }
+    const { router } = await renderRoute(
+      [
+        { path: "/g", Component: Layout },
+        { path: "/g", Component: GroupRoot },
+      ],
+      {
+        request: "/g",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server group"], 1],
+        ],
+      },
+    );
+    expect(router.handleData(Titles)[router.segmentId(1)]).toEqual([
+      "Server group",
+      "Client group",
+    ]);
+    expect(text("title")).toBe(titleOf(["Server group"], "Client group"));
+    expect(messages(warnings, "rendered outside a route segment")).toEqual([]);
   });
 });
 

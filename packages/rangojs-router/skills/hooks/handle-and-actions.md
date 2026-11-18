@@ -182,7 +182,9 @@ render that created it committed ...`. That is a call from an effect, an
 - **Its own segment.** The values belong to the segment the component renders
   in: the nearest route, layout, parallel slot or intercept. A component in a
   layout pushes into the layout's segment, so a route's server title still
-  beats it under `Meta`.
+  beats it under `Meta`. In a `clientUrls()` group the page and its group
+  layouts all render inside the matched route's segment, so their pushes land
+  there, after the values the route's loaders pushed.
 - **Plain values.** A promise throws: its settle order would decide what
   shows. Push the value once the data is there.
 - **One component per handle per segment.** A second mounted component that

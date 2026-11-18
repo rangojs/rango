@@ -43,7 +43,12 @@ export function usePushHandle<T, A>(handle: Handle<T, A>): (value: T) => void {
   // can apply to the router too, would keep one across renders.
   "use no memo";
   const controller = useContext(NavigationStoreContext)?.eventController;
-  const segmentId = useContext(OutletContext)?.segment?.id;
+  // The nearest provider that names a segment: a clientUrls group's page and
+  // layouts render under OutletProviders with none (ClientUrlsRoot), inside
+  // the group route's segment.
+  let outlet = useContext(OutletContext);
+  while (outlet && !outlet.segment) outlet = outlet.parent ?? null;
+  const segmentId = outlet?.segment?.id;
   const [owner] = useState((): { warned?: boolean } => ({}));
   const handleId = handle.$$id;
   // This render's values; sealed once its commit published them.
