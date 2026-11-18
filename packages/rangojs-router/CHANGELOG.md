@@ -80,6 +80,30 @@ as a change on every re-delivery, so key the effect on a primitive, such as
 Testing: `renderRoute`'s `router.refresh()` takes `handles`, the values the
 response carries.
 
+### Fixed: a loader read's handle values, on late pushes, the hydration window and several routers
+
+**Before.** On a `load()` / `refetch()` or `useRefreshLoaders()` read:
+
+- a push the loader made after its body returned (from a timer, or a promise
+  it did not await) was dropped without a word;
+- a read applied while the document was still hydrating wrote the document's
+  values into the history entry, so Back to that page showed the old title;
+- a read on one router made a read of the same loader on another router on
+  the page stale, so that router's title never took the new value.
+
+**Now.**
+
+- The reply still carries only what the body pushed before it returned, and
+  development warns, naming the loader and the handle, that the push came too
+  late. Push a promise, or reserve the slot with `.defer()`, before returning.
+- The history entry keeps the values the read applied, written when they
+  apply, so Back shows them.
+- Each router tracks its own newest read per loader. Within one loader
+  bucket, a newer read that fails still leaves an older one's values
+  unapplied, as it leaves its data: the page keeps what it showed, as with a
+  navigation superseded by one that fails. A newer read of the same loader
+  under another `key` also supersedes the older read's values, not its data.
+
 ## 0.36.1 (2026-11-18)
 
 ### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))

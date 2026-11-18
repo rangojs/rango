@@ -1876,11 +1876,25 @@ and those of the loaders it reads, land in one bucket, and the reply carries
 it as `handles` beside `loaderResult`, with `pushedBy`, the loader whose run
 pushed each value. The read's ctx runs a loader the body reads with
 `ctx.use()` inside that loader's body scope, as a render does
-(`loader-resolution.ts`), so `getHandlePushOwner` names it. The browser
-applies the values after the data (`browser/fetched-loader-handles.ts`), once
-its pushed promises settle, only while the page the read was sent from is on
-screen (same history key and nav instance) and no newer read of the loader was
-sent. The values go to the first segment that holds the loader's earlier
+(`loader-resolution.ts`), so `getHandlePushOwner` names it. The reply holds
+what the body pushed by the time it returned: the lane then closes the
+loader's bucket (`HandleStore.closeSegment`), and a later push (a timer, a
+promise the body did not await) records nothing and warns in development,
+once per read, that it came too late. The browser applies the values after
+the data (`browser/fetched-loader-handles.ts`), once its pushed promises
+settle, only while the page the read was sent from is on screen (same history
+key and nav instance) and no newer read of the loader was sent on the same
+router (`NavigationStore.beginLoaderRead`, per router, so two routers on one
+page never supersede each other's reads). Within one loader bucket, a newer
+read that fails leaves an older one's values unapplied, as the loader store
+drops the older one's data: the page keeps the data and the values it showed,
+as a navigation superseded by one that fails does. The newest-read gate is
+per loader on the router, not per bucket: a newer read of the same loader
+under another `key` also leaves the older read's values unapplied, while the
+older read's data still lands in its own bucket. The history entry's copy is written when the values
+apply, from the data they were applied to: during the hydration window that
+is when the window closes (`setLoaderReadHandleData`'s `applied`), since
+`getHandleState()` is the document's snapshot until then. The values go to the first segment that holds the loader's earlier
 values, else the first that registers it, and replace the loader's values in
 every segment that registers it (`mergeLoaderReadHandleData`,
 `handles/pushed-by.ts`, the partial merge with the loader as the run that

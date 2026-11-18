@@ -1120,7 +1120,12 @@ A fetchable loader read on its own — `load()` / `refetch()`, or a
 loaders it awaits included). The browser applies them after the read's data,
 in place of the loader's earlier values in the segment that registers it, so
 `useHandle` readers and `<Html.Meta />` (the tab title) show them; a pushed
-promise applies once it settles. This is how a live part of a page keeps its
+promise applies once it settles. A read that pushes nothing clears the
+loader's earlier values, as a navigation that re-runs the loader does. The
+reply carries what the body pushed by the time it returned: a push it makes
+later (a timer, a promise it did not await) is not applied, and development
+warns that it came too late, so push a promise or reserve the slot with
+`.defer()` before returning. This is how a live part of a page keeps its
 title current: a rename that reaches the page through a refresh renames the
 tab too. They apply only while the page the read was sent from is still on
 screen, and the newest read of the loader wins. A value pushed by a loader the

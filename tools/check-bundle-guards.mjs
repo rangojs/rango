@@ -338,6 +338,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // follow-up (readers skip other handles' notifications, dates by time)
 // measures 55538B.
 //
+// Not lowered on 2026-11-18 after a loader read's apply half was tried behind
+// the dynamic import load() awaits: getManualChunks puts every router source
+// module in this chunk, so `await import()` of browser/fetched-loader-handles.ts
+// keeps it here and adds the import glue (measured +88B gzip). A chunk of its
+// own would cost the first load() a fetch it does not make today.
 // Raised 54.5KB -> 54.875KB on 2026-11-18 for useHandle keeping its
 // reference while the content is equal, measured on cloudflare-basic from
 // the useHandle branch before its review fixes 55764B -> 55842B (+78B gzip).

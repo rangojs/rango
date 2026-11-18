@@ -57,6 +57,7 @@ vi.mock("../../server/request-context.js", () => ({
     _handleStore: {
       getDataForSegment: () => ({}),
       getPushedBy: () => undefined,
+      closeSegment: () => {},
     },
     res: { headers: new Headers(), status: 200 },
   }),

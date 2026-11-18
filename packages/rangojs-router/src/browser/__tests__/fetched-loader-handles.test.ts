@@ -157,6 +157,22 @@ describe("startFetchedLoaderRead", () => {
     ]);
   });
 
+  it("a read on another router of the page leaves this router's read current", async () => {
+    const page = mountPage();
+    const other = mountPage();
+    const apply = startFetchedLoaderRead("title", page);
+    // The same loader read on a second router, sent after this one.
+    startFetchedLoaderRead("title", other)({ Meta: [{ title: "Other" }] });
+    apply({ Meta: [{ title: "New" }] });
+    await settle();
+    expect(page.eventController.getHandleState().data.Meta.R0).toEqual([
+      { title: "New" },
+    ]);
+    expect(other.eventController.getHandleState().data.Meta.R0).toEqual([
+      { title: "Other" },
+    ]);
+  });
+
   it("applies nothing for a loader no segment registers, and warns once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const page = mountPage();
@@ -179,6 +195,30 @@ describe("startFetchedLoaderRead", () => {
     ]);
     page.eventController.releaseHydrationLock();
     expect(page.eventController.getHandleState().data.Meta.R0).toEqual([
+      { title: "New" },
+    ]);
+    // The history entry keeps the values the read applied, for Back.
+    expect(page.store.getCachedSegments("/chat")?.handleData?.Meta.R0).toEqual([
+      { title: "New" },
+    ]);
+  });
+
+  it("a read applied after the hydration window, behind a navigation that waited, keeps its entry's copy and leaves the new page's", async () => {
+    const page = mountPage();
+    page.eventController.lockHydration();
+    startFetchedLoaderRead("title", page)({ Meta: [{ title: "New" }] });
+    await settle();
+    // A navigation's handle write waits behind the read's.
+    page.eventController.setHandleData(
+      { Meta: { L0: [{ title: "Site" }], R1: [{ title: "Next" }] } },
+      ["L0", "R1"],
+    );
+    page.eventController.releaseHydrationLock();
+    expect(page.eventController.getHandleState().data.Meta).toEqual({
+      L0: [{ title: "Site" }],
+      R1: [{ title: "Next" }],
+    });
+    expect(page.store.getCachedSegments("/chat")?.handleData?.Meta.R0).toEqual([
       { title: "New" },
     ]);
   });

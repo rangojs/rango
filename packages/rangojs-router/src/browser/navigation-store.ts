@@ -268,6 +268,10 @@ export function createNavigationStore(
   // never overwrite a newer same-URL visit's state.
   let navInstance = 0;
 
+  // beginLoaderRead: the newest fetched read of each loader on this router.
+  const latestLoaderRead = new Map<string, number>();
+  let loaderReadSeq = 0;
+
   // Current history key (set on navigation, stored in history.state)
   let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
 
@@ -547,6 +551,17 @@ export function createNavigationStore(
      */
     getNavInstance(): number {
       return navInstance;
+    },
+
+    beginLoaderRead(loaderId: string): () => boolean {
+      const seq = ++loaderReadSeq;
+      latestLoaderRead.set(loaderId, seq);
+      const key = currentHistoryKey;
+      const instance = navInstance;
+      return () =>
+        latestLoaderRead.get(loaderId) === seq &&
+        currentHistoryKey === key &&
+        navInstance === instance;
     },
 
     /**

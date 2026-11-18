@@ -333,9 +333,15 @@ export interface EventController {
    * values in its segment (handles/pushed-by.ts mergeLoaderReadHandleData).
    * Waits like setHandleData while the hydration window is open. False, and
    * nothing applied, when no segment of the page's handle data registers the
-   * loader.
+   * loader. `applied` gets the handle data once the values are in it: at
+   * once, or when the hydration window closes, before the writes that waited
+   * after this one (the history entry's copy is written from it).
    */
-  setLoaderReadHandleData(loaderId: string, pushes: LoaderReadPushes): boolean;
+  setLoaderReadHandleData(
+    loaderId: string,
+    pushes: LoaderReadPushes,
+    applied?: (data: HandleData) => void,
+  ): boolean;
   /**
    * Open the hydration window. Until releaseHydrationLock(), getHandleState()
    * returns the state the document's HTML was rendered with, and handle writes
@@ -1325,6 +1331,7 @@ export function createEventController(
   function setLoaderReadHandleData(
     loaderId: string,
     pushes: LoaderReadPushes,
+    applied?: (data: HandleData) => void,
   ): boolean {
     const merge = () =>
       mergeLoaderReadHandleData(
@@ -1340,7 +1347,7 @@ export function createEventController(
       const applies = merge() !== undefined;
       if (applies) {
         writesAfterHydration.push(() => {
-          setLoaderReadHandleData(loaderId, pushes);
+          setLoaderReadHandleData(loaderId, pushes, applied);
         });
       }
       return applies;
@@ -1348,6 +1355,7 @@ export function createEventController(
     const merged = merge();
     if (!merged) return false;
     handleData = merged;
+    applied?.(merged);
     notifyHandles.schedule();
     return true;
   }
