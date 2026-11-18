@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.36.1 (2026-11-18)
 
-### Fixed: a loader read on its own applies the handle values it pushes
+### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))
 
 **Before.** A loader that wrote a handle (`ctx.use(Meta)({ title })`, a
 breadcrumb) had it applied on a document load and on a navigation, but a read
