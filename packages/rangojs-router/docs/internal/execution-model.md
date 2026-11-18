@@ -2079,6 +2079,19 @@ Here is how each hook gets there:
   sets nothing and does not render (the `hook-render-stability` e2e pins
   that: an earlier version gave every reader an update in the page's lane
   and re-rendered all of them on a search change).
+- Equal content keeps its reference. `useCommitAnchoredState` compares a
+  new value with the one it holds by `samePushValue`
+  (`handles/client-pushes.ts`), the rule client pushes are compared with:
+  arrays and plain objects by entries, React elements by type, key and
+  props, dates by time, anything else (a promise, a URL, a function, a
+  `Map`) by identity, nothing past 32 levels. An equal value sets nothing,
+  so a `useHandle` reader keeps its reference across a re-delivery (an
+  action's revalidation, a refresh, a Back/Forward, a late push, a client
+  push that changes nothing it collects) and an effect keyed on it does
+  not run again; a `useSegments` selector's result follows the same rule.
+  It only decides whether a value moved, never when: a changed value takes
+  the path above. One level of own keys used to rebuild every array of
+  objects on each delivery, and made any two URLs or dates equal.
 - A client handle push (`usePushHandle`) commits with the render that made
   it, and that rule beats the anchor's wait. The pusher publishes its
   render's values from its layout effect into the controller's client layer

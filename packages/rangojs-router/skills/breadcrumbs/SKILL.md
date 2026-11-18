@@ -284,6 +284,12 @@ function BreadcrumbNav() {
 }
 ```
 
+The trail keeps its reference while its content is equal, a crumb's `content`
+element included: an action's revalidation or a refresh that re-delivers the
+same crumbs neither re-renders the reader nor re-runs an effect keyed on the
+trail. A `content` promise compares by identity, so a fresh one on each
+delivery is a change (`/hooks`, "useHandle()").
+
 ### With Selector
 
 Re-render only when the selected value changes:
