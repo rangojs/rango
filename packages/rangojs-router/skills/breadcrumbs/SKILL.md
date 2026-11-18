@@ -1,6 +1,6 @@
 ---
 name: breadcrumbs
-description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, or asking how to show the current navigation path in a layout.
+description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, asking how to show the current navigation path in a layout, or pushing a crumb from client state (usePushHandle).
 argument-hint: "[setup]"
 ---
 
@@ -8,13 +8,16 @@ argument-hint: "[setup]"
 
 Built-in handle for accumulating breadcrumb items across route segments.
 Route, layout, and parallel-slot handlers and loader bodies push items via
-`ctx.use(Breadcrumbs)`; client components read the collected trail with
-`useHandle(Breadcrumbs)`. Items are collected in parent-to-child order with
-automatic deduplication by `href`.
+`ctx.use(Breadcrumbs)`; client components push items for data they learn or
+change after render with `usePushHandle(Breadcrumbs)` and read the collected
+trail with `useHandle(Breadcrumbs)`. Items are collected in parent-to-child
+order with automatic deduplication by `href`. Where a crumb should come from
+(handler, loader or client) is decided in one place:
+[hooks → "Where should a handle value come from?"](../hooks/handle-and-actions.md#where-should-a-handle-value-come-from).
 
 `Breadcrumbs` is exported from both `@rangojs/router` (server, for pushing) and
-`@rangojs/router/client` (for `useHandle`). For page titles and meta tags, use
-the `Meta` handle the same way.
+`@rangojs/router/client` (for `useHandle` and `usePushHandle`). For page titles
+and meta tags, use the `Meta` handle the same way.
 
 ## BreadcrumbItem Type
 
@@ -113,6 +116,40 @@ A loader with its own `cache()` keeps its crumbs on its own hits too: they are
 replayed from the loader's cache entry. A crumb from a loader it awaits appears
 once even when a sibling loader or the handler reads that loader too; that live
 run's crumb replaces the cached one in the trail.
+
+## Pushing from Client Components
+
+A crumb from data the client learns or changes after render (a project a
+`useFetchLoader()` read brought, a name being edited) is pushed by the
+component that holds it, during render:
+
+```tsx
+"use client";
+import { Breadcrumbs, usePushHandle } from "@rangojs/router/client";
+
+function ProjectCrumb({ project }: { project: { id: string; name: string } }) {
+  usePushHandle(Breadcrumbs)({
+    label: project.name,
+    href: `/projects/${project.id}`,
+  });
+  return null;
+}
+```
+
+The crumb lands in the component's own segment, after that segment's server
+crumbs. A server crumb with the same `href` keeps its position in the trail
+and takes the client's label (dedupe keeps the first position and the last
+value), so a server crumb for the first paint and a client crumb for later
+changes show as one crumb. The client crumb is never in the SSR HTML, leaves
+with the component, and is never stored in a history entry. Rules and timing:
+[hooks → usePushHandle()](../hooks/handle-and-actions.md#usepushhandle).
+
+A client crumb's `content` is passed through as it is, as on the server: an
+element, or a promise the reader resolves with `use()` (next section). A
+promise compares by reference, so a client crumb whose `content` is a fresh
+promise on every render publishes on every render, and a component that
+also reads `Breadcrumbs` loops. Pass an element, or keep the promise stable
+(from a loader, or `useMemo`).
 
 ## Async Content
 
@@ -246,6 +283,31 @@ function BreadcrumbNav() {
   );
 }
 ```
+
+The trail keeps its reference while its content is equal: an action's
+revalidation or a refresh that re-delivers the same crumbs neither re-renders
+the reader nor re-runs an effect keyed on the trail. That holds while each
+crumb's `content` is plain text or host elements (`<b>`, `<span>`) holding
+only those. Some `content` arrives fresh on every response and counts as a
+change each time, nested inside a host element too, so the trail gets a new
+reference on each re-delivery:
+
+- a client component (`content: <OrderIcon />`), which the response decodes
+  as a new lazy reference;
+- async server content (an async server component), decoded the same way;
+- a `content` promise, compared by identity.
+
+For crumbs like these, key the effect on a primitive the crumb carries
+instead of the trail, such as its `href` or `label`:
+
+```tsx
+const href = useHandle(Breadcrumbs, (crumbs) => crumbs.at(-1)?.href);
+useEffect(() => {
+  // runs once per crumb change, whatever `content` holds
+}, [href]);
+```
+
+See `/hooks`, "useHandle()".
 
 ### With Selector
 

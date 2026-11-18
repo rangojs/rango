@@ -124,6 +124,18 @@ function keptValues(resolved: ResolvedValue[]): unknown[] {
 }
 
 /**
+ * One list of pushed values with its deferred entries awaited, as
+ * resolveDeferredHandleValues awaits a segment's: shallow, in order, a
+ * rejected or nullish deferred dropped. A client component's pushes
+ * (usePushHandle) resolve through it, so they follow the server's rules.
+ */
+export async function resolveDeferredList(
+  values: readonly unknown[],
+): Promise<unknown[]> {
+  return keptValues(await resolveValues(values));
+}
+
+/**
  * Full-render handle stream: a one-shot async generator that yields the FINAL
  * handle snapshot with every top-level deferred value resolved. Drop-in for
  * `handleStore.stream()` on full / HTML renders (initial load, 404, progressive

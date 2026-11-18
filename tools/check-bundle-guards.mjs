@@ -322,7 +322,38 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // load() and group refresh, and use-loader.tsx and the event controller are
 // in the eager runtime. By the owner's rule above: 54610B + 256B, rounded up
 // to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 53.625 * 1024;
+//
+// Raised 53.625KB -> 54.5KB on 2026-11-18 for usePushHandle (client
+// components push handle values), measured on cloudflare-basic from main
+// 5e2de0f 54718B -> 55497B (+779B gzip): router code +600B (the branch
+// without cloudflare-basic's push-handle fixture measures 55318B), and +179B
+// from the fixture. The hook (browser/react/use-push-handle.ts), the event
+// controller's client layer (setClientHandle, withClientHandles, the held
+// state), the read-time merge and structural equality
+// (handles/client-pushes.ts), useHandle's merge and SlotSegment
+// (client.tsx). None of it can load lazily: useHandle reads the layer on
+// every handle read, and the controller and useHandle are in the eager
+// runtime. Production error text is shortened to its rule. By the owner's
+// rule above: 55497B + 256B, rounded up to the next 128B step. The review's
+// follow-up (readers skip other handles' notifications, dates by time)
+// measures 55538B.
+//
+// Not lowered on 2026-11-18 after a loader read's apply half was tried behind
+// the dynamic import load() awaits: getManualChunks puts every router source
+// module in this chunk, so `await import()` of browser/fetched-loader-handles.ts
+// keeps it here and adds the import glue (measured +88B gzip). A chunk of its
+// own would cost the first load() a fetch it does not make today.
+// Raised 54.5KB -> 54.875KB on 2026-11-18 for useHandle keeping its
+// reference while the content is equal, measured on cloudflare-basic from
+// the useHandle branch before its review fixes 55764B -> 55842B (+78B gzip).
+// samePushValue (handles/client-pushes.ts) remembers the object pairs it
+// found equal once a walk passes 64 of them, so a sub-object shared at many
+// places is compared once instead of once per path (an equal binary DAG 22
+// levels deep took 685 ms; 0.1 ms now). It cannot load lazily: every
+// useHandle and useSegments delivery and every client push compares with
+// it. By the owner's rule above: 55842B + 256B, rounded up to the next 128B
+// step.
+const ROUTER_CHUNK_GZIP_MAX = 54.875 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

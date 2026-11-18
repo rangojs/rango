@@ -1876,11 +1876,25 @@ and those of the loaders it reads, land in one bucket, and the reply carries
 it as `handles` beside `loaderResult`, with `pushedBy`, the loader whose run
 pushed each value. The read's ctx runs a loader the body reads with
 `ctx.use()` inside that loader's body scope, as a render does
-(`loader-resolution.ts`), so `getHandlePushOwner` names it. The browser
-applies the values after the data (`browser/fetched-loader-handles.ts`), once
-its pushed promises settle, only while the page the read was sent from is on
-screen (same history key and nav instance) and no newer read of the loader was
-sent. The values go to the first segment that holds the loader's earlier
+(`loader-resolution.ts`), so `getHandlePushOwner` names it. The reply holds
+what the body pushed by the time it returned: the lane then closes the
+loader's bucket (`HandleStore.closeSegment`), and a later push (a timer, a
+promise the body did not await) records nothing and warns in development,
+once per read, that it came too late. The browser applies the values after
+the data (`browser/fetched-loader-handles.ts`), once its pushed promises
+settle, only while the page the read was sent from is on screen (same history
+key and nav instance) and no newer read of the loader was sent on the same
+router (`NavigationStore.beginLoaderRead`, per router, so two routers on one
+page never supersede each other's reads). Within one loader bucket, a newer
+read that fails leaves an older one's values unapplied, as the loader store
+drops the older one's data: the page keeps the data and the values it showed,
+as a navigation superseded by one that fails does. The newest-read gate is
+per loader on the router, not per bucket: a newer read of the same loader
+under another `key` also leaves the older read's values unapplied, while the
+older read's data still lands in its own bucket. The history entry's copy is written when the values
+apply, from the data they were applied to: during the hydration window that
+is when the window closes (`setLoaderReadHandleData`'s `applied`), since
+`getHandleState()` is the document's snapshot until then. The values go to the first segment that holds the loader's earlier
 values, else the first that registers it, and replace the loader's values in
 every segment that registers it (`mergeLoaderReadHandleData`,
 `handles/pushed-by.ts`, the partial merge with the loader as the run that
@@ -2079,6 +2093,57 @@ Here is how each hook gets there:
   sets nothing and does not render (the `hook-render-stability` e2e pins
   that: an earlier version gave every reader an update in the page's lane
   and re-rendered all of them on a search change).
+- Equal content keeps its reference. `useCommitAnchoredState` compares a
+  new value with the one it holds by `samePushValue`
+  (`handles/client-pushes.ts`), the rule client pushes are compared with:
+  arrays and plain objects by entries, React elements by type, key and
+  props, dates by time, anything else (a promise, a URL, a function, a
+  `Map`) by identity, nothing past 32 levels. An equal value sets nothing,
+  so a `useHandle` reader keeps its reference across a re-delivery (an
+  action's revalidation, a refresh, a Back/Forward, a late push, a client
+  push that changes nothing it collects) and an effect keyed on it does
+  not run again; a `useSegments` selector's result follows the same rule.
+  It only decides whether a value moved, never when: a changed value takes
+  the path above. One level of own keys used to rebuild every array of
+  objects on each delivery, and made any two URLs or dates equal.
+  Limitation: a value holding what Flight decodes fresh on each response
+  is never equal to its re-delivery. A client component element's type
+  decodes as a new `react.lazy` reference, async server content decodes as
+  a new lazy value, and a nested promise is a new promise, so a crumb with
+  `content: <OrderIcon />` gives the trail a new reference every time. The
+  router does not read lazy payloads to make them equal; the skills tell
+  the reader to key on a primitive (a crumb's `href`) instead. The walk
+  remembers pairs found equal once it has visited 64 object pairs, so a
+  sub-object Flight keeps shared costs once, not once per path to it.
+- A client handle push (`usePushHandle`) commits with the render that made
+  it, and that rule beats the anchor's wait. The pusher publishes its
+  render's values from its layout effect into the controller's client layer
+  (`setClientHandle`), kept apart from the server's handle data, and every
+  `useHandle` reader merges them after the server's values of their segment
+  when it reads (`withClientHandles`). Readers hear the publish at once, in
+  that layout effect, so the update commits before the browser paints; a
+  reader subscribes in a layout effect of its own, so one mounted in the
+  same commit as the pusher reads the value before paint too (the
+  `push-handle` e2e samples every frame of a navigation that mounts both).
+  While a page is held, a client push comes from the page on screen (the
+  held page's components have not committed), so the reader merges it with
+  the server state shown there (`getHeldHandleState`, taken at the first
+  "anchor" before the payload's handle writes, cleared at the release) and
+  sets it at once (`useCommitAnchoredState`'s `now`), instead of waiting for
+  the held page. A `load()` during a held navigation used to paint the new
+  data beside the old title. The held page's own pushers publish in its
+  commit, before `NavigationProvider`'s layout effect releases, so the
+  release's update and theirs commit together. The client layer is hidden
+  during the hydration window (the document's HTML has the server's values)
+  and is never written into a history entry. Two pushers of one handle in
+  one segment follow tree order, not commit order: a sibling that suspends
+  commits after the one behind it, so a join renders every pusher of that
+  segment again, in one sync commit before paint, and their layout effects
+  publish in tree order. Limitation: a pusher nested inside another of the
+  same handle comes before it (React runs a child's effects first), so the
+  outer one wins a last-wins collect. A pushed promise keeps its place and
+  shows nothing new until it settles, as a server push(promise) on a
+  navigation.
 - `useLinkStatus` shows work at once and settles with the page. It sets its
   value in the lane of the notification that carries it and starts no
   transition of its own. The click's notification runs in a task of its

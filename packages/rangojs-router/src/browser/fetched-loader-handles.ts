@@ -1,5 +1,5 @@
 import type { EventController } from "./event-controller.js";
-import type { NavigationStore } from "./types.js";
+import type { HandleData, NavigationStore } from "./types.js";
 import { resolveDeferredPushes } from "../handles/deferred-resolution.js";
 
 /**
@@ -21,9 +21,6 @@ export interface FetchedLoaderPage {
   store: NavigationStore;
 }
 
-/** The newest read sent for each loader: an older reply leaves the handles. */
-const latestRead = new Map<string, number>();
-let readSeq = 0;
 const warnedUnregistered = new Set<string>();
 
 /**
@@ -35,8 +32,9 @@ const warnedUnregistered = new Set<string>();
  * navigation lane), on their own after the data: a handle value never holds
  * the loader's data. They apply only while the page the read was sent from is
  * still on screen (same history entry, no commit since, as NavigationProvider's
- * handle stream checks) and no newer read of the loader was sent, and the
- * history entry keeps them for Back. A loader no segment of the page
+ * handle stream checks) and no newer read of the loader was sent on its router
+ * (NavigationStore.beginLoaderRead), and the history entry keeps them for
+ * Back, written when they apply. A loader no segment of the page
  * registers has no segment to own its pushes: they are not applied (warned
  * once per loader in development).
  */
@@ -47,15 +45,12 @@ export function startFetchedLoaderRead(
   handles: FetchedLoaderHandles | undefined,
   pushedBy?: FetchedLoaderPushedBy,
 ) => void {
-  const seq = ++readSeq;
-  latestRead.set(loaderId, seq);
-  const historyKey = page?.store.getHistoryKey();
-  const navInstance = page?.store.getNavInstance();
-  const current = (): boolean =>
-    page !== undefined &&
-    latestRead.get(loaderId) === seq &&
-    page.store.getHistoryKey() === historyKey &&
-    page.store.getNavInstance() === navInstance;
+  // No page (no router state to apply to): nothing to apply, nothing to gate.
+  if (!page) return () => {};
+  const { eventController, store } = page;
+  const historyKey = store.getHistoryKey();
+  const navInstance = store.getNavInstance();
+  const current = store.beginLoaderRead(loaderId);
 
   const apply = async (
     handles: FetchedLoaderHandles | undefined,
@@ -64,8 +59,11 @@ export function startFetchedLoaderRead(
     if (!handles || !current()) return;
     const pushes = await resolveDeferredPushes(handles, pushedBy);
     if (!current()) return;
-    const { eventController, store } = page!;
-    if (!eventController.setLoaderReadHandleData(loaderId, pushes)) {
+    // The entry's copy is written when the values apply: after the
+    // hydration window, from the data they were applied to.
+    const applied = (data: HandleData): void =>
+      store.updateCacheHandleDataIfOwned(historyKey, data, navInstance);
+    if (!eventController.setLoaderReadHandleData(loaderId, pushes, applied)) {
       if (
         process.env.NODE_ENV !== "production" &&
         Object.values(pushes.values).some((pushed) => pushed.length > 0) &&
@@ -77,16 +75,11 @@ export function startFetchedLoaderRead(
             `(load(), useRefreshLoaders()), but no segment on this page ` +
             `registers it with loader(), so they have no segment to belong to ` +
             `and are not applied. Register the loader on the route or layout ` +
-            `whose handle values it writes.`,
+            `whose handle values it writes, or push them from the component ` +
+            `that renders the data with usePushHandle.`,
         );
       }
-      return;
     }
-    store.updateCacheHandleDataIfOwned(
-      historyKey!,
-      eventController.getHandleState().data,
-      navInstance!,
-    );
   };
   return (handles, pushedBy) => {
     apply(handles, pushedBy).catch((error) =>

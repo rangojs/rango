@@ -1,5 +1,109 @@
 # Changelog
 
+## Unreleased
+
+### Added: client components push handle values with `usePushHandle()`
+
+**Before.** Only the server wrote handles: a handler or a loader body with
+`ctx.use(Handle)`. A value a client component learned or changed after the
+server rendered had no way into a handle: a live chat's unread count, the
+draft title of a page being edited, a project a `useFetchLoader()` read
+brought, optimistic state. The tab title and the breadcrumb trail kept the
+server's values while the page showed newer ones.
+
+**Now.** `usePushHandle(Handle)` returns `push`, the client side of
+`ctx.use(Handle)`. Call it during render:
+
+```tsx
+"use client";
+import { Meta, usePushHandle } from "@rangojs/router/client";
+
+function ChatTitle({ unread }: { unread: number }) {
+  const push = usePushHandle(Meta);
+  if (unread > 0) push({ title: `Chat (${unread})` });
+  return null;
+}
+```
+
+The values land in the component's own segment, after that segment's server
+values, so a `Meta` title or a `Breadcrumbs` crumb with the same `href` takes
+the client's value. The order is the tree's, never arrival order: a server
+value that resolves late never overwrites a client value, nor the reverse,
+and two components that push one handle in one segment show in tree order,
+whichever commits first (one nested inside the other shows before it).
+`push(promise)` works as on the server: the value keeps the place it was
+pushed in, readers keep what they showed until it resolves, and a rejected
+or `null` result is dropped. Values show with the render that pushed them (a
+reader mounted in the same navigation reads them before the browser paints),
+leave when the component unmounts, and are never stored in a history entry.
+They are never in SSR HTML or a `ppr` shell: a value the first paint must
+show is pushed on the server, and development warns when a client value
+lands in a segment the server pushed nothing into and changes what the
+document showed. `push` after its render committed (an effect, an event
+handler, a child that re-renders on its own) throws. `useHandle` is
+unchanged. Where a handle value should come from (the server for what it
+knows when a segment renders, `usePushHandle` for live data and live edits
+on the page, and what to prefer in `clientUrls()` groups): `/hooks` skill,
+`handle-and-actions.md`.
+
+Testing: `renderRoute`'s `handles` take a segment
+(`[handle, values, segment?]`), specs take `slots`, and the router handle
+gains `handleData(handle)`, `segmentId(segment?)`, `pushLateHandles()`,
+`action({ handles })` and `respondToLoads({ loaders, handles })`.
+
+### Changed: `useHandle()` keeps its reference while the content is equal
+
+**Before.** `useHandle()` compared a new value with the last one a single
+level deep. A re-delivery decodes fresh objects (an action's revalidation, a
+refresh, a Back/Forward, a late push), so `useHandle(Breadcrumbs)`,
+`useHandle(Meta)` and a default `T[][]` collect returned a new array on each
+one even when nothing changed, and an effect keyed on the value ran again.
+The workaround was to select a single item
+(`useHandle(H, (s) => s.at(-1)?.at(-1))`). The same one-level rule made any
+two `URL`s or dates equal, so `useSegments((s) => s.location)` or a selector
+returning a date kept the old value.
+
+**Now.** An equal value keeps the reference the reader already holds, and
+the reader does not render. Equal is the rule `usePushHandle` values are
+compared with: arrays and plain objects by their entries, React elements by
+type, key and props, dates by time, anything else (a promise, a `URL`, a
+function, a `Map`) by identity, down to 32 levels, each shared sub-object
+compared once. A real change still brings a new reference in the commit its
+page's values land in. The same rule applies to a `useSegments()`
+selector's result. Selecting an item is now optional for plain data and host
+elements. It is still needed when the value holds what a response decodes
+fresh each time: a client component element (a crumb's
+`content: <OrderIcon />`), async server content, or a promise. Those count
+as a change on every re-delivery, so key the effect on a primitive, such as
+`useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`.
+
+Testing: `renderRoute`'s `router.refresh()` takes `handles`, the values the
+response carries.
+
+### Fixed: a loader read's handle values, on late pushes, the hydration window and several routers
+
+**Before.** On a `load()` / `refetch()` or `useRefreshLoaders()` read:
+
+- a push the loader made after its body returned (from a timer, or a promise
+  it did not await) was dropped without a word;
+- a read applied while the document was still hydrating wrote the document's
+  values into the history entry, so Back to that page showed the old title;
+- a read on one router made a read of the same loader on another router on
+  the page stale, so that router's title never took the new value.
+
+**Now.**
+
+- The reply still carries only what the body pushed before it returned, and
+  development warns, naming the loader and the handle, that the push came too
+  late. Push a promise, or reserve the slot with `.defer()`, before returning.
+- The history entry keeps the values the read applied, written when they
+  apply, so Back shows them.
+- Each router tracks its own newest read per loader. Within one loader
+  bucket, a newer read that fails still leaves an older one's values
+  unapplied, as it leaves its data: the page keeps what it showed, as with a
+  navigation superseded by one that fails. A newer read of the same loader
+  under another `key` also supersedes the older read's values, not its data.
+
 ## 0.36.1 (2026-11-18)
 
 ### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))

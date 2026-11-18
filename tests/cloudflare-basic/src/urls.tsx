@@ -381,6 +381,8 @@ import { actionPersistsPatterns } from "./pages/action-persists.js";
 import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import { loaderRemountRefreshPatterns } from "./pages/loader-remount-refresh.js";
 import { loaderReadHandlesPatterns } from "./pages/loader-read-handles.js";
+import { pushHandlePatterns } from "./pages/push-handle.js";
+import pushHandleGroupPatterns from "./pages/push-handle.client-urls.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3317,6 +3319,12 @@ export const urlpatterns = urls(
         // A loader read on its own applies its handle pushes (mirrors the
         // router e2e app's /loader-read-handles/chat).
         include("/", loaderReadHandlesPatterns, { name: "" }),
+        // Client components push handle values (mirrors the router e2e app's
+        // /push-handle/* and /push-handle-group).
+        include("/", pushHandlePatterns, { name: "" }),
+        include("/push-handle-group", pushHandleGroupPatterns, {
+          name: "pushHandleGroup",
+        }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

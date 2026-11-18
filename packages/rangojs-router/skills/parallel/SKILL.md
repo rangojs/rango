@@ -114,6 +114,14 @@ Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
 push handle data. (Loader bodies can too — see `/loader` → "Writing Handles
 from Loaders" — which often replaces the UI-less `@meta` slot below.)
 
+A client component the slot renders pushes into the same segment with
+`usePushHandle` (`/hooks` → "usePushHandle()"), after the slot's server
+values, an intercept's slot included. A client component the route's own
+page renders pushes into the route's segment, which is collected before the
+route's slots: a route's `@meta` slot title beats a title that page pushes.
+Push a live title from a component the `@meta` slot renders, or move that
+server title into the route's handler or loader.
+
 A slot's pushes are stored under the slot's own segment (`<parent>.@slot`),
 separate from the parent's pushes:
 

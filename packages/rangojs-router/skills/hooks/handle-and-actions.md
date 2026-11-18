@@ -1,10 +1,343 @@
 # Handle and Action Hooks
 
-## Handle Hooks
+This page is the home of handles: what they are, who writes them, how their
+values are ordered, how to read them, and where a value should come from.
+Other skills link here instead of repeating it.
+
+## Handles
+
+### What a handle is
+
+A handle collects values across the segments a page matched: its layouts,
+routes, parallel slots and intercepts. Each segment holds its own list of
+values; a reader gets the result of the handle's `collect` over those lists,
+in tree order (parent before child, a slot after the segment that declares
+it).
+
+```ts
+// handles/page-title.ts
+import { createHandle } from "@rangojs/router";
+
+// The last value pushed anywhere on the page wins.
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "My App",
+);
+```
+
+`createHandle()` with no collect returns the lists as they are
+(`T[][]`, one per segment that pushed). Two handles ship with the router:
+`Meta` (the document's `<head>`, rendered by `<Html.Meta />`) and
+`Breadcrumbs` (a trail, deduped by `href`). See "Meta and Breadcrumbs" below.
+
+### How values are ordered
+
+Within one segment, the server's values come first, in the order the
+segment's handler and loaders pushed them, then the values client components
+in that segment push:
+
+```
+[ layout: [server...], route: [server..., client...] ]
+```
+
+The position is fixed by the tree, never by arrival time: a server value that
+resolves late (`push(promise)`, a streamed loader, a `ppr` live-lane push)
+lands before the client's values of its segment, and a client value never
+overwrites a server one, nor the reverse. Two client components that push one
+handle in one segment show in tree order, whichever of them commits first. A
+component nested inside another that pushes the same handle shows before it,
+so the outer one wins a last-wins collect. The collect then decides what
+wins: `Meta`'s title and `PageTitle` above take the last one, so a client
+title beats the server title of the same segment; `Breadcrumbs` keeps one
+crumb per `href`, with the last value.
+
+### Who writes a handle
+
+The server pushes what it knows when a segment renders: a handler, or a
+loader. A client component pushes live data and live edits on the page, as a
+value or as a promise.
+
+| Writer                                        | Where                          | When its values reach the page                                                                                                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ctx.use(Handle)` in a handler                | route, layout, slot, intercept | With the segment's render; in the SSR document                                                                                                                                                                                                                                     |
+| `ctx.use(Handle)` in a loader body            | any loader                     | In the SSR document when the loader is registered with `ssr: "await"`. Otherwise usually in it when pushed before the page's handlers finish, else applied on the client right after hydration. A read of the loader on its own (`load()`, a group refresh) carries its pushes too |
+| `usePushHandle(Handle)` in a client component | the component's own segment    | With the render that pushed them, on the client only (a promise once it resolves); never in SSR HTML or a `ppr` shell                                                                                                                                                              |
+
+Middleware has no handle APIs. A server component that pushes after an
+`await` throws `LateHandlePushError`: reserve the slot in the handler with
+`ctx.use(Handle).defer()` (`/breadcrumbs`, "Deferred content"). Loader
+delivery in detail: `/loader` → "Writing Handles from Loaders".
+
+### Where should a handle value come from?
+
+Ask where the value is known and whether the document must carry it.
+
+1. **Known on the server when the segment renders** (the project's name, the
+   product's title): push from the handler, or from the loader that produced
+   the data. A loader's pushes ride its reads too, so a `load()`, `refetch()`
+   or group refresh of a registered loader keeps the title current with no
+   client code.
+2. **Must be in the document** (the SSR `<head>`, a title a crawler or a link
+   preview sees, a `ppr` shell): push from a handler, or from a loader
+   registered with `ssr: "await"`. A loader without it is in the document
+   only when it pushes before the page's handlers finish, which a push
+   derived from fetched data usually does not. A `usePushHandle` value is
+   never in the SSR HTML or a `ppr` shell: the server renders the component
+   but runs no effects, and the push publishes from a layout effect. On a
+   client navigation it shows in the page's own commit.
+3. **Live on the page** (learned or changed on the client after render):
+   `usePushHandle` in the component that holds the data, with a value or a
+   promise. That is a live chat's unread count, a live edit page's draft
+   title, optimistic state, a `useFetchLoader()` read of a loader no segment
+   registers, or a `load({ params })` the page shows (the router drops the
+   server pushes of a read with params, since it is usually data the page
+   does not show).
+4. **Both** (a title visible from the first paint that the client then
+   changes): push the first value on the server and the changed one on the
+   client. This works when the collect keeps one value per key: `Meta` for
+   its keyed descriptors (below) and `Breadcrumbs` (one crumb per `href`).
+   The client's value follows the server's and replaces it.
+
+Never push one value from the server and the client into one segment when
+the collect keeps every value: pushes append, so it shows twice. That holds
+for a flat handle and for the `Meta` descriptors without a key. `Meta`
+dedupes `title`, `charSet`, a `name`, `property` or `httpEquiv` with
+`content`, and a `link` whose `rel` is `canonical`, `icon` or
+`apple-touch-icon`; every other descriptor (`script:ld+json`, any other
+`link`) appends.
+
+```tsx
+// Wrong: the product's JSON-LD is in <head> twice.
+// handler: ctx.use(Meta)({ "script:ld+json": productJsonLd(product) });
+// client:  usePushHandle(Meta)({ "script:ld+json": productJsonLd(product) });
+
+// Wrong: a flat Tags handle shows "draft" twice.
+export const Tags = createHandle<string, string[]>((s) => s.flat());
+// handler: ctx.use(Tags)("draft");
+// client:  usePushHandle(Tags)("draft");
+
+// Fix: one writer per value. Push it where it is known (the server here),
+// or let the collect keep one value per key:
+export const UniqueTags = createHandle<string, string[]>((s) => [
+  ...new Set(s.flat()),
+]);
+```
+
+#### Live chat
+
+The handler pushes the chat's title, which the document, a crawler and a
+link preview see. The unread count is live on the page: the component pushes
+the promise of the count's fetch. While it is pending, readers keep the title
+they show. A count of zero resolves to `null`, which is dropped, so the
+server's title shows again.
+
+```tsx
+// urls.tsx
+path(
+  "/chat/:id",
+  (ctx) => {
+    ctx.use(Meta)({ title: "Support chat" });
+    return <ChatRoom id={ctx.params.id} />;
+  },
+  { name: "chat" },
+);
+```
+
+```tsx
+"use client";
+import { useMemo } from "react";
+import { Meta, usePushHandle } from "@rangojs/router/client";
+
+// `version` moves when a message arrives; a promise is the same value only
+// as the same reference, so the memo keeps one per version.
+function UnreadTitle({ id, version }: { id: string; version: number }) {
+  const title = useMemo(
+    () =>
+      fetchUnread(id).then((count) =>
+        count > 0 ? { title: `(${count}) Support chat` } : null,
+      ),
+    [id, version],
+  );
+  usePushHandle(Meta)(title);
+  return null;
+}
+```
+
+#### Live edit
+
+The handler pushes the saved title; the editor pushes the draft over it while
+it differs. The draft's title follows the server's in the route's segment,
+so `Meta` shows it, and the saved one shows again once they match.
+
+```tsx
+// urls.tsx
+path(
+  "/posts/:id/edit",
+  async (ctx) => {
+    const post = await getPost(ctx.params.id);
+    ctx.use(Meta)({ title: `${post.title} | Blog` });
+    return <PostEditor post={post} />;
+  },
+  { name: "postEdit" },
+);
+```
+
+```tsx
+"use client";
+function PostEditor({ post }: { post: { title: string } }) {
+  const [draft, setDraft] = useState(post.title);
+  const pushTitle = usePushHandle(Meta);
+  if (draft !== post.title) pushTitle({ title: `${draft} (editing) | Blog` });
+  return <input value={draft} onChange={(e) => setDraft(e.target.value)} />;
+}
+```
+
+#### In a clientUrls group
+
+A `clientUrls()` group has no handlers: its data is read with `useLoader` at
+the read site, and its handle writes are its loaders' bodies or its
+components. Push from the group's loader when the value comes from the
+loader's data; push with `usePushHandle` beside the `useLoader` read when the
+value comes from what the client holds.
+
+```ts
+// From the loader, registered with ssr: "await" so its push is in the
+// document; every read of the loader (a navigation, load(), a group
+// refresh) brings the new one.
+export const ProductLoader = createLoader(async (ctx) => {
+  const product = await getProduct(ctx.params.slug);
+  ctx.use(Meta)({ title: `${product.name} | Shop` });
+  return product;
+});
+
+// In the group:
+// path("/:slug", ProductEditor, { name: "product" }, () => [
+//   loader(ProductLoader, { ssr: "await" }),
+// ]),
+```
+
+```tsx
+"use client";
+// Beside the read: a draft the client edits. The loader's title shows
+// until a draft is set, then the draft's, after the loader's in the segment.
+function ProductEditor() {
+  const { data } = useLoader(ProductLoader);
+  const [draft, setDraft] = useState("");
+  const pushTitle = usePushHandle(Meta);
+  if (draft) pushTitle({ title: `${draft} (editing) | Shop` });
+  return (
+    <input
+      value={draft || data.name}
+      onChange={(e) => setDraft(e.target.value)}
+    />
+  );
+}
+```
+
+### usePushHandle()
+
+A `useFetchLoader()` read of a loader no segment registers (case 3 above):
+its data arrives on `load()`, and the component pushes the title and the
+crumb from it.
+
+```tsx
+"use client";
+import {
+  Meta,
+  Breadcrumbs,
+  useFetchLoader,
+  usePushHandle,
+} from "@rangojs/router/client";
+
+function ProjectHeader() {
+  const { data, load } = useFetchLoader(ProjectLoader);
+  const pushTitle = usePushHandle(Meta);
+  const pushCrumb = usePushHandle(Breadcrumbs);
+  if (data) {
+    pushTitle({ title: `${data.name} | Projects` });
+    pushCrumb({ label: data.name, href: `/projects/${data.id}` });
+  }
+  return (
+    <header>
+      <h1>{data?.name ?? "Project"}</h1>
+      <button onClick={() => load().catch(() => {})}>Load</button>
+    </header>
+  );
+}
+```
+
+`usePushHandle(Handle)` returns `push`, the client side of the server's
+`ctx.use(Handle)`. There is no set, write or replace: a push adds a value, as
+on the server, and the collect decides what wins.
+
+- **During render.** Call `push(value)` while the component renders. The
+  values of that render are published in its commit, so they show with the
+  render that made them: a render React throws away, or one that suspends,
+  publishes nothing. Each render replaces the component's values; a render
+  that pushes nothing removes them.
+- **Not after the commit.** Once the render that created it has committed,
+  `push` throws `[rango] usePushHandle(<id>): push() was called after the
+render that created it committed ...`. That is a call from an effect, an
+  event handler, a timer, or a child that received `push` as a prop and
+  re-rendered on its own. Keep the value in state and push it in render, or
+  call `usePushHandle` in the child. A child that renders in the same pass as
+  the owner adds to the owner's values; pass the data down instead of `push`.
+- **Its own segment.** The values belong to the segment the component renders
+  in: the nearest route, layout, parallel slot or intercept. A component in a
+  layout pushes into the layout's segment, so a route's server title still
+  beats it under `Meta`. A route's own `@meta` slot (`/parallel`) is
+  collected after the route, so its server title beats a client title the
+  route's page pushes: push the live title from a component the `@meta` slot
+  renders, or move that server title into the route's handler or loader. In
+  a `clientUrls()` group the page and its group layouts all render inside the
+  matched route's segment, so their pushes land there, after the values the
+  route's loaders pushed.
+- **A value or a promise.** `push(promise)` works as on the server: the value
+  takes its place when it is pushed, readers keep what they showed until it
+  resolves (never a blank or a pending value), and one that rejects or
+  resolves to `null` or `undefined` is dropped. Resolution is shallow: a
+  promise inside a value (a crumb's `content`) passes through, for the reader
+  to `use()`. A promise is the same value only as the same reference, so push
+  a stable one: from a loader, a `load()` kept in state, or `useMemo`. A
+  newer render's push or an unmount drops a pending promise's result.
+- **Order between components.** Two components that push the same handle in
+  the same segment show in tree order, whichever commits first: when one
+  joins, the segment's pushers of that handle render once more, before
+  paint. One nested inside the other shows before it, so the outer one wins a
+  last-wins collect; push such values from one component.
+- **Unmount removes them.** A component that unmounts (a toggle, a tab, an
+  error boundary that replaces it, a navigation away) takes its values with
+  it in the same commit, and the server's show again. A remount with new data
+  pushes new values; nothing is left from the last mount.
+- **Equal values do nothing.** A fresh object literal on each render is
+  compared by structure (arrays, plain objects, React elements, dates), so a
+  component that pushes and reads the same handle does not re-render itself;
+  a fresh top-level promise publishes only when what it resolves to changes.
+  A function, a `Map`, a `Set`, a class instance, or a promise inside a value
+  compares by identity, and a cyclic value never compares equal: a fresh one
+  on every render publishes every render, and a component that also reads
+  the handle loops. Keep such values stable (`useCallback`, `useMemo`) or out
+  of the pushed value.
+- **Router store only.** The values live in the router's store, apart from
+  the server's: a history entry never stores them, so Back/Forward restores
+  the server's values and the restored page's components push again when
+  they commit.
+
+When client values show (the server's own timing is in "When handle values
+change (by design)" below):
+
+| Case                                                  | What readers show                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document load                                         | The server's values (the HTML), until every boundary has hydrated; then the client's, in one update. Where the server pushed nothing into the pushing component's segment, development warns that the first paint showed another value: push its first value from a handler or an `ssr: "await"` loader if the first paint must show it, or let a value only the client knows change after hydration. |
+| Navigation that mounts the pusher                     | The client's values in the page's commit, before the browser paints, for readers already on screen and readers mounted with the pusher alike. With view transitions, when the transition's `ready` resolves, as the server's values do.                                                                                                                                                               |
+| Navigation away                                       | The leaving component's values are gone in the new page's commit.                                                                                                                                                                                                                                                                                                                                     |
+| A `load()` or state change while a navigation is held | The page on screen re-renders with its new data and its new values at once, with that page's server values; the held page brings its own when it commits.                                                                                                                                                                                                                                             |
+| A pushed promise                                      | What readers showed, until it resolves; then its value, in the place it was pushed.                                                                                                                                                                                                                                                                                                                   |
+| A late server push into the same segment              | Lands before the client's values of that segment; with a last-wins collect the client's still show.                                                                                                                                                                                                                                                                                                   |
+| An action's revalidation                              | The segment's new server values, the client's after them.                                                                                                                                                                                                                                                                                                                                             |
 
 ### useHandle()
 
-Access accumulated handle data from route segments:
+Read a handle's collected value in a client component:
 
 ```tsx
 "use client";
@@ -12,12 +345,12 @@ import { useHandle, Breadcrumbs } from "@rangojs/router/client";
 
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
-  // Array of { label, href } accumulated from layouts/routes
+  // Array of { label, href } from every segment, server and client values
 
   return (
     <nav>
       {crumbs.map((c, i) => (
-        <span key={i}>
+        <span key={c.href}>
           <a href={c.href}>{c.label}</a>
           {i < crumbs.length - 1 && " > "}
         </span>
@@ -30,20 +363,71 @@ function BreadcrumbNav() {
 const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 ```
 
-Writers: handlers AND loader bodies — `ctx.use(Handle)` returns the push
-function in each (middleware has no handle APIs). Loader pushes follow a delivery race (settle before
-the handler barrier → in the SSR'd document; later → applied client-side), and
-`loader(Def, { ssr: "await" })` makes them deterministic in the
-document. On a `ppr` shell HIT, a loader without `ssr: "await"` never ran during
-the capture, so its pushes always apply client-side; with `ssr: "await"` they
-bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
-re-renders on every handle update, late loader pushes included.
+`useHandle` is read-only and re-renders when a handle update changes what it
+returns: a navigation, an action, a late server push, a loader read, a client
+push. On a document load it hydrates with the handle data its HTML was
+rendered from, wherever the reader sits; late server pushes and client pushes
+reach every reader once the document has finished streaming and every
+boundary has hydrated (see `SKILL.md`, "Hydration").
+
+**Equal content keeps its reference.** A re-delivery brings fresh objects (an
+action's revalidation, a refresh, a Back/Forward, a late push, a client push
+that changes nothing the reader collects). When what the reader returns
+(the collected value, or the selector's result) is equal to what it holds,
+`useHandle` returns the reference it already had and does not render, so an
+effect keyed on `useHandle(Breadcrumbs)`, `useHandle(Meta)` or a default
+`T[][]` collect runs once per change. A real change brings a new reference,
+in the commit its page's values land in (the timing tables above and below).
+Equal is the rule pushed values are compared with:
+
+- arrays and plain objects by their entries, React elements by type, key and
+  props, dates by time;
+- anything else by identity: a promise (a crumb's `content` promise included),
+  a `URL`, a function, a `Map`, a `Set`, a class instance;
+- down to 32 levels; a value nested deeper, or a cyclic one, counts as
+  changed.
+
+The comparison walks the value on each update, so it costs what the value's
+size does; a sub-object shared at several places is compared once.
+
+**What a response always brings fresh.** A server-pushed value reaches the
+client through the RSC response, which decodes some values anew each time, and
+those never compare equal:
+
+- a client component element (`content: <OrderIcon />` on a crumb): its type
+  decodes as a new lazy reference on every response;
+- async server content (an async server component), decoded the same way;
+- a promise (`push(promise)` resolves it, but a promise nested in a value,
+  such as a crumb's `content`, stays one).
+
+A value holding one of these, anywhere inside, is a new reference on every
+re-delivery, as is a value holding a fresh function from a client push. Key
+the effect on a primitive the value carries instead, such as a crumb's `href`
+or `label`: `useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`. Plain text and
+host elements (`<b>`, `<span>`) holding only those decode equal.
+
+### Meta and Breadcrumbs
+
+- `Meta` takes descriptors (`{ title }`, `{ name, content }`,
+  `{ property, content }`, ...). A keyed descriptor (`title`, `charSet`, a
+  `name`, `property` or `httpEquiv` with `content`, a `link` whose `rel` is
+  `canonical`, `icon` or `apple-touch-icon`) keeps its last value, across
+  segments and within one, so a client `{ title }` replaces the server title
+  of its segment and of every segment above it. Every other descriptor
+  (`script:ld+json`, any other `link`) appends, so it needs one writer.
+  `<Html.Meta />` renders the result in `<head>` and keeps `document.title`
+  current.
+- `Breadcrumbs` takes `{ label, href, content? }` and keeps one crumb per
+  `href`, in the position of its first push and with its last value: a client
+  crumb for the same `href` renames the server's in place. Guide:
+  `/breadcrumbs`.
 
 ### When handle values change (by design)
 
 Handle values are reactive and arrive on their own channel, by design. A value
 belongs to the segment that pushed it and reaches `useHandle` when that push
-settles. The page never waits for a handle, and a handle never shows the next
+settles. This table is the server's values; a client component's are in
+"When client values show" above. The page never waits for a handle, and a handle never shows the next
 page's values over the page being left:
 
 | Case                                                                                                                                       | What `useHandle` returns                                                                                                                                                                                                                                                                                                       |
@@ -124,10 +508,11 @@ fires when it arrives. Trade-offs:
   navigations count; a same-URL refresh or an action's revalidation re-delivers
   an equal value and sends nothing. Under dev StrictMode the mount effect runs
   twice; the path check covers it.
-- Select or collect the item, not an array: `useHandle` keeps its reference
-  while the value is equal one level deep, and an array of objects is rebuilt on
-  every delivery (an action's included). With the default collector, use
-  `useHandle(PageView, (s) => s.at(-1)?.at(-1))`.
+- An equal value keeps its reference (`useHandle()` above), so an action's
+  revalidation that re-delivers the same page view does not run the effect,
+  with the default collector too. Collecting the item, as here, keeps the
+  value small and the effect simple; with the default collector,
+  `useHandle(PageView, (s) => s.at(-1)?.at(-1))` does the same.
 - Async values arrive later. With `push(promise)` the page_view fires when the
   promise resolves, with the resolved value; read the title from the value, not
   from `document.title`.
@@ -135,15 +520,6 @@ fires when it arrives. Trade-offs:
   and fires nothing for itself; the root slot above stamps the path on every
   navigation so every route counts.
 - Back/Forward fires (the entry's path differs from the current one).
-
-A server component that pushes after an `await` throws `LateHandlePushError`:
-reserve the slot in the handler with `ctx.use(Handle).defer()` and resolve it
-from the component (`/breadcrumbs`, "Deferred content").
-
-On a document load `useHandle` hydrates with the handle data its HTML was
-rendered from, wherever the reader sits; late loader pushes reach every reader
-once the document has finished streaming and every boundary has hydrated (see
-`SKILL.md`, "Hydration").
 
 Handles can be passed as props from server to client components:
 
