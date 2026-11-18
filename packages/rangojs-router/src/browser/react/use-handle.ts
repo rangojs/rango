@@ -5,7 +5,7 @@ import type { Handle } from "../../handle.js";
 import { collectHandleData } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
-import { shallowEqual } from "./shallow-equal.js";
+import { samePushValue } from "../../handles/client-pushes.js";
 import { useCommitted } from "./use-route-state.js";
 import type { RouteStateSignal } from "../event-controller.js";
 
@@ -13,7 +13,8 @@ import type { RouteStateSignal } from "../event-controller.js";
  * Hook to access collected handle data.
  *
  * Returns the collected value from all route segments that pushed to this handle.
- * Re-renders when handle data changes (navigation, actions).
+ * Re-renders when the collected value changes (navigation, actions); while
+ * its content is equal it keeps the reference it returned (useCommitAnchoredState).
  *
  * @param handle - The handle to read
  * @param selector - Optional selector for performance (only re-render when selected value changes)
@@ -113,9 +114,16 @@ export function useHandle<T, A, S>(
  * server state shown there (EventController.getHeldHandleState); the release
  * then sets the held page's state as before.
  *
- * A value shallow-equal to the last one sets nothing, so a reader renders only
- * when its value moves. A release is compared with what React committed, as in
- * useRouteState.
+ * A value equal to the last one sets nothing, so a reader renders only when
+ * its value moves and keeps its reference while the content is equal: a
+ * re-delivery (an action's revalidation, a refresh, a Back, a late push)
+ * decodes fresh objects, and an effect keyed on the value would run again.
+ * Equal is samePushValue's, the rule client pushes are compared with: arrays
+ * and plain objects by entries, React elements by type, key and props, dates
+ * by time, anything else (a promise, a URL, a function, a Map) by identity,
+ * and nothing past 32 levels. A value equal to what React committed keeps
+ * that reference, also when a different one waited in between. A release is
+ * compared with what React committed, as in useRouteState.
  */
 export function useCommitAnchoredState<T>(
   init: () => T,
@@ -134,8 +142,14 @@ export function useCommitAnchoredState<T>(
       (next: T, signal?: RouteStateSignal, now?: boolean): void => {
         const r = ref.current;
         if (signal) r.waiting = signal === "anchor";
-        if (!shallowEqual(next, r.last)) {
-          r.last = next;
+        if (!samePushValue(next, r.last)) {
+          // A value that moved while it waited and came back to what React
+          // committed keeps the committed reference.
+          r.last =
+            r.last !== committed.current &&
+            samePushValue(next, committed.current)
+              ? committed.current
+              : next;
           r.held = true;
         } else if (signal === "release" && r.last !== committed.current) {
           r.held = true;

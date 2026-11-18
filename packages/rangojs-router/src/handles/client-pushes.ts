@@ -22,6 +22,9 @@ export type ClientPushes = Map<
   Map<string, Map<ClientPushOwner, unknown[]>>
 >;
 
+/** Object pairs a samePushValue walk compares before it remembers equal ones. */
+const UNREMEMBERED_PAIRS = 64;
+
 /**
  * Structural equality for pushed values: arrays and plain objects by their
  * entries, React elements by type, key and props, dates by time, anything
@@ -29,39 +32,67 @@ export type ClientPushes = Map<
  * null-prototype object) by Object.is. A component that pushes a fresh
  * literal on each render (nested objects included) and reads the same handle
  * would otherwise re-render itself without end: each render's push would
- * look new. `depth` bounds a cyclic value; past it two values count as
- * different.
+ * look new. useCommitAnchoredState (browser/react/use-handle.ts) compares
+ * what useHandle and useSegments return with it too, so a re-delivery of
+ * equal content keeps the reader's reference. The walk goes no deeper than
+ * 32 levels: what it cannot compare within them, a cyclic value included,
+ * counts as different.
+ *
+ * Each pair of objects is walked once. A shared sub-object (Flight keeps a
+ * shared reference shared) is reached once per path to it, so a walk that
+ * remembers nothing is exponential in the sharing: an equal binary DAG 20
+ * levels deep took 164 ms, 22 levels 685 ms. Pairs found equal are remembered once the walk has
+ * visited UNREMEMBERED_PAIRS of them, so a small value such as a breadcrumb
+ * trail allocates no map. A pair found different needs no entry: `every`
+ * stops there and the whole walk is false. A pair still being walked is not
+ * remembered yet, so a cycle still runs into the depth bound; a pair already
+ * found equal stays equal wherever the walk meets it again, past the bound
+ * too.
  */
-export function samePushValue(a: unknown, b: unknown, depth = 0): boolean {
-  if (Object.is(a, b)) return true;
-  if (a instanceof Date)
-    return b instanceof Date && a.getTime() === b.getTime();
-  const proto = a && typeof a === "object" && Object.getPrototypeOf(a);
-  if (
-    depth > 32 ||
-    !proto ||
-    !b ||
-    typeof b !== "object" ||
-    proto !== Object.getPrototypeOf(b) ||
-    (proto !== Object.prototype && proto !== Array.prototype)
-  ) {
-    return false;
-  }
-  // A React element's dev-only `_owner` is a fiber: compare what renders.
-  const element = "$$typeof" in a;
-  const keys = element ? ["$$typeof", "type", "key", "props"] : Object.keys(a);
-  return (
-    (element || keys.length === Object.keys(b).length) &&
-    keys.every(
-      (key) =>
-        key in b &&
-        samePushValue(
-          (a as Record<string, unknown>)[key],
-          (b as Record<string, unknown>)[key],
-          depth + 1,
-        ),
-    )
-  );
+export function samePushValue(a: unknown, b: unknown): boolean {
+  let visits = 0;
+  let equal: Map<object, Set<object>> | undefined;
+  const same = (a: unknown, b: unknown, depth: number): boolean => {
+    if (Object.is(a, b)) return true;
+    if (a instanceof Date)
+      return b instanceof Date && a.getTime() === b.getTime();
+    const proto = a && typeof a === "object" && Object.getPrototypeOf(a);
+    if (
+      depth > 32 ||
+      !proto ||
+      !b ||
+      typeof b !== "object" ||
+      proto !== Object.getPrototypeOf(b) ||
+      (proto !== Object.prototype && proto !== Array.prototype)
+    ) {
+      return false;
+    }
+    if (++visits > UNREMEMBERED_PAIRS) equal ??= new Map();
+    const partners = equal?.get(a);
+    if (partners?.has(b)) return true;
+    // A React element's dev-only `_owner` is a fiber: compare what renders.
+    const element = "$$typeof" in a;
+    const keys = element
+      ? ["$$typeof", "type", "key", "props"]
+      : Object.keys(a);
+    const result =
+      (element || keys.length === Object.keys(b).length) &&
+      keys.every(
+        (key) =>
+          key in b &&
+          same(
+            (a as Record<string, unknown>)[key],
+            (b as Record<string, unknown>)[key],
+            depth + 1,
+          ),
+      );
+    if (result && equal) {
+      if (partners) partners.add(b);
+      else equal.set(a, new Set([b]));
+    }
+    return result;
+  };
+  return same(a, b, 0);
 }
 
 /**

@@ -574,9 +574,12 @@ export interface TestRouterHandle {
    * Re-render the current location, as router.refresh() does: a spec's
    * transition({ when }) decides it with kind "revalidate" (`to` is `from`).
    * `options.loaders` is the loader data the response carries, merged over
-   * the render-time seeds as in navigate().
+   * the render-time seeds as in navigate(). `options.handles` are the handle
+   * values the response carries, on its handle stream, as in navigate().
    */
-  refresh(options?: Pick<RenderRouteOptions, "loaders">): Promise<void>;
+  refresh(
+    options?: Pick<RenderRouteOptions, "loaders" | "handles">,
+  ): Promise<void>;
   /**
    * Prefetch `url`, as a `<Link>` hover or viewport trigger does: the page is
    * kept with the loader data its response would carry now (the render-time
@@ -1452,12 +1455,13 @@ export async function renderRoute(
   };
 
   const refresh = (
-    refreshOptions?: Pick<RenderRouteOptions, "loaders">,
+    refreshOptions?: Pick<RenderRouteOptions, "loaders" | "handles">,
   ): Promise<void> => {
     const current = new URL(eventController.getLocation().href);
     return navigate(current.pathname + current.search, {
       kind: "revalidate",
       loaders: refreshOptions?.loaders,
+      handles: refreshOptions?.handles,
       sameEntry: true,
     });
   };

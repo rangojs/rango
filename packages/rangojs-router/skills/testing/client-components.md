@@ -77,10 +77,11 @@ type RenderRouteResult = RenderResult & {
       },
     ): Promise<void>;
     // re-render the current location, as router.refresh() does:
-    // a spec's when gets kind "revalidate" (`to` is `from`); `loaders` is the
-    // data the response carries
+    // a spec's when gets kind "revalidate" (`to` is `from`); `loaders` and
+    // `handles` are what the response carries
     refresh(options?: {
       loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+      handles?: ReadonlyArray<HandleSeed>;
     }): Promise<void>;
     // keep `url` as a prefetch made now carries it (the seeds then, `loaders`
     // over them); a later navigate(url) without `loaders` commits that data
@@ -95,6 +96,7 @@ type RenderRouteResult = RenderResult & {
     // every history entry and prefetch is marked stale
     action(options?: {
       loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+      handles?: ReadonlyArray<HandleSeed>;
       keepClientCache?: boolean;
     }): Promise<void>;
     // what a later useLoader().load() (or refreshGroup refresh) of each

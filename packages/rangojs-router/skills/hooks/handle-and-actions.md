@@ -363,12 +363,48 @@ function BreadcrumbNav() {
 const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 ```
 
-`useHandle` is read-only and re-renders on every handle update: a navigation,
-an action, a late server push, a loader read, a client push. On a document
-load it hydrates with the handle data its HTML was rendered from, wherever the
-reader sits; late server pushes and client pushes reach every reader once the
-document has finished streaming and every boundary has hydrated (see
-`SKILL.md`, "Hydration").
+`useHandle` is read-only and re-renders when a handle update changes what it
+returns: a navigation, an action, a late server push, a loader read, a client
+push. On a document load it hydrates with the handle data its HTML was
+rendered from, wherever the reader sits; late server pushes and client pushes
+reach every reader once the document has finished streaming and every
+boundary has hydrated (see `SKILL.md`, "Hydration").
+
+**Equal content keeps its reference.** A re-delivery brings fresh objects (an
+action's revalidation, a refresh, a Back/Forward, a late push, a client push
+that changes nothing the reader collects). When what the reader returns
+(the collected value, or the selector's result) is equal to what it holds,
+`useHandle` returns the reference it already had and does not render, so an
+effect keyed on `useHandle(Breadcrumbs)`, `useHandle(Meta)` or a default
+`T[][]` collect runs once per change. A real change brings a new reference,
+in the commit its page's values land in (the timing tables above and below).
+Equal is the rule pushed values are compared with:
+
+- arrays and plain objects by their entries, React elements by type, key and
+  props, dates by time;
+- anything else by identity: a promise (a crumb's `content` promise included),
+  a `URL`, a function, a `Map`, a `Set`, a class instance;
+- down to 32 levels; a value nested deeper, or a cyclic one, counts as
+  changed.
+
+The comparison walks the value on each update, so it costs what the value's
+size does; a sub-object shared at several places is compared once.
+
+**What a response always brings fresh.** A server-pushed value reaches the
+client through the RSC response, which decodes some values anew each time, and
+those never compare equal:
+
+- a client component element (`content: <OrderIcon />` on a crumb): its type
+  decodes as a new lazy reference on every response;
+- async server content (an async server component), decoded the same way;
+- a promise (`push(promise)` resolves it, but a promise nested in a value,
+  such as a crumb's `content`, stays one).
+
+A value holding one of these, anywhere inside, is a new reference on every
+re-delivery, as is a value holding a fresh function from a client push. Key
+the effect on a primitive the value carries instead, such as a crumb's `href`
+or `label`: `useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`. Plain text and
+host elements (`<b>`, `<span>`) holding only those decode equal.
 
 ### Meta and Breadcrumbs
 
@@ -472,10 +508,11 @@ fires when it arrives. Trade-offs:
   navigations count; a same-URL refresh or an action's revalidation re-delivers
   an equal value and sends nothing. Under dev StrictMode the mount effect runs
   twice; the path check covers it.
-- Select or collect the item, not an array: `useHandle` keeps its reference
-  while the value is equal one level deep, and an array of objects is rebuilt on
-  every delivery (an action's included). With the default collector, use
-  `useHandle(PageView, (s) => s.at(-1)?.at(-1))`.
+- An equal value keeps its reference (`useHandle()` above), so an action's
+  revalidation that re-delivers the same page view does not run the effect,
+  with the default collector too. Collecting the item, as here, keeps the
+  value small and the effect simple; with the default collector,
+  `useHandle(PageView, (s) => s.at(-1)?.at(-1))` does the same.
 - Async values arrive later. With `push(promise)` the page_view fires when the
   promise resolves, with the resolved value; read the title from the value, not
   from `document.title`.

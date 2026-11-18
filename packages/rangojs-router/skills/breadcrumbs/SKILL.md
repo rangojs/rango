@@ -284,6 +284,31 @@ function BreadcrumbNav() {
 }
 ```
 
+The trail keeps its reference while its content is equal: an action's
+revalidation or a refresh that re-delivers the same crumbs neither re-renders
+the reader nor re-runs an effect keyed on the trail. That holds while each
+crumb's `content` is plain text or host elements (`<b>`, `<span>`) holding
+only those. Some `content` arrives fresh on every response and counts as a
+change each time, nested inside a host element too, so the trail gets a new
+reference on each re-delivery:
+
+- a client component (`content: <OrderIcon />`), which the response decodes
+  as a new lazy reference;
+- async server content (an async server component), decoded the same way;
+- a `content` promise, compared by identity.
+
+For crumbs like these, key the effect on a primitive the crumb carries
+instead of the trail, such as its `href` or `label`:
+
+```tsx
+const href = useHandle(Breadcrumbs, (crumbs) => crumbs.at(-1)?.href);
+useEffect(() => {
+  // runs once per crumb change, whatever `content` holds
+}, [href]);
+```
+
+See `/hooks`, "useHandle()".
+
 ### With Selector
 
 Re-render only when the selected value changes:

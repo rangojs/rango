@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from "vitest";
-import { Profiler, Suspense, use, type ReactNode } from "react";
+import { Profiler, Suspense, use, useEffect, type ReactNode } from "react";
 import { act, cleanup } from "@testing-library/react";
 import { createNavigationTransaction } from "../../browser/navigation-transaction.js";
 import { createPartialUpdater } from "../../browser/partial-update.js";
@@ -70,11 +70,12 @@ const tick = (ms = 0): Promise<void> =>
  * A click on "/" that adopts a payload whose route UNIT is deferred, through
  * production's partial updater, and the fill that answers it once `answer()`
  * is called: the fill brings the route with "content" and pushes
- * "Unit title" into UNIT.
+ * `fillHandles` (by default "Unit title" into UNIT).
  */
 function adoptAndFill(
   router: TestRouterHandle,
   renderSegments: (segments: ResolvedSegment[]) => ReactNode,
+  fillHandles: object = { [Titles.$$id]: { [UNIT]: ["Unit title"] } },
 ): { answer: () => void; settled: Promise<unknown> } {
   const adopted = {
     id: UNIT,
@@ -125,9 +126,7 @@ function adoptAndFill(
         }
         await answered;
         return {
-          payload: payload(filled, {
-            [Titles.$$id]: { [UNIT]: ["Unit title"] },
-          }),
+          payload: payload(filled, fillHandles),
           streamComplete: Promise.resolve(),
         };
       },
@@ -255,4 +254,73 @@ describe("renderRoute: a prefetch: false fill's handle value", () => {
     );
     expect(log.at(-1)).toBe("Home / Unit title / Client unit|content");
   });
+});
+
+describe("renderRoute: a prefetch: false fill re-delivering a handle value", () => {
+  /** An array of objects, rebuilt by every delivery. */
+  const Crumbs = createHandle<{ label: string }, { label: string }[]>(
+    (segments) => segments.flat(),
+    "__test_userland_fill_crumbs__",
+  );
+  let fired: string[] = [];
+  function CrumbsEffect(): null {
+    const crumbs = useHandle(Crumbs);
+    useEffect(() => {
+      fired.push(`${crumbs.map((c) => c.label).join("/")}|${text("page")}`);
+    }, [crumbs]);
+    return null;
+  }
+  function Page(): ReactNode {
+    return (
+      <>
+        <CrumbsEffect />
+        <p data-testid="page">home</p>
+      </>
+    );
+  }
+
+  it.each([
+    { content: "equal", unit: [], expected: [] },
+    { content: "changed", unit: [{ label: "Unit" }], expected: ["Home/Unit"] },
+  ])(
+    "$content content: a reader's effect runs once per change, after the click and with the destination",
+    async ({ unit, expected }) => {
+      const { router } = await renderRoute([{ path: "/", Component: Page }], {
+        request: "/",
+        handles: [[Crumbs, [{ label: "Home" }]]],
+      });
+      fired = [];
+      const held = router.segmentId();
+      const { answer, settled } = adoptAndFill(
+        router,
+        (segments) => (
+          <>
+            <CrumbsEffect />
+            <Suspense fallback={<p data-testid="page">skeleton</p>}>
+              <Unit content={segments.find((s) => s.id === UNIT)!.component} />
+            </Suspense>
+          </>
+        ),
+        // The fill re-delivers the held segment's value as fresh objects.
+        { [Crumbs.$$id]: { [held]: [{ label: "Home" }], [UNIT]: unit } },
+      );
+      await act(async () => {
+        await Promise.race([settled, tick()]);
+      });
+      expect(text("page")).toBe("skeleton");
+      // The click's tree mounts its own reader, on the value of the page
+      // being left.
+      expect(fired).toEqual(["Home|skeleton"]);
+      fired = [];
+      await act(async () => {
+        answer();
+        await tick(50);
+      });
+      expect(text("page")).toBe("content");
+      // Once per change, never over the page being left (the first test
+      // above pins the frame it lands in).
+      expect(fired.map((f) => f.split("|")[0])).toEqual(expected);
+      expect(fired.filter((f) => f.endsWith("|home"))).toEqual([]);
+    },
+  );
 });
