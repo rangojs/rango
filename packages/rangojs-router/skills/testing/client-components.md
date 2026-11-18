@@ -17,8 +17,9 @@
 | `params`                | `Record<string, string>`                                               | Explicit params, merged over (and overriding) params extracted from the `request` URL.                                                                                                                                                                                                                       |
 | `locationState`         | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | Seed `useLocationState(def)` by REFERENCE: `[def, value]` pairs; keys an unkeyed `def` (like `withLocationStateKey(def)`) and writes `value` to `history.state` under `def.__rsc_ls_key`. See [Location state](#location-state).                                                                             |
 | `documentLocationState` | `ReadonlyArray<readonly [LocationStateDefinition<any, any>, unknown]>` | The location state the document response carried (a handler, middleware or no-JS form action set it, or a document redirect's cookie brought it), as `[def, value]` pairs. Merged at start-up after `locationState` and the `clearOnReload` pass. See [State a document carried](#state-a-document-carried). |
-| `handles`               | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[]]`. Accumulated GLOBALLY (not segment-scoped).                                                                                                                                                                                                |
-| `lateHandles`           | `ReadonlyArray<readonly [Handle<any, any>, unknown[]]>`                | Handle values that arrive AFTER hydration, as a late loader push does: `[handle, valuesAfterTheUpdate[]]` replaces that handle's `handles` seed once the root has hydrated (or mounted). See [Hydration](#hydration).                                                                                        |
+| `handles`               | `ReadonlyArray<HandleSeed>`                                            | Seed `useHandle(handle)` by REFERENCE: `[handle, pushedValues[], segment?]`. `segment` is a spec's index in `routes`, or `[index, "@slot"]`; omitted, the leaf route. Every reader sees every segment's values.                                                                                              |
+| `clientHandleMerge`     | `"append" \| "replace"`                                                | Spike: how a `usePushHandle` push meets the server's values in its segment. `"append"` (default) after them, `"replace"` in their place.                                                                                                                                                                     |
+| `lateHandles`           | `ReadonlyArray<HandleSeed>`                                            | Handle values that arrive AFTER hydration, as a late loader push does: `[handle, valuesAfterTheUpdate[]]` replaces that handle's `handles` seed once the root has hydrated (or mounted). See [Hydration](#hydration).                                                                                        |
 | `handle`                | `HandleDataSeed`                                                       | Advanced: raw wire format `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles`. Merged with it.                                                                                                                                                                                               |
 | `routeMap`              | `Record<string, string>`                                               | Name -> pattern map (informational; client `useReverse` takes its map as an argument, so this is not consumed).                                                                                                                                                                                              |
 | `basename`              | `string`                                                               | `createRouter({ basename })` value. Wired into `NavigationProvider` so `useRouter().basename`, `<Link>` prefixing, `useMount`/`useHref` resolve against the mount. Normalized like `createRouter`. Defaults to root.                                                                                         |
@@ -29,7 +30,7 @@
 | `hydrate`               | `boolean`                                                              | Render the same tree to HTML first (`renderToString`, no `window`/`document`), then hydrate that HTML instead of mounting fresh. The result gains `serverHtml`, `recoverableErrors` and `shellError`. See [Hydration](#hydration).                                                                           |
 | `rewrite`               | `string`                                                               | The path middleware rewrote `request` to (`throw rewrite()`): the leaf is matched against it for params, while the location (`usePathname`, `useSearchParams`) stays `request`, as a rewritten document renders and hydrates.                                                                                |
 
-`RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational. `transition` is the `transition()` config this node declares (`{}` for a bare `transition()`), attached to its segment exactly as the DSL does — see [Held navigation](#held-navigation).
+`RenderRouteSpec = { path, Component, layout?, loaderIds?, name?, transition?, slots? }` — one node of the route definition. The array is the layout chain root-to-leaf; the LAST entry is the leaf route (its pattern is matched against `request` to extract params; layout patterns are informational). `loaderIds` attaches seeded loaders to THIS node's segment; `layout` on the leaf wraps it; `name` is informational. `slots` are the parallel slots it declares (`{ "@side": Side }`, or `{ Component, intercept: true }` for an intercept's), each a segment of its own rendered where the node places `<ParallelOutlet name>`. `transition` is the `transition()` config this node declares (`{}` for a bare `transition()`), attached to its segment exactly as the DSL does — see [Held navigation](#held-navigation).
 
 ### Context — client hooks it makes resolve (what your code receives)
 
@@ -46,7 +47,7 @@
 | `useNonce`                     | SEEDED CSP nonce (`options.nonce`), else `undefined` (the browser default).                                                                                                   |
 | `useLoader` / `useFetchLoader` | SEEDED loader data (read path, not run path). Held-navigation `isLoading` is modeled (below), and `load()` is answered from the seeds ([`load()`](#load-and-refresh-groups)). |
 | `useLocationState`             | SEEDED `history.state` value, or the `state` a navigation or a `popstate` brought (below).                                                                                    |
-| `useHandle`                    | SEEDED handle output (globally accumulated).                                                                                                                                  |
+| `useHandle`                    | SEEDED handle output, per segment, with `usePushHandle` pushes merged in.                                                                                                     |
 | `Outlet`                       | Renders the next segment in the chain (layout nesting).                                                                                                                       |
 | `useOutlet`                    | Next-segment `content` plus SEEDED `options.outletPending`.                                                                                                                   |
 | `useTheme`                     | Theme; throws without `options.theme` (see caveat).                                                                                                                           |
@@ -95,6 +96,7 @@ type RenderRouteResult = RenderResult & {
     // every history entry and prefetch is marked stale
     action(options?: {
       loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
+      handles?: ReadonlyArray<HandleSeed>; // the revalidated page's pushes
       keepClientCache?: boolean;
     }): Promise<void>;
     // what a later useLoader().load() (or refreshGroup refresh) of each
@@ -102,6 +104,15 @@ type RenderRouteResult = RenderResult & {
     respondToLoads(options: {
       loaders?: ReadonlyArray<readonly [LoaderDefinition<any>, unknown]>;
     }): void;
+    // a server push that lands after the commit (a settled push(promise),
+    // a streamed loader's push): replaces that handle's server values in
+    // that segment, through the controller's late handle write
+    pushLateHandles(handles: ReadonlyArray<HandleSeed>): Promise<void>;
+    // per segment id, what useHandle(handle) collects over: the server's
+    // values with the client layer (usePushHandle) merged in
+    handleData(handle: Handle<any, any>): Record<string, unknown[]>;
+    // the segment id a HandleSegment names on the page on screen
+    segmentId(segment?: HandleSegment): string;
     pathname(): string;
     params(): Record<string, string>;
     store: NavigationStore; // advanced

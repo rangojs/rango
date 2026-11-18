@@ -39,6 +39,14 @@ the capture, so its pushes always apply client-side; with `ssr: "await"` they
 bake into the shell. See `/loader` → "Writing Handles from Loaders". `useHandle`
 re-renders on every handle update, late loader pushes included.
 
+Spike, not released: `usePushHandle(handle)` returns `push`, the client side of
+`ctx.use(handle)`, for the segment the component renders in. Push during
+render; a committed component's values sit after the server's values of that
+handle in its segment, in that fixed position whatever arrives first, and leave
+with the component. The first paint is the server's. A loader read (`load()`,
+`refetch()`, a refresh group) drops a handle push from the loader's body, with
+a development warning, instead of failing the read.
+
 ### When handle values change (by design)
 
 Handle values are reactive and arrive on their own channel, by design. A value

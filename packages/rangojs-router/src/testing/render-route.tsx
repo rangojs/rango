@@ -112,6 +112,7 @@ import type {
   UpdateSubscriber,
 } from "../browser/types.js";
 import type {
+  ClientHandleMerge,
   EventController,
   NavigationHandle,
 } from "../browser/event-controller.js";
@@ -171,6 +172,19 @@ let pendingPrefetchReset: object | undefined;
  */
 export type HandleDataSeed = Record<string, Record<string, unknown[]>>;
 
+/**
+ * Where a handle seed lands: the index of a spec in `routes` (its layout or
+ * route segment), or `[index, "@slot"]` for a slot that spec declares
+ * (`RenderRouteSpec.slots`). Omitted: the leaf route.
+ */
+export type HandleSegment = number | readonly [number, `@${string}`];
+
+/**
+ * `[handle, values, segment?]`: the values the server pushed for `handle` in
+ * one segment (the leaf route when `segment` is omitted).
+ */
+export type HandleSeed = readonly [Handle<any, any>, unknown[], HandleSegment?];
+
 const syntheticIds = new WeakMap<object, string>();
 let syntheticIdCounter = 0;
 
@@ -227,6 +241,20 @@ export interface RenderRouteSpec {
    * `router.navigate(url, { loaders })` pins `useLoader().isLoading`.
    */
   transition?: TransitionConfig;
+  /**
+   * Parallel slots this node declares (`parallel({ "@side": Side })`), each
+   * rendered where the node's component places `<ParallelOutlet name>`. A
+   * slot given as `{ Component, intercept: true }` is an intercept's: it
+   * renders through the same slot outlet, as an intercepting navigation's
+   * does. Each is a segment of its own (`L0.@side`), so a handle seed or a
+   * client push can land in it.
+   */
+  slots?: Readonly<
+    Record<
+      `@${string}`,
+      ComponentType | { Component: ComponentType; intercept: true }
+    >
+  >;
 }
 
 /**
@@ -326,14 +354,15 @@ export interface RenderRouteOptions {
   /**
    * Handles to seed by REFERENCE, for components that read handle output via
    * `useHandle(SomeHandle)` (e.g. a client `Breadcrumbs` trail). Each entry is
-   * `[handle, pushedValues[]]` — the values a route's handlers would have pushed;
-   * renderRoute attaches them to the leaf route segment under the handle's id.
+   * `[handle, pushedValues[], segment?]` — the values a segment's handlers would
+   * have pushed, attached to the segment `segment` names (a spec's index in
+   * `routes`, or `[index, "@slot"]`), the leaf route when omitted.
    * Built-in handles (Breadcrumbs/Meta) have stable ids and work directly.
    *
-   * Handle data is accumulated GLOBALLY on the event controller, not scoped per
-   * segment like loaders — so ANY component in the chain reads the seeded values,
-   * a LAYOUT (e.g. a DetailLayout/ActionToolbar reading a handle) just as much as
-   * the leaf route. Most handle usage is server-side (`ctx.use(...)`) and is
+   * A handle's values are collected over every segment, in segment order — so
+   * ANY component in the chain reads the seeded values, a LAYOUT (e.g. a
+   * DetailLayout/ActionToolbar reading a handle) just as much as the leaf
+   * route. Most handle usage is server-side (`ctx.use(...)`) and is
    * better covered by `renderToFlightString`/e2e; this seeds the client read path
    * only.
    *
@@ -342,7 +371,7 @@ export interface RenderRouteOptions {
    *   handles: [[Breadcrumbs, [{ label: "Home", href: "/" }, { label: "P", href: "/p" }]]],
    * });
    */
-  handles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
+  handles?: ReadonlyArray<HandleSeed>;
   /**
    * Advanced: raw handle data in wire format
    * `{ [handleId]: { [segmentId]: pushedValues[] } }`. Prefer `handles` (which
@@ -366,7 +395,12 @@ export interface RenderRouteOptions {
    *   lateHandles: [[Notes, ["from-handler", "from-loader"]]],
    * });
    */
-  lateHandles?: ReadonlyArray<readonly [Handle<any, any>, unknown[]]>;
+  lateHandles?: ReadonlyArray<HandleSeed>;
+  /**
+   * How a client push (`usePushHandle`) meets the server's values in its
+   * segment: "append" (the default) after them, "replace" in their place.
+   */
+  clientHandleMerge?: ClientHandleMerge;
   /**
    * Route name -> pattern map. Informational for parity with the server test
    * context; client useReverse takes its map directly as an argument, so this
@@ -502,8 +536,7 @@ export interface TestRouterHandle {
    * `navigate(url, { replace: false })` are the same call.
    *
    * `options.handles` are the destination's handle pushes (`[handle,
-   * values]`, attached to its leaf route as in `renderRoute`'s own
-   * `handles`). They arrive on the response's handle stream, so `useHandle`
+   * values, segment?]`, as in `renderRoute`'s own `handles`). They arrive on the response's handle stream, so `useHandle`
    * readers take them with the page's commit: while React holds the page,
    * readers keep the values of the page being left.
    *
@@ -585,10 +618,30 @@ export interface TestRouterHandle {
    * redirect are e2e territory.
    */
   action(
-    options?: Pick<RenderRouteOptions, "loaders"> & {
+    options?: Pick<RenderRouteOptions, "loaders" | "handles"> & {
       keepClientCache?: boolean;
     },
   ): Promise<void>;
+  /**
+   * A server push that arrives after the page committed (a settled
+   * `push(promise)` or `.defer()`, a streamed loader's push, a `ppr`
+   * live-lane push): each `[handle, values, segment?]` replaces that handle's
+   * server values in that segment, through the controller's late handle write
+   * (setHandleData), as production's late handle channel applies one. The
+   * other segments' server values stay.
+   *
+   * @example
+   * await router.pushLateHandles([[Meta, [{ title: "Late" }], 0]]);
+   */
+  pushLateHandles(handles: ReadonlyArray<HandleSeed>): Promise<void>;
+  /**
+   * What `useHandle(handle)` collects over, per segment id: the server's
+   * values with the client layer (`usePushHandle`) over them, as readers merge
+   * them. Only segments with values are listed.
+   */
+  handleData(handle: Handle<any, any>): Record<string, unknown[]>;
+  /** The segment id a `HandleSegment` names on the page on screen. */
+  segmentId(segment?: HandleSegment): string;
   /**
    * Set what the loader endpoint answers from now on: a later
    * `useLoader().load()` or refreshGroup refresh of each loader resolves to
@@ -794,6 +847,41 @@ function staticPrefix(pattern: string): string {
   return "/" + out.join("/");
 }
 
+/**
+ * The id of the segment `at` names among `segments` (a HandleSegment), the
+ * leaf route when omitted.
+ */
+function segmentIdIn(segments: ResolvedSegment[], at?: HandleSegment): string {
+  if (at === undefined) {
+    const leafId =
+      [...segments].reverse().find((s) => s.type === "route")?.id ??
+      segments[segments.length - 1]?.id;
+    if (leafId === undefined) throw new Error("renderRoute: no segments");
+    return leafId;
+  }
+  const [index, slot] = typeof at === "number" ? [at, undefined] : at;
+  const owner = segments.filter(
+    (s) => s.type === "layout" || s.type === "route",
+  )[index]?.id;
+  if (owner === undefined) {
+    throw new Error(`renderRoute: no route spec at index ${index}`);
+  }
+  return slot === undefined ? owner : `${owner}.${slot}`;
+}
+
+/** Writes each `[handle, values, segment?]` into `seed`. */
+function seedHandles(
+  seed: HandleDataSeed,
+  handles: ReadonlyArray<HandleSeed> | undefined,
+  segments: ResolvedSegment[],
+): HandleDataSeed {
+  for (const [handle, values, at] of handles ?? []) {
+    const id = (handle as unknown as { $$id: string }).$$id;
+    (seed[id] ??= {})[segmentIdIn(segments, at)] = values;
+  }
+  return seed;
+}
+
 function buildSegments(
   routes: RenderRouteSpec[],
   params: Record<string, string>,
@@ -833,6 +921,23 @@ function buildSegments(
       node.layout = <Layout />;
     }
     segments.push(node);
+
+    for (const [slot, def] of Object.entries(spec.slots ?? {}) as [
+      `@${string}`,
+      NonNullable<RenderRouteSpec["slots"]>[`@${string}`],
+    ][]) {
+      const intercept = "intercept" in def;
+      const SlotComponent = intercept ? def.Component : def;
+      segments.push({
+        id: `${segmentId}.${slot}`,
+        namespace: intercept ? `intercept:${spec.name ?? spec.path}` : "",
+        type: "parallel",
+        index: i,
+        slot,
+        component: <SlotComponent />,
+        params,
+      });
+    }
 
     const ownedIds = spec.loaderIds
       ? spec.loaderIds.filter((id) => id in loaderData)
@@ -1007,17 +1112,16 @@ export async function renderRoute(
     initialSegments,
     crossTabSync: false,
   });
-  const leafRouteSegmentId =
-    [...initialSegments].reverse().find((s) => s.type === "route")?.id ??
-    initialSegments[initialSegments.length - 1]?.id;
-  const handleSeed: HandleDataSeed = cloneHandleSeed(options.handle);
-  for (const [handle, values] of options.handles ?? []) {
-    if (leafRouteSegmentId === undefined) continue;
-    const id = (handle as unknown as { $$id: string }).$$id;
-    (handleSeed[id] ??= {})[leafRouteSegmentId] = values;
-  }
+  const handleSeed = seedHandles(
+    cloneHandleSeed(options.handle),
+    options.handles,
+    initialSegments,
+  );
 
-  const eventController = createEventController({ initialLocation: url });
+  const eventController = createEventController({
+    initialLocation: url,
+    clientHandleMerge: options.clientHandleMerge,
+  });
   eventController.setParams(initialMatch.params);
   // The seeded entry, as initBrowserApp commits the document's.
   eventController.commitLocationState(window.history.state);
@@ -1039,13 +1143,14 @@ export async function renderRoute(
   // A late update carries the full state: the seed with these handles' values
   // replaced, resolved as the browser resolves a late yield before applying.
   let applyLateHandles: (() => void) | undefined;
-  if (options.lateHandles && leafRouteSegmentId !== undefined) {
-    const lateSeed = cloneHandleSeed(resolvedSeed);
-    for (const [handle, values] of options.lateHandles) {
-      const id = (handle as unknown as { $$id: string }).$$id;
-      (lateSeed[id] ??= {})[leafRouteSegmentId] = values;
-    }
-    const lateState = await resolveDeferredHandleValues(lateSeed);
+  if (options.lateHandles) {
+    const lateState = await resolveDeferredHandleValues(
+      seedHandles(
+        cloneHandleSeed(resolvedSeed),
+        options.lateHandles,
+        initialSegments,
+      ),
+    );
     // Flushed, not left to the notify timer: renderRoute's act() has
     // returned by then.
     applyLateHandles = () => {
@@ -1241,20 +1346,10 @@ export async function renderRoute(
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
     // The destination's handle pushes arrive on the response's handle
     // stream, as production's do, behind the page's commit.
-    const navHandles = navOptions?.handles;
-    if (navHandles) {
-      const leafId =
-        [...segments].reverse().find((s) => s.type === "route")?.id ??
-        segments[segments.length - 1]?.id;
-      const pushed: HandleDataSeed = {};
-      for (const [h, values] of navHandles) {
-        if (leafId === undefined) continue;
-        const id = (h as unknown as { $$id: string }).$$id;
-        (pushed[id] ??= {})[leafId] = values;
-      }
-      metadata.handles = (async function* () {
-        yield pushed;
-      })();
+    if (navOptions?.handles) {
+      metadata.handles = handleStream(
+        seedHandles({}, navOptions.handles, segments),
+      );
     }
     // Production's browser-run transition({ when }) decision
     // (browser/partial-update.ts): the committed location is the source.
@@ -1384,10 +1479,13 @@ export async function renderRoute(
     url: URL,
     kind: "action" | "revalidate",
     renderOptions: { forceAwait?: boolean; isAction?: boolean },
+    handles?: ReadonlyArray<HandleSeed>,
   ): Promise<{ commit(): Promise<void> }> => {
     const match = resolve(url.pathname);
     const segments = buildSegments(routes, match.params, loaderData, mount);
     const metadata = makeMetadata(url.pathname, segments, match.params);
+    if (handles)
+      metadata.handles = handleStream(seedHandles({}, handles, segments));
     const gatedOff = decideTransitionGatedOff(segments, () => ({
       kind,
       from: {
@@ -1473,7 +1571,7 @@ export async function renderRoute(
 
   // action(): the response of a server action, landing on the page on screen.
   const action = async (
-    actionOptions?: Pick<RenderRouteOptions, "loaders"> & {
+    actionOptions?: Pick<RenderRouteOptions, "loaders" | "handles"> & {
       keepClientCache?: boolean;
     },
   ): Promise<void> => {
@@ -1482,6 +1580,7 @@ export async function renderRoute(
       new URL(eventController.getLocation().href),
       "action",
       { isAction: true },
+      actionOptions?.handles,
     );
     // The action bridge's landing (server-action-bridge.ts finalizeAction).
     if (!actionOptions?.keepClientCache) store.markCacheAsStaleAndBroadcast();
@@ -1693,6 +1792,8 @@ export async function renderRoute(
     });
   });
 
+  const shownSegments = (): ResolvedSegment[] =>
+    entries.get(entryOnScreen)?.segments ?? initialSegments;
   const router: TestRouterHandle = {
     navigate: (target, navOptions) =>
       navigate(target, {
@@ -1712,6 +1813,32 @@ export async function renderRoute(
       Object.assign(loadAnswers, seedLoaders({}, respondOptions.loaders));
     },
     revalidations: () => [...revalidations],
+    pushLateHandles: async (late) => {
+      const segments = shownSegments();
+      const next = seedHandles(
+        cloneHandleSeed(eventController.getHandleState().data),
+        late,
+        segments,
+      );
+      await act(async () => {
+        eventController.setHandleData(
+          next,
+          segments.map((s) => s.id),
+        );
+        eventController.flushRouteState();
+      });
+    },
+    handleData: (h) => {
+      const merged =
+        eventController.withClientHandles(
+          eventController.getHandleState().data,
+          h.$$id,
+        )[h.$$id] ?? {};
+      return Object.fromEntries(
+        Object.entries(merged).filter(([, values]) => values.length > 0),
+      );
+    },
+    segmentId: (at) => segmentIdIn(shownSegments(), at),
     pathname: () => new URL(eventController.getLocation().href).pathname,
     params: () => eventController.getParams(),
     store,
@@ -1763,6 +1890,13 @@ function withoutBrowserGlobals<T>(fn: () => T): T {
     Object.defineProperty(scope, "window", windowDescriptor);
     Object.defineProperty(scope, "document", documentDescriptor);
   }
+}
+
+/** A response's handle stream that yields `pushed` once. */
+async function* handleStream(
+  pushed: HandleDataSeed,
+): AsyncGenerator<HandleData> {
+  yield pushed;
 }
 
 function makeMetadata(

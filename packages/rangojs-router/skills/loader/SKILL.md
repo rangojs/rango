@@ -1119,6 +1119,12 @@ the pushes of an `ssr: "await"` loader, and of the loaders it awaits, in the
 shell, a pushed promise resolved, and a promise-free `ssr: "await"` loader does
 not run on a shell HIT — see `/ppr`.)
 
+Spike, not released: a loader read (`load()`, `refetch()`, a refresh group)
+renders no segment, so a push its body makes, or a loader it awaits makes, is
+dropped with a development warning and the read still answers its data. A
+value the client must show from that data is pushed by the component that
+renders it, with `usePushHandle` (see `/hooks`).
+
 Reads are the other direction and gated: `ctx.get(handle)` throws unless the
 loader first does `await ctx.rendered()` (DSL-registered loaders only —
 handler-invoked loaders cannot use `rendered()`, and a handler already

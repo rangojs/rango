@@ -44,11 +44,16 @@ export function useHandle<T, A, S>(
   // Until every boundary has hydrated the store returns the state the
   // document's HTML was rendered with (EventController.lockHydration), so a
   // reader hydrating late reads what SSR rendered (issue #1035).
-  const collect = (): Rango.FlightSerialize<A> | S => {
-    const state = ctx?.eventController.getHandleState();
+  // Per segment, a committed component's push (usePushHandle) merges with
+  // the server's values in a fixed position (the controller's
+  // withClientHandles); collect then runs as for server values alone.
+  const collect = (
+    state = ctx?.eventController.getHandleState(),
+  ): Rango.FlightSerialize<A> | S => {
+    const controller = ctx?.eventController;
     const collected = collectHandleData(
       handle,
-      state?.data ?? {},
+      controller?.withClientHandles(state?.data ?? {}, handle.$$id) ?? {},
       state?.segmentOrder ?? [],
     ) as Rango.FlightSerialize<A>;
     return selectorRef.current ? selectorRef.current(collected) : collected;
@@ -62,7 +67,20 @@ export function useHandle<T, A, S>(
       setValue(collect(), signal);
     // A (possibly new) handle on an idle page reads the current state.
     update();
-    return ctx.eventController.subscribeToHandles(update);
+    const unsubscribe = ctx.eventController.subscribeToHandles(update);
+    // A client push shows at once. While a page is held it comes from the
+    // page being left (the held page's pushers have not committed), so it
+    // merges with the server state shown there, not the held page's.
+    const unsubscribeClient = ctx.eventController.subscribeToClientHandles(
+      () => {
+        const held = ctx.eventController.getHeldHandleState();
+        setValue(collect(held), undefined, held !== undefined);
+      },
+    );
+    return () => {
+      unsubscribe();
+      unsubscribeClient();
+    };
   }, [handle]);
 
   return value;
@@ -86,6 +104,12 @@ export function useHandle<T, A, S>(
  * useSegments reads can suspend, so it leaves it off and its path and
  * location commit with their page.
  *
+ * `now`, from useHandle for a client push (usePushHandle): set at once, even
+ * while a page is held. The push comes from the page being left (the held
+ * page's components have not committed) and was merged with the server state
+ * shown there (EventController.getHeldHandleState), so it belongs to that
+ * page; the release then sets the held page's state as before.
+ *
  * A value shallow-equal to the last one sets nothing, so a reader renders only
  * when its value moves. A release is compared with what React committed, as in
  * useRouteState.
@@ -93,7 +117,7 @@ export function useHandle<T, A, S>(
 export function useCommitAnchoredState<T>(
   init: () => T,
   waitForRelease?: boolean,
-): [T, (value: T, signal?: RouteStateSignal) => void] {
+): [T, (value: T, signal?: RouteStateSignal, now?: boolean) => void] {
   // An app that enables the React Compiler compiles the router too; its memo
   // cache gains nothing here and cost 107 B gzip in the router chunk.
   "use no memo";
@@ -102,19 +126,25 @@ export function useCommitAnchoredState<T>(
     last: value,
   });
   const committed = useCommitted(value);
-  const [set] = useState(() => (next: T, signal?: RouteStateSignal): void => {
-    const r = ref.current;
-    if (signal) r.waiting = signal === "anchor";
-    if (!shallowEqual(next, r.last)) {
-      r.last = next;
-      r.held = true;
-    } else if (signal === "release" && r.last !== committed.current) {
-      r.held = true;
-    }
-    if (!r.held || (r.waiting && (waitForRelease || signal !== "anchor")))
-      return;
-    r.held = false;
-    setValue(() => r.last);
-  });
+  const [set] = useState(
+    () =>
+      (next: T, signal?: RouteStateSignal, now?: boolean): void => {
+        const r = ref.current;
+        if (signal) r.waiting = signal === "anchor";
+        if (!shallowEqual(next, r.last)) {
+          r.last = next;
+          r.held = true;
+        } else if (signal === "release" && r.last !== committed.current) {
+          r.held = true;
+        }
+        if (
+          !r.held ||
+          (!now && r.waiting && (waitForRelease || signal !== "anchor"))
+        )
+          return;
+        r.held = false;
+        setValue(() => r.last);
+      },
+  );
   return [value, set];
 }

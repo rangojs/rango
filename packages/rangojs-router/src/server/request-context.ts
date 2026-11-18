@@ -46,6 +46,8 @@ import {
 } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { withDefer } from "../defer.js";
+import { isThenable } from "../handles/is-thenable.js";
+import { WIRE } from "../wire-params.js";
 import { type MetricsStore } from "./context.js";
 import { observePhase, PHASES } from "../router/instrument.js";
 import { getFetchableLoader } from "./fetchable-loader-store.js";
@@ -2180,6 +2182,34 @@ export function serializeCookieValue(
   return cookie;
 }
 
+// Loaders a development warning has named for a dropped read push.
+const warnedLoaderReads = new Set<string>();
+
+/**
+ * A loader read (`_rsc_loader`: load(), refetch(), a refresh group) renders
+ * no segment, so a handle push from its body, or from a loader it awaits, has
+ * no segment to land in. The push is dropped rather than thrown, so the read
+ * still answers its data. A pushed promise's rejection is observed here: no
+ * one else will read it.
+ */
+function dropLoaderReadPush(
+  handleId: string,
+  loaderId: string,
+): (data: unknown) => void {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    !warnedLoaderReads.has(loaderId)
+  ) {
+    warnedLoaderReads.add(loaderId);
+    console.warn(
+      `[rango] Loader "${loaderId}" pushed handle "${handleId}" during a loader read (load(), refetch() or a refresh group). A read renders no segment, so the push is dropped. To show a value from data a client read brings, push it from the component that renders the data with usePushHandle.`,
+    );
+  }
+  return withDefer((data: unknown) => {
+    if (isThenable(data)) data.then(undefined, () => {});
+  });
+}
+
 /**
  * Options for creating the use() function
  */
@@ -2201,6 +2231,10 @@ export function createUseFunction<TEnv>(
       const segmentId = (ctx as any)._currentSegmentId;
 
       if (!segmentId) {
+        const readLoaderId = ctx.originalUrl?.searchParams.get(WIRE.loader);
+        if (readLoaderId != null) {
+          return dropLoaderReadPush(handle.$$id, readLoaderId);
+        }
         throw new Error(
           `Handle "${handle.$$id}" used outside of handler context. ` +
             `Handles must be used within route/layout handlers.`,
