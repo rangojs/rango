@@ -8,13 +8,16 @@ argument-hint: "[setup]"
 
 Built-in handle for accumulating breadcrumb items across route segments.
 Route, layout, and parallel-slot handlers and loader bodies push items via
-`ctx.use(Breadcrumbs)`; client components read the collected trail with
-`useHandle(Breadcrumbs)`. Items are collected in parent-to-child order with
-automatic deduplication by `href`.
+`ctx.use(Breadcrumbs)`; client components push items for data they learn or
+change after render with `usePushHandle(Breadcrumbs)` and read the collected
+trail with `useHandle(Breadcrumbs)`. Items are collected in parent-to-child
+order with automatic deduplication by `href`. Where a crumb should come from
+(handler, loader or client) is decided in one place:
+[hooks → "Where should a handle value come from?"](../hooks/handle-and-actions.md#where-should-a-handle-value-come-from).
 
 `Breadcrumbs` is exported from both `@rangojs/router` (server, for pushing) and
-`@rangojs/router/client` (for `useHandle`). For page titles and meta tags, use
-the `Meta` handle the same way.
+`@rangojs/router/client` (for `useHandle` and `usePushHandle`). For page titles
+and meta tags, use the `Meta` handle the same way.
 
 ## BreadcrumbItem Type
 
@@ -113,6 +116,33 @@ A loader with its own `cache()` keeps its crumbs on its own hits too: they are
 replayed from the loader's cache entry. A crumb from a loader it awaits appears
 once even when a sibling loader or the handler reads that loader too; that live
 run's crumb replaces the cached one in the trail.
+
+## Pushing from Client Components
+
+A crumb from data the client learns or changes after render (a project a
+`useFetchLoader()` read brought, a name being edited) is pushed by the
+component that holds it, during render:
+
+```tsx
+"use client";
+import { Breadcrumbs, usePushHandle } from "@rangojs/router/client";
+
+function ProjectCrumb({ project }: { project: { id: string; name: string } }) {
+  usePushHandle(Breadcrumbs)({
+    label: project.name,
+    href: `/projects/${project.id}`,
+  });
+  return null;
+}
+```
+
+The crumb lands in the component's own segment, after that segment's server
+crumbs. A server crumb with the same `href` keeps its position in the trail
+and takes the client's label (dedupe keeps the first position and the last
+value), so a server crumb for the first paint and a client crumb for later
+changes show as one crumb. The client crumb is never in the SSR HTML, leaves
+with the component, and is never stored in a history entry. Rules and timing:
+[hooks → usePushHandle()](../hooks/handle-and-actions.md#usepushhandle).
 
 ## Async Content
 

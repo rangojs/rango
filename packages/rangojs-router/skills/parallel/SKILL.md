@@ -114,6 +114,10 @@ Parallel slot handlers can call `ctx.use(Meta)` or `ctx.use(Breadcrumbs)` to
 push handle data. (Loader bodies can too — see `/loader` → "Writing Handles
 from Loaders" — which often replaces the UI-less `@meta` slot below.)
 
+A client component the slot renders pushes into the same segment with
+`usePushHandle` (`/hooks` → "usePushHandle()"), after the slot's server
+values, an intercept's slot included.
+
 A slot's pushes are stored under the slot's own segment (`<parent>.@slot`),
 separate from the parent's pushes:
 

@@ -435,6 +435,10 @@ The rule: **prefetch broadly, and flag what is expensive.**
 - Push from the loader that has the data: `ctx.use(Meta)({ title })`,
   `ctx.use(Breadcrumbs)({ label, href })`. This is how a group, which has no
   handlers, sets them (`/breadcrumbs`, "Pushing from Loaders").
+- Push from the component with `usePushHandle(Meta)` when the value comes
+  from what the client holds (a draft, a live count, a selection); it shows
+  after the loader's value in the same segment. Which writer to pick:
+  `/hooks` → "Where should a handle value come from?".
 - Read them in chrome with `useHandle(Breadcrumbs)`, in a layout that stays.
 - `loader(Def, { ssr: "await" })` puts its pushes in the document's HTML (a
   title for search engines, a real 404 from `notFound()`). The document waits

@@ -1,6 +1,6 @@
 ---
 name: client-urls
-description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes, and the ssr:"await" SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
+description: Define client-component route groups with clientUrls() in a "use client" module — no handlers, useLoader at read sites, server-run revalidate predicates, loader-thrown notFound/redirect, loader handle writes and client pushes (usePushHandle), and the ssr:"await" SSR-completeness opt-in. Use when a route group's pages are client components, when building high-navigation-speed UIs (dashboards, admin panels, settings) where transitions must feel instant, when moving data reads from handler ctx.use() to useLoader at consumption sites, or when asking how routes defined in a "use client" file work.
 argument-hint: "[setup]"
 ---
 
@@ -559,6 +559,18 @@ ride the SSR handle snapshot; later ones stream and apply post-hydration
 (document loads) or progressively (navigations). On a `ppr` shell HIT a loader
 without `ssr: "await"` never ran during the capture, so its pushes are never in
 the shell and always apply client-side. See `/loader` for the full contract.
+
+**Client pushes.** A group has no handlers, so a handle value has two
+writers: the group's loaders, and the components that read them. Push from
+the loader when the value comes from the loader's data: it is in the
+document, and every read of the loader (a navigation, `load()`, a group
+refresh) brings the new one. Push with `usePushHandle` beside the
+`useLoader` read when the value comes from what the client holds (a draft,
+a count, a selection): it shows after the loader's values in the same
+segment, so a `Meta` title or a `Breadcrumbs` crumb for the same `href` takes
+the client's value while the component pushes it. One worked example of
+each, and the rule against pushing one value from both:
+[hooks → "Where should a handle value come from?"](../hooks/handle-and-actions.md#in-a-clienturls-group).
 
 ## `ssr: "await"` — the SSR-completeness opt-in
 

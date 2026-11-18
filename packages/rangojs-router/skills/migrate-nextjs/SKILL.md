@@ -915,6 +915,11 @@ Without the flag the push still applies, but a slow loader's title lands
 post-hydration instead of in the document — see `/loader` → "Writing Handles
 from Loaders" for the delivery race.
 
+A title a client component changes after render (a draft, a live count,
+what a Next.js app sets with `document.title` in an effect) is pushed from
+that component with `usePushHandle(Meta)` — never in the SSR'd `<head>`; see
+`/hooks` → "Where should a handle value come from?".
+
 Add `<Html.Meta />` in the Document component's `<head>`:
 
 ```typescript

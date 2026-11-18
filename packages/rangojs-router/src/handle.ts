@@ -4,9 +4,14 @@ import { isUnderTestRunner } from "./runtime-env.js";
 /**
  * Handle definition for accumulating data across route segments.
  *
- * Handles allow server-side route handlers to pass accumulated data to client
- * components. Unlike loaders (which fetch data for specific routes), handles
- * accumulate data across all matched route segments.
+ * A handle accumulates values across the matched route segments: each
+ * segment's values, in tree order, are collected into what `useHandle`
+ * returns. Values are pushed by the server, from a handler or a loader
+ * (`ctx.use(handle)`), and by client components, for data they learn or
+ * change after the server rendered (`usePushHandle(handle)`). In each
+ * segment the client's values follow the server's. Unlike loaders (which
+ * fetch data for specific routes), handles accumulate data across all
+ * matched route segments.
  *
  * @example
  * ```ts
@@ -16,11 +21,14 @@ import { isUnderTestRunner } from "./runtime-env.js";
  *   (segments) => segments.flat(), // opt into a single flat list
  * );
  *
- * // Use in handler
+ * // Push from a handler or a loader
  * const push = ctx.use(Breadcrumbs);
  * push({ label: "Home", href: "/" });
  *
- * // Consume on client
+ * // Push from a client component, during render
+ * usePushHandle(Breadcrumbs)({ label: draft.name, href: "/draft" });
+ *
+ * // Read in a client component
  * const crumbs = useHandle(Breadcrumbs);
  * ```
  */

@@ -160,7 +160,10 @@ stated, greppable contract.
   is TTL/SWR expiry plus tag-based invalidation: tag via `cache({ tags })` /
   `cacheTag(...tags)`, then `updateTag(...tags)` (awaitable) or `revalidateTag(...tags)`
   (background). Built-in stores index by tag.
-- `useLoader` / `useHandle` / `useFetchLoader` are client-only.
+- `useLoader` / `useHandle` / `usePushHandle` / `useFetchLoader` are client-only.
+  A `usePushHandle` value is never in SSR HTML or a `ppr` shell: a value the
+  first paint must show is pushed on the server (`/hooks` → "Where should a
+  handle value come from?").
 - Caches are correctness-first: persistent store keys are version-segmented per
   `createRouter()` by a hash of its built code (a deploy that does not change a
   router keeps its cache; one that does reads under new keys), the forward/back cache is mutation-aware, and
@@ -355,7 +358,7 @@ Grouped by concern — read when you need to…
 
 | Skill               | Description                                                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `/hooks`            | Client-side React hooks                                                                                                            |
+| `/hooks`            | Client-side React hooks; the home of handles (writers, order, `useHandle`, `usePushHandle`, where a handle value comes from)       |
 | `/theme`            | Light/dark mode with FOUC prevention                                                                                               |
 | `/i18n`             | Locale routing with `:locale?`, resolution chains, react-intl integration                                                          |
 | `/fonts`            | Load web fonts with preload hints                                                                                                  |
@@ -364,7 +367,7 @@ Grouped by concern — read when you need to…
 | `/tailwind`         | Set up Tailwind CSS v4 with `?url` imports                                                                                         |
 | `/view-transitions` | React View Transitions on layouts, routes, and parallel slots                                                                      |
 | `/defer-hydration`  | Full body HTML in the PPR shell + hydration off the critical path (gated Suspense boundary, content-as-fallback)                   |
-| `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation                                                                              |
+| `/breadcrumbs`      | Built-in Breadcrumbs handle for breadcrumb navigation, pushed from handlers, loaders or client components                          |
 | `/react-compiler`   | Enable React Compiler (opt-in) via plugin-react's native `compiler` option; client-only scope                                      |
 
 **Observability & production health**:

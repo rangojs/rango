@@ -1078,7 +1078,9 @@ data-shaped, and middleware CAN emit a real pre-stream 302). Data-dependent
 Loader bodies can WRITE handles with handler parity — `ctx.use(Handle)`
 returns the push function, legal for the whole body, streaming loaders
 included. This is how data-derived page titles and breadcrumb trails live
-where the data lives:
+where the data lives. Whether a value belongs in a loader, a handler or a
+client component (`usePushHandle`) is decided in one place:
+[hooks → "Where should a handle value come from?"](../hooks/handle-and-actions.md#where-should-a-handle-value-come-from).
 
 ```typescript
 import { Meta, Breadcrumbs } from "./handles";
@@ -1127,11 +1129,14 @@ which the read did not refresh: the page keeps that run's values, as it keeps
 its data. A loader that no segment on the page registers with `loader()` (a
 `useFetchLoader()` of an unregistered loader) has no segment to own its
 values: they are not applied, and development warns once. Register the loader
-on the route or layout whose title or crumbs it writes. A read for data the
-page does not show — `load()` with `params` (a hover preview of another
-item), or with a `body` or a method other than GET (a form post) — keeps its
-data and drops its pushes: the page's title and crumbs stay those of what it
-shows.
+on the route or layout whose title or crumbs it writes, or push the values
+from the component that renders the data with `usePushHandle`. A read for
+data the page does not show — `load()` with `params` (a hover preview of
+another item), or with a `body` or a method other than GET (a form post) —
+keeps its data and drops its pushes: the page's title and crumbs stay those
+of what it shows. When the page does show that data (a client-side picker
+that loads the selected item with `params`), the component that renders it
+pushes its title with `usePushHandle`.
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps
