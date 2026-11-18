@@ -45,9 +45,12 @@ export function startFetchedLoaderRead(
   handles: FetchedLoaderHandles | undefined,
   pushedBy?: FetchedLoaderPushedBy,
 ) => void {
-  const historyKey = page?.store.getHistoryKey();
-  const navInstance = page?.store.getNavInstance();
-  const current = page ? page.store.beginLoaderRead(loaderId) : () => false;
+  // No page (no router state to apply to): nothing to apply, nothing to gate.
+  if (!page) return () => {};
+  const { eventController, store } = page;
+  const historyKey = store.getHistoryKey();
+  const navInstance = store.getNavInstance();
+  const current = store.beginLoaderRead(loaderId);
 
   const apply = async (
     handles: FetchedLoaderHandles | undefined,
@@ -56,11 +59,10 @@ export function startFetchedLoaderRead(
     if (!handles || !current()) return;
     const pushes = await resolveDeferredPushes(handles, pushedBy);
     if (!current()) return;
-    const { eventController, store } = page!;
     // The entry's copy is written when the values apply: after the
     // hydration window, from the data they were applied to.
     const applied = (data: HandleData): void =>
-      store.updateCacheHandleDataIfOwned(historyKey!, data, navInstance!);
+      store.updateCacheHandleDataIfOwned(historyKey, data, navInstance);
     if (!eventController.setLoaderReadHandleData(loaderId, pushes, applied)) {
       if (
         process.env.NODE_ENV !== "production" &&

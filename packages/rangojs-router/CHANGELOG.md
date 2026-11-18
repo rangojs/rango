@@ -69,9 +69,11 @@ gains `handleData(handle)`, `segmentId(segment?)`, `pushLateHandles()`,
   late. Push a promise, or reserve the slot with `.defer()`, before returning.
 - The history entry keeps the values the read applied, written when they
   apply, so Back shows them.
-- Each router tracks its own newest read. A newer read that fails still
-  leaves an older one's values unapplied, as it leaves its data: the page
-  keeps what it showed, as with a navigation superseded by one that fails.
+- Each router tracks its own newest read per loader. Within one loader
+  bucket, a newer read that fails still leaves an older one's values
+  unapplied, as it leaves its data: the page keeps what it showed, as with a
+  navigation superseded by one that fails. A newer read of the same loader
+  under another `key` also supersedes the older read's values, not its data.
 
 ## 0.36.1 (2026-11-18)
 
