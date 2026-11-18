@@ -337,7 +337,18 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // rule above: 55497B + 256B, rounded up to the next 128B step. The review's
 // follow-up (readers skip other handles' notifications, dates by time)
 // measures 55538B.
-const ROUTER_CHUNK_GZIP_MAX = 54.5 * 1024;
+//
+// Raised 54.5KB -> 54.875KB on 2026-11-18 for useHandle keeping its
+// reference while the content is equal, measured on cloudflare-basic from
+// the useHandle branch before its review fixes 55764B -> 55842B (+78B gzip).
+// samePushValue (handles/client-pushes.ts) remembers the object pairs it
+// found equal once a walk passes 64 of them, so a sub-object shared at many
+// places is compared once instead of once per path (an equal binary DAG 22
+// levels deep took 685 ms; 0.1 ms now). It cannot load lazily: every
+// useHandle and useSegments delivery and every client push compares with
+// it. By the owner's rule above: 55842B + 256B, rounded up to the next 128B
+// step.
+const ROUTER_CHUNK_GZIP_MAX = 54.875 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
