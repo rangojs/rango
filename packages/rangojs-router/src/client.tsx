@@ -93,7 +93,7 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
     // Common for intercept routes that use useLoader without a custom layout.
     result = loaderWrapped;
   } else {
-    result = content;
+    result = <SlotSegment segment={segment}>{content}</SlotSegment>;
   }
 
   if (process.env.NODE_ENV !== "production" && INTERNAL_RANGO_SUSPENSE_AUDIT) {
@@ -109,6 +109,29 @@ function renderSlotContent(segment: ResolvedSegment | null): ReactNode {
   }
 
   return result;
+}
+
+/**
+ * The slot's own segment for what its content reads from OutletContext
+ * (usePushHandle files its values under it). A slot with neither a layout nor
+ * loaders has no OutletProvider of its own and would read its parent's; the
+ * rest of the parent's context (loaders, parallel, content) stays.
+ */
+function SlotSegment({
+  segment,
+  children,
+}: {
+  segment: ResolvedSegment;
+  children: ReactNode;
+}): ReactNode {
+  const context = useContext(OutletContext);
+  const value = useMemo(
+    () => (context ? { ...context, segment } : null),
+    [context, segment],
+  );
+  return (
+    <OutletContext.Provider value={value}>{children}</OutletContext.Provider>
+  );
 }
 
 // Dev only (suspense-audit.ts): the boundaries renderSlotContent built, as
@@ -135,6 +158,12 @@ function auditedSlot(node: ReactNode): ReactNode {
       AuditedRouteContent,
       props as ComponentProps<typeof RouteContentWrapper>,
     );
+  }
+  if (node.type === SlotSegment) {
+    return createElement(SlotSegment, {
+      segment: props.segment,
+      children: auditedSlot(props.children),
+    });
   }
   return node;
 }
@@ -491,6 +520,7 @@ export {
 
 export { type Handle } from "./handle.js";
 export { useHandle } from "./browser/react/use-handle.js";
+export { usePushHandle } from "./browser/react/use-push-handle.js";
 
 export { Meta } from "./handles/meta.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";

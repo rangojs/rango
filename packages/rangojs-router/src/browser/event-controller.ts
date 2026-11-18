@@ -15,6 +15,12 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
+import { collectHandleData, type Handle } from "../handle.js";
+import {
+  samePushValue,
+  withClientPushes,
+  type ClientPushes,
+} from "../handles/client-pushes.js";
 import {
   mergeLoaderReadHandleData,
   mergePartialHandleData,
@@ -360,6 +366,38 @@ export interface EventController {
    * its previous value until the deferred snapshot is applied.
    */
   setRouteSegmentIds(matched: string[]): void;
+  /**
+   * The client handle layer (usePushHandle): set what `owner`, a mounted
+   * component, pushes for `handleId` in `segmentId`; `values` undefined or
+   * empty removes it. Kept apart from the server's handle data, so a history entry
+   * never stores it and a late server write never overwrites it, nor it one:
+   * readers merge the two when they read (withClientHandles). Values equal to
+   * the owner's last ones (samePushValue) change nothing. Readers subscribed
+   * with subscribeToClientHandles hear a change at once, in the caller's
+   * task; while the hydration window is open they hear it at its release.
+   */
+  setClientHandle(
+    handleId: string,
+    segmentId: string,
+    owner: object,
+    values: unknown[] | undefined,
+  ): void;
+  /**
+   * `data` (server handle data) with the client layer of `handleId` after
+   * the server's values in each segment (handles/client-pushes.ts
+   * withClientPushes). `data` itself while the hydration window is open: the
+   * document's HTML was rendered from the server's values alone.
+   */
+  withClientHandles(data: HandleData, handleId: string): HandleData;
+  subscribeToClientHandles(listener: () => void): () => void;
+  /**
+   * From flushRouteState("anchor") until the page it announced commits: the
+   * server handle state readers show over the page being left; undefined
+   * otherwise. A client push made meanwhile comes from a component of that
+   * page, so a reader merges it with this state and shows it at once,
+   * instead of waiting for the held page (react/use-handle.ts).
+   */
+  getHeldHandleState(): HandleState | undefined;
 
   // Params operations
   setParams(params: Record<string, string>): void;
@@ -622,6 +660,11 @@ export function createEventController(
   // rendered with, and the handle writes waiting for its release.
   let hydrationSnapshot: HydrationSnapshot | undefined;
   let writesAfterHydration: (() => void)[] = [];
+  const clientPushes: ClientPushes = new Map();
+  const clientHandleListeners = new Set<() => void>();
+  // getHeldHandleState: set by the first flushRouteState("anchor"), before
+  // the payload's own handle writes, cleared when the page commits.
+  let heldHandleState: HandleState | undefined;
 
   let routeParams: Record<string, string> = {};
 
@@ -702,6 +745,8 @@ export function createEventController(
   const notifyHandles = makeDebouncedNotifier(handleListeners);
 
   function flushRouteState(signal?: RouteStateSignal): void {
+    if (signal === "anchor") heldHandleState ??= getHandleState();
+    else if (signal) heldHandleState = undefined;
     notifyStateListeners.flush();
     notifyHandles.flush(signal);
   }
@@ -1303,11 +1348,34 @@ export function createEventController(
 
   function releaseHydrationLock(): void {
     if (!hydrationSnapshot) return;
+    const ssr = hydrationSnapshot.handles;
     hydrationSnapshot = undefined;
+    if (process.env.NODE_ENV !== "production") {
+      // The document's HTML shows the server's values alone; a client push
+      // that changes what a reader shows changes it after the first paint.
+      for (const handleId of clientPushes.keys()) {
+        const handle = { $$id: handleId } as Handle<unknown, unknown>;
+        if (
+          !samePushValue(
+            collectHandleData(handle, ssr.data, ssr.segmentOrder),
+            collectHandleData(
+              handle,
+              withClientHandles(ssr.data, handleId),
+              ssr.segmentOrder,
+            ),
+          )
+        ) {
+          console.warn(
+            `[rango] usePushHandle: handle "${handleId}" shows a different value once the client's push applies than the document was rendered with. The first paint shows the server's values: push the value on the server too.`,
+          );
+        }
+      }
+    }
     const writes = writesAfterHydration;
     writesAfterHydration = [];
     for (const write of writes) write();
     notifyHandles.flush();
+    if (clientPushes.size > 0) notifyClientHandles();
   }
 
   function setRouteSegmentIds(matched: string[]): void {
@@ -1324,6 +1392,61 @@ export function createEventController(
     }
     routeSegmentIds = next;
     notifyHandles.schedule();
+  }
+
+  function setClientHandle(
+    handleId: string,
+    segmentId: string,
+    owner: object,
+    values: unknown[] | undefined,
+  ): void {
+    let bySegment = clientPushes.get(handleId);
+    let owners = bySegment?.get(segmentId);
+    const previous = owners?.get(owner);
+    if (!values?.length) {
+      if (!owners?.delete(owner)) return;
+      if (owners.size === 0) bySegment!.delete(segmentId);
+      if (bySegment!.size === 0) clientPushes.delete(handleId);
+    } else {
+      if (previous && samePushValue(previous, values)) return;
+      if (!bySegment) clientPushes.set(handleId, (bySegment = new Map()));
+      if (!owners) bySegment.set(segmentId, (owners = new Map()));
+      owners.set(owner, values);
+      if (
+        process.env.NODE_ENV !== "production" &&
+        !previous &&
+        owners.size > 1
+      ) {
+        console.error(
+          `[rango] usePushHandle: ${owners.size} mounted components push handle "${handleId}" in segment "${segmentId}". One component per segment pushes a handle: their values show in the order they mounted, which Suspense timing can change. Push the values from one component.`,
+        );
+      }
+    }
+    if (!hydrationSnapshot) notifyClientHandles();
+  }
+
+  function notifyClientHandles(): void {
+    notifyListeners(
+      [...clientHandleListeners],
+      (listener) => listener(),
+      (listener) => clientHandleListeners.has(listener),
+    );
+  }
+
+  function withClientHandles(data: HandleData, handleId: string): HandleData {
+    return hydrationSnapshot
+      ? data
+      : withClientPushes(data, handleId, clientPushes);
+  }
+
+  function subscribeToClientHandles(listener: () => void): () => void {
+    clientHandleListeners.add(listener);
+    return () => clientHandleListeners.delete(listener);
+  }
+
+  function releaseRouteState(): void {
+    heldHandleState = undefined;
+    notifyHandles.flush("release");
   }
 
   // ========================================================================
@@ -1413,6 +1536,10 @@ export function createEventController(
     getHydrationSnapshot: () => hydrationSnapshot,
     releaseHydrationLock,
     setRouteSegmentIds,
+    setClientHandle,
+    withClientHandles,
+    subscribeToClientHandles,
+    getHeldHandleState: () => heldHandleState,
 
     // Params
     setParams,
@@ -1428,7 +1555,7 @@ export function createEventController(
     subscribeToAction,
     subscribeToHandles,
     flushRouteState,
-    releaseRouteState: () => notifyHandles.flush("release"),
+    releaseRouteState,
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

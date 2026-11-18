@@ -124,5 +124,6 @@ export { useHref } from "./browser/react/use-href.js";
 export { useReverse } from "./browser/react/use-reverse.js";
 
 export { useHandle } from "./browser/react/use-handle.js";
+export { usePushHandle } from "./browser/react/use-push-handle.js";
 
 export { useLocationState } from "./browser/react/location-state.js";

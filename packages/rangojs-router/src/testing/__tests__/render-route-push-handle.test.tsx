@@ -1,0 +1,1152 @@
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  Component,
+  Profiler,
+  Suspense,
+  use,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+} from "@testing-library/react";
+import { Outlet, ParallelOutlet } from "../../client.js";
+import { collectHandleData, createHandle, type Handle } from "../../handle.js";
+import { Breadcrumbs, type BreadcrumbItem } from "../../handles/breadcrumbs.js";
+import { Meta } from "../../handles/meta.js";
+import { useHandle } from "../../browser/react/use-handle.js";
+import { usePushHandle } from "../../browser/react/use-push-handle.js";
+import { useLoader } from "../../use-loader.js";
+import type { LoaderDefinition } from "../../types.js";
+import {
+  renderRoute,
+  type RenderRouteHydrateResult,
+  type RenderRouteSpec,
+} from "../render-route.js";
+
+/**
+ * Userland: a client component pushes a handle's values for its own segment
+ * (usePushHandle), and what useHandle shows is a function of the server's
+ * values and the committed client pushes, per segment, never of which arrived
+ * first: in each segment the client's values follow the server's.
+ *
+ * Commits are measured, not reasoned: a Profiler over the page records the
+ * DOM at every React commit, with a tick that moves at the next microtask;
+ * `painted()` keeps the last commit of each tick. Under act() that is the
+ * closest a DOM test gets to a frame: act() flushes passive effects too, so
+ * a value a passive effect sets looks on time here. The browser's frames are
+ * pinned by the push-handle e2e, which samples every animation frame.
+ */
+
+const Titles = createHandle<string, string[]>(
+  (segments) => segments.flat(),
+  "__test_push_handle_titles__",
+);
+const Title = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "",
+  "__test_push_handle_title__",
+);
+const ItemLoader = {
+  __brand: "loader",
+  $$id: "push-handle#ItemLoader",
+} as unknown as LoaderDefinition<string>;
+
+interface Frame {
+  title: string;
+  data: string;
+  /** The title a reader inside the page shows (empty when none is mounted). */
+  own: string;
+  tick: number;
+}
+let log: Frame[];
+let tick: number;
+let tickQueued: boolean;
+
+// The visible element: a revealed <Suspense> that suspends again keeps its
+// content in the DOM, hidden, beside its fallback.
+const text = (id: string): string =>
+  Array.from(
+    document.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`),
+  ).find((el) => !el.closest('[style*="display: none"]'))?.textContent ?? "";
+
+function record(): void {
+  log.push({
+    title: text("title"),
+    data: text("data"),
+    own: text("own-title"),
+    tick,
+  });
+  if (tickQueued) return;
+  tickQueued = true;
+  queueMicrotask(() => {
+    tick++;
+    tickQueued = false;
+  });
+}
+
+/** The last commit of each tick: what the browser could paint. */
+const painted = (frames: Frame[]): Frame[] =>
+  frames.filter((f, i) => frames[i + 1]?.tick !== f.tick);
+
+/** A frame whose pusher shows data its title does not carry. */
+const mixes = (f: Frame): boolean =>
+  f.data !== "" && !f.title.includes(`Client ${f.data}`);
+
+function TitleReader(): ReactNode {
+  return <p data-testid="title">{useHandle(Titles).join(" / ")}</p>;
+}
+
+function Layout(): ReactNode {
+  return (
+    <Profiler id="page" onRender={record}>
+      <TitleReader />
+      <Suspense fallback={<p data-testid="fallback">loading</p>}>
+        <Outlet />
+      </Suspense>
+    </Profiler>
+  );
+}
+
+function Pusher({ data }: { data: string }): ReactNode {
+  usePushHandle(Titles)(`Client ${data}`);
+  return <p data-testid="data">{data}</p>;
+}
+
+/** A reader inside the page, mounted with the pusher. */
+function OwnTitle(): ReactNode {
+  return <p data-testid="own-title">{useHandle(Titles).join(" / ")}</p>;
+}
+
+/** The route: its loader's value decides whether the pusher is on the page. */
+function Page(): ReactNode {
+  const { data, load } = useLoader(ItemLoader);
+  const [shown, setShown] = useState(true);
+  return (
+    <>
+      {data === "with reader" && <OwnTitle />}
+      {shown && !data.startsWith("plain") ? (
+        <Pusher data={data} />
+      ) : (
+        <p data-testid="plain">{data}</p>
+      )}
+      <button data-testid="toggle" onClick={() => setShown((s) => !s)} />
+      <button data-testid="load" onClick={() => void load().catch(() => {})} />
+    </>
+  );
+}
+
+const routes = (transition: boolean): RenderRouteSpec[] => [
+  { path: "/items", Component: Layout },
+  { path: "/items", Component: Page, ...(transition && { transition: {} }) },
+];
+
+/** The title for the layout's "Layout", segment 1's server values, then the client's. */
+const titleOf = (server: string[], client?: string): string =>
+  ["Layout", ...server, ...(client === undefined ? [] : [client])].join(" / ");
+
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+async function mount(
+  options: { transition?: boolean; data?: string; hydrate?: boolean } = {},
+) {
+  return renderRoute(routes(options.transition ?? false), {
+    request: "/items?id=1",
+    loaders: [[ItemLoader, options.data ?? "one"]],
+    handles: [
+      [Titles, ["Layout"], 0],
+      [Titles, ["Server one"], 1],
+    ],
+    ...(options.hydrate && { hydrate: true }),
+  });
+}
+
+/** Click a load() button and wait for its answer to commit. */
+async function loadAndSettle(button: HTMLElement): Promise<void> {
+  await act(async () => {
+    fireEvent.click(button);
+    await new Promise((r) => setTimeout(r, 20));
+  });
+}
+
+let errors: ReturnType<typeof vi.spyOn>;
+let warnings: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  log = [];
+  tick = 0;
+  tickQueued = false;
+  errors = vi.spyOn(console, "error");
+  warnings = vi.spyOn(console, "warn");
+});
+afterEach(() => {
+  cleanup();
+  errors.mockRestore();
+  warnings.mockRestore();
+  configure({ reactStrictMode: false });
+});
+
+const messages = (spy: ReturnType<typeof vi.spyOn>, part: string): string[] =>
+  spy.mock.calls
+    .map((call: unknown[]) => call.map(String).join(" "))
+    .filter((m: string) => m.includes(part));
+
+describe("usePushHandle", () => {
+  it("G1/case 1: a late server push into the owned segment, in either arrival order; unmount shows the server's", async () => {
+    // Order A: the pusher is mounted, then the late push lands.
+    const a = await mount();
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    await a.router.pushLateHandles([[Titles, ["Late one"], 1]]);
+    const screenA = text("title");
+    expect(screenA).toBe(titleOf(["Late one"], "Client one"));
+    await act(async () => fireEvent.click(a.getByTestId("toggle")));
+    expect(text("title")).toBe(titleOf(["Late one"]));
+    cleanup();
+
+    // Order B: the late push lands, then the pusher mounts.
+    const b = await mount();
+    await act(async () => fireEvent.click(b.getByTestId("toggle")));
+    await b.router.pushLateHandles([[Titles, ["Late one"], 1]]);
+    await act(async () => fireEvent.click(b.getByTestId("toggle")));
+    expect(text("title")).toBe(screenA);
+  });
+
+  it("case 2: a late push into another segment shows", async () => {
+    const { router } = await mount();
+    await router.pushLateHandles([[Titles, ["Late layout"], 0]]);
+    expect(text("title")).toBe(
+      titleOf(["Server one"], "Client one").replace("Layout", "Late layout"),
+    );
+  });
+
+  it("G2: a plain load() refresh paints no frame with the new data and the old title", async () => {
+    const { router, getByTestId } = await mount();
+    router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+    log = [];
+    await loadAndSettle(getByTestId("load"));
+    expect(text("data")).toBe("loaded");
+    expect(text("title")).toBe(titleOf(["Server one"], "Client loaded"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it("G2 (commit level): a load() refresh commits the new data before the title, corrected before paint", async () => {
+    const { router, getByTestId } = await mount();
+    router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+    log = [];
+    await loadAndSettle(getByTestId("load"));
+    // Measured: one commit shows "loaded" with the old title; the reader's
+    // update from the pusher's layout effect commits in the same task.
+    const mixed = log.filter(mixes);
+    expect(mixed).toHaveLength(1);
+    expect(log.filter((f) => f.tick === mixed[0].tick).at(-1)).toEqual({
+      ...mixed[0],
+      title: titleOf(["Server one"], "Client loaded"),
+    });
+  });
+
+  it("case 3: a load() racing a navigation's revalidation of the same loader: the title follows what the component renders", async () => {
+    const { router, getByTestId } = await mount({ transition: true });
+    router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+    const nav = deferred<string>();
+    log = [];
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, nav.promise]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+    });
+    await loadAndSettle(getByTestId("load"));
+    // Held: the page on screen shows its own server values with the new
+    // client value, not the held page's server values.
+    expect(text("data")).toBe("loaded");
+    expect(text("title")).toBe(titleOf(["Server one"], "Client loaded"));
+    await act(async () => {
+      nav.resolve("two");
+      await nav.promise;
+    });
+    // The load() answer showed on the held page before the navigation won.
+    expect(painted(log).some((f) => f.data === "loaded")).toBe(true);
+    const shown = text("data");
+    expect(text("title")).toContain(`Client ${shown}`);
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it.each([
+    { variant: "held in a transition", transition: true },
+    { variant: "committed at once", transition: false },
+  ])(
+    "case 4: navigating away ($variant): no frame shows the old client value over the new page",
+    async ({ transition }) => {
+      const { router } = await mount({ transition });
+      log = [];
+      const nav = deferred<string>();
+      await router.navigate("/items?id=2", {
+        loaders: [[ItemLoader, nav.promise]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server two"], 1],
+        ],
+      });
+      await act(async () => {
+        nav.resolve("plain two");
+        await nav.promise;
+      });
+      expect(text("plain")).toBe("plain two");
+      expect(text("title")).toBe(titleOf(["Server two"]));
+      expect(
+        painted(log).filter(
+          (f) => f.title.includes("Client one") && f.data !== "one",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    { variant: "held in a transition", transition: true },
+    { variant: "committed at once", transition: false },
+  ])(
+    "G2: a reader that mounts with the pusher ($variant) paints no frame without its value",
+    async ({ transition }) => {
+      const { router } = await mount({ transition });
+      log = [];
+      await router.navigate("/items?id=2", {
+        loaders: [[ItemLoader, "with reader"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server two"], 1],
+        ],
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(text("own-title")).toBe(
+        titleOf(["Server two"], "Client with reader"),
+      );
+      const own = painted(log).filter(
+        (f) => f.data === "with reader" && f.own !== "",
+      );
+      expect(own.length).toBeGreaterThan(0);
+      expect(own.filter((f) => !f.own.includes("Client with reader"))).toEqual(
+        [],
+      );
+    },
+  );
+
+  it("a newer navigation over a held one: the page that commits brings its values; the abandoned one's never show", async () => {
+    const { router } = await mount({ transition: true });
+    log = [];
+    const abandoned = deferred<string>();
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, abandoned.promise]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+    });
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    await act(async () => {
+      await router.navigate("/items?id=3", {
+        loaders: [[ItemLoader, "three"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server three"], 1],
+        ],
+      });
+    });
+    await act(async () => {
+      abandoned.resolve("two");
+      await abandoned.promise;
+    });
+    expect(text("data")).toBe("three");
+    expect(text("title")).toBe(titleOf(["Server three"], "Client three"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+    expect(painted(log).some((f) => f.title.includes("two"))).toBe(false);
+  });
+
+  it("case 5: a same-route navigation held in a transition: the push follows the committed render", async () => {
+    const { router } = await mount({ transition: true });
+    log = [];
+    const nav = deferred<string>();
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, nav.promise]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+    });
+    // Held: the page being left keeps its data and its client value.
+    expect(text("data")).toBe("one");
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    await act(async () => {
+      nav.resolve("two");
+      await nav.promise;
+    });
+    expect(text("title")).toBe(titleOf(["Server two"], "Client two"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it("case 6/G7: SSR values until the hydration lock releases, then the client layer; dev warns of the drift", async () => {
+    const result = (await mount({
+      hydrate: true,
+    })) as RenderRouteHydrateResult;
+    expect(result.serverHtml).toContain(
+      `<p data-testid="title">${titleOf(["Server one"])}</p>`,
+    );
+    expect(result.recoverableErrors).toEqual([]);
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    expect(messages(warnings, "usePushHandle")).toHaveLength(1);
+  });
+
+  it("G7: no drift warning when the client value matches the SSR value", async () => {
+    function TitlePage(): ReactNode {
+      usePushHandle(Title)("Same");
+      return <p data-testid="t">{useHandle(Title)}</p>;
+    }
+    const result = await renderRoute([{ path: "/t", Component: TitlePage }], {
+      request: "/t",
+      handles: [[Title, ["Same"]]],
+      hydrate: true,
+    });
+    expect(result.recoverableErrors).toEqual([]);
+    expect(text("t")).toBe("Same");
+    expect(messages(warnings, "usePushHandle")).toEqual([]);
+  });
+
+  it("case 7: a ppr live-lane push after hydration into the owned segment", async () => {
+    const result = await renderRoute(routes(false), {
+      request: "/items?id=1",
+      loaders: [[ItemLoader, "one"]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server one"], 1],
+      ],
+      lateHandles: [[Titles, ["Live lane"], 1]],
+      hydrate: true,
+    });
+    expect(result.recoverableErrors).toEqual([]);
+    expect(text("title")).toBe(titleOf(["Live lane"], "Client one"));
+  });
+
+  it("case 8: Back/Forward: no client value in the history snapshot; the restored page pushes again in its commit", async () => {
+    const { router } = await mount();
+    const seg = router.segmentId(1);
+    // What production writes into the history entry (liveHandleDataForCache).
+    expect(router.eventController.getHandleState().data[Titles.$$id]).toEqual({
+      [router.segmentId(0)]: ["Layout"],
+      [seg]: ["Server one"],
+    });
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, "two"]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+      state: [],
+    });
+    expect(text("title")).toBe(titleOf(["Server two"], "Client two"));
+    log = [];
+    await act(async () => {
+      window.history.back();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(text("data")).toBe("one");
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it("G6/case 9: two pushers of one handle in one segment: a dev error; both show, in the order they mounted", async () => {
+    function Second(): ReactNode {
+      usePushHandle(Titles)("Second");
+      return null;
+    }
+    function TwoPushers(): ReactNode {
+      return (
+        <>
+          <Pusher data="one" />
+          <Second />
+        </>
+      );
+    }
+    await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: TwoPushers },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(messages(errors, "2 mounted components push handle")).toHaveLength(
+      1,
+    );
+    expect(text("title")).toBe(titleOf(["Server one", "Client one"], "Second"));
+  });
+
+  it("case 10: a pusher in a layout's slot, an intercept, and a route's own slot files its values in that segment", async () => {
+    const slotPusher = (value: string) =>
+      function SlotPusher(): ReactNode {
+        usePushHandle(Titles)(value);
+        return null;
+      };
+    function SlotLayout(): ReactNode {
+      return (
+        <>
+          <TitleReader />
+          <ParallelOutlet name="@side" />
+          <ParallelOutlet name="@modal" />
+          <Outlet />
+        </>
+      );
+    }
+    function SlotRoute(): ReactNode {
+      return <ParallelOutlet name="@aside" />;
+    }
+    const { router } = await renderRoute(
+      [
+        {
+          path: "/items",
+          Component: SlotLayout,
+          slots: {
+            "@side": slotPusher("Side"),
+            "@modal": { Component: slotPusher("Modal"), intercept: true },
+          },
+        },
+        {
+          path: "/items",
+          Component: SlotRoute,
+          slots: { "@aside": slotPusher("Aside") },
+        },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server side"], [0, "@side"]],
+        ],
+      },
+    );
+    expect(router.handleData(Titles)).toEqual({
+      [router.segmentId(0)]: ["Layout"],
+      [router.segmentId([0, "@side"])]: ["Server side", "Side"],
+      [router.segmentId([0, "@modal"])]: ["Modal"],
+      [router.segmentId([1, "@aside"])]: ["Aside"],
+    });
+    // The slots collect after their parent, in segment order.
+    expect(text("title")).toBe(
+      ["Layout", "Server side", "Side", "Modal", "Aside"].join(" / "),
+    );
+  });
+
+  it("case 11: an error boundary replacing the pusher brings back the server values", async () => {
+    class Boundary extends Component<
+      { children: ReactNode },
+      { failed: boolean }
+    > {
+      state = { failed: false };
+      static getDerivedStateFromError(): { failed: boolean } {
+        return { failed: true };
+      }
+      render(): ReactNode {
+        return this.state.failed ? (
+          <p data-testid="failed">failed</p>
+        ) : (
+          this.props.children
+        );
+      }
+    }
+    function Throws({ fail }: { fail: boolean }): ReactNode {
+      usePushHandle(Titles)("Client one");
+      if (fail) throw new Error("render failed");
+      return <p data-testid="data">one</p>;
+    }
+    function FailingPage(): ReactNode {
+      const [fail, setFail] = useState(false);
+      return (
+        <>
+          <Boundary>
+            <Throws fail={fail} />
+          </Boundary>
+          <button data-testid="fail" onClick={() => setFail(true)} />
+        </>
+      );
+    }
+    errors.mockImplementation(() => {});
+    const { getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: FailingPage },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    await act(async () => fireEvent.click(getByTestId("fail")));
+    expect(text("failed")).toBe("failed");
+    expect(text("title")).toBe(titleOf(["Server one"]));
+  });
+
+  it("case 12: StrictMode's double render and effects give the same result", async () => {
+    configure({ reactStrictMode: true });
+    const { router, getByTestId } = await mount();
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+    await loadAndSettle(getByTestId("load"));
+    expect(text("title")).toBe(titleOf(["Server one"], "Client loaded"));
+    expect(messages(errors, "usePushHandle")).toEqual([]);
+  });
+
+  it("case 13: an action revalidation updating the owned segment's server values", async () => {
+    const { router } = await mount();
+    log = [];
+    await router.action({
+      loaders: [[ItemLoader, "two"]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server after action"], 1],
+      ],
+    });
+    expect(text("data")).toBe("two");
+    expect(text("title")).toBe(titleOf(["Server after action"], "Client two"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it("G4: a pusher that suspends pushes nothing; the server's values show until it commits", async () => {
+    const gate = deferred<string>();
+    function Suspending(): ReactNode {
+      const value = use(gate.promise);
+      usePushHandle(Titles)(`Client ${value}`);
+      return <p data-testid="data">{value}</p>;
+    }
+    function SuspendingPage(): ReactNode {
+      return (
+        <Suspense fallback={<p data-testid="pending">pending</p>}>
+          <Suspending />
+        </Suspense>
+      );
+    }
+    await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: SuspendingPage },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(text("pending")).toBe("pending");
+    expect(text("title")).toBe(titleOf(["Server one"]));
+    await act(async () => {
+      gate.resolve("late");
+      await gate.promise;
+    });
+    expect(text("title")).toBe(titleOf(["Server one"], "Client late"));
+  });
+
+  it("G5: a thenable client value is an error", async () => {
+    function PushesPromise(): ReactNode {
+      usePushHandle(Titles)(Promise.resolve("x") as unknown as string);
+      return null;
+    }
+    errors.mockImplementation(() => {});
+    await renderRoute([{ path: "/p", Component: PushesPromise }], {
+      request: "/p",
+    });
+    expect(
+      messages(errors, "push() takes a plain value, not a promise"),
+    ).not.toEqual([]);
+  });
+
+  it("(a) a last-wins title: the client's title shows", async () => {
+    function TitlePage(): ReactNode {
+      usePushHandle(Title)("Client title");
+      return <p data-testid="t">{useHandle(Title)}</p>;
+    }
+    await renderRoute(
+      [
+        { path: "/t", Component: Layout },
+        { path: "/t", Component: TitlePage },
+      ],
+      {
+        request: "/t",
+        handles: [
+          [Title, ["Layout title"], 0],
+          [Title, ["Server title"], 1],
+        ],
+      },
+    );
+    expect(text("t")).toBe("Client title");
+  });
+
+  it("(b) Meta: the client's title wins over the segment's server title; its description stays", async () => {
+    function MetaPage(): ReactNode {
+      usePushHandle(Meta)({ title: "Client" });
+      const meta = useHandle(Meta);
+      return <p data-testid="meta">{JSON.stringify(meta)}</p>;
+    }
+    await renderRoute([{ path: "/m", Component: MetaPage }], {
+      request: "/m",
+      handles: [
+        [Meta, [{ title: "Server" }, { name: "description", content: "D" }]],
+      ],
+    });
+    const meta = JSON.parse(text("meta")) as Record<string, unknown>[];
+    expect(meta).toContainEqual({ title: "Client" });
+    expect(meta).not.toContainEqual({ title: "Server" });
+    expect(meta).toContainEqual({ name: "description", content: "D" });
+  });
+
+  it("every reader shape: a selector, the full value, and a component that reads several hooks", async () => {
+    function Readers(): ReactNode {
+      const last = useHandle(Titles, (titles) => titles.at(-1));
+      const all = useHandle(Titles);
+      const { data } = useLoader(ItemLoader);
+      return (
+        <>
+          <p data-testid="last">{last}</p>
+          <p data-testid="all">{all.join(" / ")}</p>
+          <p data-testid="several">{`${data}: ${useHandle(Title)}`}</p>
+        </>
+      );
+    }
+    function ReadersPage(): ReactNode {
+      const { data, load } = useLoader(ItemLoader);
+      usePushHandle(Titles)(`Client ${data}`);
+      usePushHandle(Title)(`Title ${data}`);
+      return (
+        <>
+          <Readers />
+          <button data-testid="load" onClick={() => void load()} />
+        </>
+      );
+    }
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: ReadersPage },
+      ],
+      {
+        request: "/items",
+        loaders: [[ItemLoader, "one"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(text("last")).toBe("Client one");
+    expect(text("all")).toBe(titleOf(["Server one"], "Client one"));
+    expect(text("several")).toBe("one: Title one");
+    router.respondToLoads({ loaders: [[ItemLoader, "two"]] });
+    await loadAndSettle(getByTestId("load"));
+    expect(text("last")).toBe("Client two");
+    expect(text("all")).toBe(titleOf(["Server one"], "Client two"));
+    expect(text("several")).toBe("two: Title two");
+  });
+
+  it("a loader read keeps the server pushes its reply carries; the client's push follows them", async () => {
+    function ReadPage(): ReactNode {
+      const { data, load } = useLoader(ItemLoader);
+      usePushHandle(Titles)(`Client ${data}`);
+      return (
+        <>
+          <p data-testid="data">{data}</p>
+          <button data-testid="load" onClick={() => void load()} />
+        </>
+      );
+    }
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: ReadPage },
+      ],
+      {
+        request: "/items",
+        loaders: [[ItemLoader, "one"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
+    router.respondToLoads({
+      loaders: [[ItemLoader, "two"]],
+      handles: [[Titles, ["Read two"]]],
+    });
+    await loadAndSettle(getByTestId("load"));
+    expect(text("data")).toBe("two");
+    // The read's push lands in the loader's segment, the route: after the
+    // route's server values and before the client's.
+    expect(router.handleData(Titles)[router.segmentId(1)]).toEqual([
+      "Server one",
+      "Read two",
+      "Client two",
+    ]);
+    expect(text("title")).toBe(
+      titleOf(["Server one", "Read two"], "Client two"),
+    );
+  });
+});
+
+describe("push() belongs to the render that called usePushHandle", () => {
+  it("a push from an effect throws, naming the rule", async () => {
+    let thrown: unknown;
+    function FromEffect(): ReactNode {
+      const push = usePushHandle(Titles);
+      useEffect(() => {
+        try {
+          push("from effect");
+        } catch (error) {
+          thrown = error;
+        }
+      });
+      return null;
+    }
+    await renderRoute([{ path: "/p", Component: FromEffect }], {
+      request: "/p",
+    });
+    expect(String(thrown)).toContain(
+      "push() was called after the render that created it committed",
+    );
+  });
+
+  it("a push from an event handler throws, naming the rule", async () => {
+    let thrown: unknown;
+    function FromEvent(): ReactNode {
+      const push = usePushHandle(Titles);
+      return (
+        <button
+          data-testid="push"
+          onClick={() => {
+            try {
+              push("from click");
+            } catch (error) {
+              thrown = error;
+            }
+          }}
+        />
+      );
+    }
+    const { getByTestId, router } = await renderRoute(
+      [{ path: "/p", Component: FromEvent }],
+      { request: "/p" },
+    );
+    await act(async () => fireEvent.click(getByTestId("push")));
+    expect(String(thrown)).toContain("an event handler or a child");
+    expect(router.handleData(Titles)).toEqual({});
+  });
+
+  it("push handed to a child: its values land in the owner's segment while it renders in the owner's pass", async () => {
+    function Child({ push }: { push: (v: string) => void }): ReactNode {
+      const [n, setN] = useState(0);
+      if (n === 0) push("from child");
+      return <button data-testid="child" onClick={() => setN(1)} />;
+    }
+    function Owner(): ReactNode {
+      const push = usePushHandle(Titles);
+      push("from owner");
+      return <Child push={push} />;
+    }
+    errors.mockImplementation(() => {});
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: Owner },
+      ],
+      {
+        request: "/items",
+        handles: [[Titles, ["Layout"], 0]],
+      },
+    );
+    expect(router.handleData(Titles)[router.segmentId(1)]).toEqual([
+      "from owner",
+      "from child",
+    ]);
+    // The child renders again on its own, and pushes only on its first
+    // render: no push, nothing thrown, the owner's committed values stay.
+    await act(async () => fireEvent.click(getByTestId("child")));
+    expect(router.handleData(Titles)[router.segmentId(1)]).toEqual([
+      "from owner",
+      "from child",
+    ]);
+  });
+
+  it("a child that pushes on a render of its own throws, naming the rule", async () => {
+    function Child({ push }: { push: (v: string) => void }): ReactNode {
+      const [n, setN] = useState(0);
+      push(`child ${n}`);
+      return <button data-testid="child" onClick={() => setN(1)} />;
+    }
+    function Owner(): ReactNode {
+      return <Child push={usePushHandle(Titles)} />;
+    }
+    let caught: unknown;
+    class Catch extends Component<
+      { children: ReactNode },
+      { failed: boolean }
+    > {
+      state = { failed: false };
+      static getDerivedStateFromError(): { failed: boolean } {
+        return { failed: true };
+      }
+      componentDidCatch(error: unknown): void {
+        caught = error;
+      }
+      render(): ReactNode {
+        return this.state.failed ? null : this.props.children;
+      }
+    }
+    function Page(): ReactNode {
+      return (
+        <Catch>
+          <Owner />
+        </Catch>
+      );
+    }
+    errors.mockImplementation(() => {});
+    const { getByTestId } = await renderRoute(
+      [{ path: "/p", Component: Page }],
+      {
+        request: "/p",
+      },
+    );
+    await act(async () => fireEvent.click(getByTestId("child")));
+    expect(String(caught)).toContain(
+      "push() was called after the render that created it committed",
+    );
+  });
+});
+
+describe("usePushHandle outside a route segment", () => {
+  it("applies nothing and warns once in development", async () => {
+    function Stray({ n }: { n: number }): ReactNode {
+      usePushHandle(Titles)(`stray ${n}`);
+      return null;
+    }
+    const { rerender } = render(<Stray n={1} />);
+    rerender(<Stray n={2} />);
+    expect(messages(warnings, "rendered outside a route segment")).toHaveLength(
+      1,
+    );
+  });
+});
+
+describe("usePushHandle: render cost and lifetime", () => {
+  const Nested = createHandle<{
+    title: string;
+    og: { image: { url: string } };
+  }>(undefined, "__test_push_handle_nested__");
+
+  it("a fresh nested object on every render, read by the pusher itself: no render loop", async () => {
+    let renders = 0;
+    function SelfReader(): ReactNode {
+      renders++;
+      usePushHandle(Nested)({ title: "T", og: { image: { url: "/a.png" } } });
+      const read = useHandle(Nested);
+      return <p data-testid="nested">{JSON.stringify(read)}</p>;
+    }
+    await renderRoute([{ path: "/n", Component: SelfReader }], {
+      request: "/n",
+    });
+    expect(JSON.parse(text("nested"))).toEqual([
+      [{ title: "T", og: { image: { url: "/a.png" } } }],
+    ]);
+    // The first render and the one its own push asks for; the next push is
+    // equal and asks for none.
+    expect(renders).toBeLessThanOrEqual(3);
+    const settled = renders;
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(renders).toBe(settled);
+  });
+
+  it("a fresh React element in a value: no render loop", async () => {
+    let renders = 0;
+    function ElementCrumb(): ReactNode {
+      renders++;
+      usePushHandle(Breadcrumbs)({
+        label: "P",
+        href: "/p",
+        content: <b>icon</b>,
+      });
+      return <p data-testid="crumbs">{useHandle(Breadcrumbs).length}</p>;
+    }
+    await renderRoute([{ path: "/p", Component: ElementCrumb }], {
+      request: "/p",
+    });
+    expect(text("crumbs")).toBe("1");
+    const settled = renders;
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(renders).toBe(settled);
+    expect(renders).toBeLessThanOrEqual(3);
+  });
+
+  it("unmount removes the component's values; a remount with new data replaces them, never adds to them", async () => {
+    function Toggled(): ReactNode {
+      const [shown, setShown] = useState(true);
+      const [n, setN] = useState(1);
+      return (
+        <>
+          {shown && <Pusher data={`v${n}`} />}
+          <button data-testid="hide" onClick={() => setShown(false)} />
+          <button
+            data-testid="show"
+            onClick={() => {
+              setN((v) => v + 1);
+              setShown(true);
+            }}
+          />
+        </>
+      );
+    }
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: Toggled },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    expect(text("title")).toBe(titleOf(["Server one"], "Client v1"));
+    await act(async () => fireEvent.click(getByTestId("hide")));
+    expect(text("title")).toBe(titleOf(["Server one"]));
+    await act(async () => fireEvent.click(getByTestId("show")));
+    expect(text("title")).toBe(titleOf(["Server one"], "Client v2"));
+    expect(router.handleData(Titles)[router.segmentId(1)]).toEqual([
+      "Server one",
+      "Client v2",
+    ]);
+  });
+
+  it("a render that pushes nothing removes the component's values", async () => {
+    function Conditional(): ReactNode {
+      const [on, setOn] = useState(true);
+      const push = usePushHandle(Titles);
+      if (on) push("Client on");
+      return <button data-testid="off" onClick={() => setOn(false)} />;
+    }
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: Conditional },
+      ],
+      { request: "/items", handles: [[Titles, ["Layout"], 0]] },
+    );
+    expect(text("title")).toBe("Layout / Client on");
+    await act(async () => fireEvent.click(getByTestId("off")));
+    expect(text("title")).toBe("Layout");
+    expect(router.handleData(Titles)[router.segmentId(1)]).toBeUndefined();
+  });
+});
+
+/**
+ * A server crumb with the project's old name and a client crumb with the new
+ * name, same href, in the same segment: the client's follows the server's,
+ * and the handle's collect decides what shows.
+ */
+describe("Breadcrumbs: the server's crumb and the client's for one href", () => {
+  const Identity = createHandle<BreadcrumbItem>(
+    undefined,
+    "__test_push_handle_identity_crumbs__",
+  );
+  const Flat = createHandle<BreadcrumbItem, BreadcrumbItem[]>(
+    (segments) => segments.flat(),
+    "__test_push_handle_flat_crumbs__",
+  );
+  const old = { label: "Old name", href: "/p/1" };
+  const renamed = { label: "New name", href: "/p/1" };
+
+  it.each<{
+    collect: string;
+    handle: Handle<BreadcrumbItem, unknown>;
+    shows: unknown;
+  }>([
+    { collect: "identity", handle: Identity, shows: [[old, renamed]] },
+    { collect: "flat", handle: Flat, shows: [old, renamed] },
+    {
+      collect: "Breadcrumbs (dedupe by href, last value)",
+      handle: Breadcrumbs,
+      shows: [renamed],
+    },
+  ])("$collect", async ({ handle, shows }) => {
+    function CrumbPage(): ReactNode {
+      usePushHandle(handle)(renamed);
+      return <p data-testid="crumbs">{JSON.stringify(useHandle(handle))}</p>;
+    }
+    await renderRoute([{ path: "/p/:id", Component: CrumbPage }], {
+      request: "/p/1",
+      handles: [[handle, [old]]],
+    });
+    expect(JSON.parse(text("crumbs"))).toEqual(shows);
+  });
+});
+
+/**
+ * Why arrival order is rejected: the document's loader pushed a promise that
+ * settles to "Old" only after a load() refreshed the data and the client
+ * pushed "New". Position decides, so "New" shows; a merge by arrival time
+ * puts "Old" last and a last-wins title shows it.
+ */
+describe("a late server value older than the client's", () => {
+  it('shows "New"; an arrival-order merge would show "Old"', async () => {
+    function TitlePage(): ReactNode {
+      const { data, load } = useLoader(ItemLoader);
+      usePushHandle(Title)(data);
+      return (
+        <>
+          <p data-testid="t">{useHandle(Title)}</p>
+          <button data-testid="load" onClick={() => void load()} />
+        </>
+      );
+    }
+    const { router, getByTestId } = await renderRoute(
+      [{ path: "/t", Component: TitlePage }],
+      {
+        request: "/t",
+        loaders: [[ItemLoader, "Old"]],
+      },
+    );
+    router.respondToLoads({ loaders: [[ItemLoader, "New"]] });
+    await loadAndSettle(getByTestId("load"));
+    expect(text("t")).toBe("New");
+    await router.pushLateHandles([[Title, ["Old"]]]);
+    expect(text("t")).toBe("New");
+
+    const byArrival = collectHandleData(
+      Title,
+      { [Title.$$id]: { [router.segmentId()]: ["New", "Old"] } },
+      [router.segmentId()],
+    );
+    expect(byArrival).toBe("Old");
+  });
+});

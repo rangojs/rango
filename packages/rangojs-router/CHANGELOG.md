@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### Added: client components push handle values with `usePushHandle()`
+
+**Before.** Only the server wrote handles: a handler or a loader body with
+`ctx.use(Handle)`. A value a client component learned or changed after the
+server rendered had no way into a handle: a live chat's unread count, the
+draft title of a page being edited, a project a `useFetchLoader()` read
+brought, optimistic state. The tab title and the breadcrumb trail kept the
+server's values while the page showed newer ones.
+
+**Now.** `usePushHandle(Handle)` returns `push`, the client side of
+`ctx.use(Handle)`. Call it during render:
+
+```tsx
+"use client";
+import { Meta, usePushHandle } from "@rangojs/router/client";
+
+function ChatTitle({ unread }: { unread: number }) {
+  const push = usePushHandle(Meta);
+  if (unread > 0) push({ title: `Chat (${unread})` });
+  return null;
+}
+```
+
+The values land in the component's own segment, after that segment's server
+values, so a `Meta` title or a `Breadcrumbs` crumb with the same `href` takes
+the client's value. The order is the tree's and render order, never arrival
+order: a server value that resolves late never overwrites a client value, nor
+the reverse. Values show with the render that pushed them (a reader mounted
+in the same navigation reads them before the browser paints), leave when the
+component unmounts, and are never stored in a history entry. They are never
+in SSR HTML or a `ppr` shell: a value the first paint must show is pushed on
+the server too, and development warns when a client value changes what the
+document showed. `push` after its render committed (an effect, an event
+handler, a child that re-renders on its own) or with a promise throws; two
+components pushing one handle in one segment is a development error.
+`useHandle` is unchanged. Where a handle value should come from (a handler, a
+loader, or `usePushHandle`, and what to prefer in `clientUrls()` groups):
+`/hooks` skill, `handle-and-actions.md`.
+
+Testing: `renderRoute`'s `handles` take a segment
+(`[handle, values, segment?]`), specs take `slots`, and the router handle
+gains `handleData(handle)`, `segmentId(segment?)`, `pushLateHandles()`,
+`action({ handles })` and `respondToLoads({ loaders, handles })`.
+
 ## 0.36.1 (2026-11-18)
 
 ### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))
