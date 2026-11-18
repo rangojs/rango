@@ -29,8 +29,10 @@ export type ClientPushes = Map<
  * null-prototype object) by Object.is. A component that pushes a fresh
  * literal on each render (nested objects included) and reads the same handle
  * would otherwise re-render itself without end: each render's push would
- * look new. `depth` bounds a cyclic value; past it two values count as
- * different.
+ * look new. useCommitAnchoredState (browser/react/use-handle.ts) compares
+ * what useHandle and useSegments return with it too, so a re-delivery of
+ * equal content keeps the reader's reference. `depth` bounds a cyclic value;
+ * past it two values count as different.
  */
 export function samePushValue(a: unknown, b: unknown, depth = 0): boolean {
   if (Object.is(a, b)) return true;

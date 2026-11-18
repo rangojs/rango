@@ -51,6 +51,31 @@ Testing: `renderRoute`'s `handles` take a segment
 gains `handleData(handle)`, `segmentId(segment?)`, `pushLateHandles()`,
 `action({ handles })` and `respondToLoads({ loaders, handles })`.
 
+### Changed: `useHandle()` keeps its reference while the content is equal
+
+**Before.** `useHandle()` compared a new value with the last one a single
+level deep. A re-delivery decodes fresh objects (an action's revalidation, a
+refresh, a Back/Forward, a late push), so `useHandle(Breadcrumbs)`,
+`useHandle(Meta)` and a default `T[][]` collect returned a new array on each
+one even when nothing changed, and an effect keyed on the value ran again.
+The workaround was to select a single item
+(`useHandle(H, (s) => s.at(-1)?.at(-1))`). The same one-level rule made any
+two `URL`s or dates equal, so `useSegments((s) => s.location)` or a selector
+returning a date kept the old value.
+
+**Now.** An equal value keeps the reference the reader already holds, and
+the reader does not render. Equal is the rule `usePushHandle` values are
+compared with: arrays and plain objects by their entries, React elements by
+type, key and props, dates by time, anything else (a promise, a `URL`, a
+function, a `Map`) by identity, down to 32 levels. A real change still
+brings a new reference in the commit its page's values land in. The same
+rule applies to a `useSegments()` selector's result. Selecting an item is
+now optional; it still helps when the value holds a fresh promise or
+function on every delivery, which counts as a change.
+
+Testing: `renderRoute`'s `router.refresh()` takes `handles`, the values the
+response carries.
+
 ## 0.36.1 (2026-11-18)
 
 ### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))
