@@ -336,6 +336,15 @@ export interface HandleStore {
   releaseRecordedValues(segmentId: string): void;
 
   /**
+   * Stop recording pushes into `segmentId`: a later push() into it, a
+   * replayed copy included, records nothing and calls `onLate` with the
+   * handle's name. The fetchable-loader lane (rsc/loader-fetch.ts) closes
+   * its loader's segment once the reply holds the body's pushes, so a push
+   * the body makes after it returned is reported instead of lost unseen.
+   */
+  closeSegment(segmentId: string, onLate: (handleName: string) => void): void;
+
+  /**
    * Get all collected handle data after all handlers have settled.
    * Waits for `settled` (handler lane), then returns the data at that point.
    */
@@ -508,6 +517,8 @@ export function createHandleStore(): HandleStore {
   const placeholderLoaders = new Set<string>();
   // Segments whose restored record values a push still goes in front of.
   const held = new Set<string>();
+  // closeSegment: segments that record no more pushes, with what to call.
+  const closed = new Map<string, (handleName: string) => void>();
   let authority: ((loaderId: string) => RecordAuthority) | undefined;
   const isRestored = (loaderId: string): boolean =>
     restoredLoaders.has(loaderId) || authority?.(loaderId) === "pin";
@@ -914,6 +925,11 @@ export function createHandleStore(): HandleStore {
       loaderPush?: boolean,
       owner?: string,
     ): void {
+      const onLate = closed.get(segmentId);
+      if (onLate) {
+        onLate(handleName);
+        return;
+      }
       if (completed) {
         const error = createLateHandlePushError(handleName, segmentId);
         if (this.onError) this.onError(error);
@@ -1113,6 +1129,13 @@ export function createHandleStore(): HandleStore {
 
     releaseRecordedValues(segmentId: string): void {
       held.delete(segmentId);
+    },
+
+    closeSegment(
+      segmentId: string,
+      onLate: (handleName: string) => void,
+    ): void {
+      closed.set(segmentId, onLate);
     },
 
     replacePlaceholders(

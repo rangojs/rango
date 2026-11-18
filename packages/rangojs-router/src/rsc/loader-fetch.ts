@@ -345,6 +345,23 @@ export async function handleLoaderFetch<TEnv>(
             // registers it (handles/pushed-by.ts mergeLoaderReadHandleData).
             pushedBy: reqCtx._handleStore.getPushedBy(loaderId) ?? {},
           };
+          // The reply holds what the body pushed by the time it returned. A
+          // push it makes later (a timer, a promise it did not await) cannot
+          // reach the browser: warned in development, once per read.
+          let warnedLate = false;
+          reqCtx._handleStore.closeSegment(loaderId, (handleName) => {
+            if (process.env.NODE_ENV === "production" || warnedLate) return;
+            warnedLate = true;
+            console.warn(
+              `[rango] Loader "${loaderId}" pushed handle "${handleName}" ` +
+                `after its body returned, on a fetched read (load(), ` +
+                `useRefreshLoaders()). The reply carries only the values ` +
+                `pushed before the body returned, so this push came too late ` +
+                `and is not applied. Push before returning: await the work, ` +
+                `or push a promise (or reserve the slot with ` +
+                `ctx.use(Handle).defer()) and settle it later.`,
+            );
+          });
           // Read once here: onError can fire outside the ALS frame.
           const requestContext = _getRequestContext();
           const rscStream = ctx.renderToReadableStream<LoaderFetchPayload>(

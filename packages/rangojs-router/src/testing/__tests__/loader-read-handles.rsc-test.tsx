@@ -84,6 +84,31 @@ const CachedTitle = createLoader(async (ctx) => {
   return { title: await cachedChatTitle(ctx) };
 }, true);
 
+// Pushes before it returns, then again from work it does not await: a timer
+// through a push function taken in the body, a timer calling ctx.use, and a
+// detached promise. A `.defer()` slot it fills later is reserved in time.
+let lateDone: Promise<void> = Promise.resolve();
+const LateTitle = createLoader(async (ctx) => {
+  ctx.use(Meta)({ title: "sync" });
+  const push = ctx.use(Meta);
+  const fill = ctx.use(Breadcrumbs).defer();
+  lateDone = Promise.all([
+    new Promise<void>((resolve) =>
+      setTimeout(() => {
+        push({ title: "timer, taken push" });
+        ctx.use(Meta)({ title: "timer, ctx.use" });
+        fill({ label: "Deferred", href: "/late" });
+        resolve();
+      }, 5),
+    ),
+    (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      ctx.use(Breadcrumbs)({ label: "detached", href: "/late" });
+    })(),
+  ]).then(() => {});
+  return "late";
+}, true);
+
 const router = createRouter({}).routes(
   urls(({ path, layout, loader }) => [
     layout(
@@ -106,6 +131,12 @@ const router = createRouter({}).routes(
           () => <p>cached</p>,
           { name: "cached" },
           () => [loader(CachedTitle)],
+        ),
+        path(
+          "/late",
+          () => <p>late</p>,
+          { name: "late" },
+          () => [loader(LateTitle)],
         ),
       ],
     ),
@@ -226,6 +257,51 @@ describe("a fetchable loader read carries its handle pushes", () => {
       },
     });
     expect(cachedRuns).toBe(1);
+  });
+
+  it("a push after the body returned is not in the reply, and development says it came too late", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { answer } = await read(LateTitle, "/late");
+      await lateDone;
+      expect(answer).toEqual({
+        result: "late",
+        error: null,
+        handles: {
+          [Meta.$$id]: [{ title: "sync" }],
+          // The slot was reserved before the body returned.
+          [Breadcrumbs.$$id]: [{ label: "Deferred", href: "/late" }],
+        },
+        pushedBy: {},
+      });
+      const late = warn.mock.calls
+        .map((call) => String(call[0]))
+        .filter((m) => m.includes("came too late"));
+      // Once per read, naming the loader and the handle.
+      expect(late).toHaveLength(1);
+      expect(late[0]).toContain(`Loader "${LateTitle.$$id}"`);
+      expect(late[0]).toContain(`handle "${Meta.$$id}"`);
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("a push after the body returned warns nothing in production", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { answer } = await read(LateTitle, "/late");
+      await lateDone;
+      expect(answer?.handles[Meta.$$id]).toEqual([{ title: "sync" }]);
+      expect(
+        warn.mock.calls.filter((call) =>
+          String(call[0]).includes("came too late"),
+        ),
+      ).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("a render of the page still files the pushes under the route", async () => {
