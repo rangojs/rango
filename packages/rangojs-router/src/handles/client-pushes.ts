@@ -9,14 +9,16 @@ export type ClientPushes = Map<string, Map<string, Map<object, unknown[]>>>;
 
 /**
  * Structural equality for pushed values: arrays and plain objects by their
- * entries, React elements by type, key and props, anything else (a null-
- * prototype object included) by Object.is. A component that pushes a fresh literal on each render (nested
+ * entries, React elements by type, key and props, dates by time, anything
+ * else (a function, a class instance, a null-prototype object) by Object.is. A component that pushes a fresh literal on each render (nested
  * objects included) and reads the same handle would otherwise re-render
  * itself without end: each render's push would look new. `depth` bounds a
  * cyclic value; past it two values count as different.
  */
 export function samePushValue(a: unknown, b: unknown, depth = 0): boolean {
   if (Object.is(a, b)) return true;
+  if (a instanceof Date)
+    return b instanceof Date && a.getTime() === b.getTime();
   const proto = a && typeof a === "object" && Object.getPrototypeOf(a);
   if (
     depth > 32 ||

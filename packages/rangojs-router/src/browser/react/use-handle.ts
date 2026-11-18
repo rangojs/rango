@@ -74,10 +74,13 @@ export function useHandle<T, A, S>(
     // A client push is set at once. While a page is held it comes from the
     // page on screen (the held page's components have not committed), so it
     // merges with the server state shown there.
-    const unsubscribeClient = eventController.subscribeToClientHandles(() => {
-      const held = eventController.getHeldHandleState();
-      setValue(collect(held), undefined, held !== undefined);
-    });
+    const unsubscribeClient = eventController.subscribeToClientHandles(
+      (handleId) => {
+        if (handleId !== undefined && handleId !== handle.$$id) return;
+        const held = eventController.getHeldHandleState();
+        setValue(collect(held), undefined, held !== undefined);
+      },
+    );
     return () => {
       unsubscribe();
       unsubscribeClient();

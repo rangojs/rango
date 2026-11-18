@@ -187,15 +187,20 @@ render that created it committed ...`. That is a call from an effect, an
   shows. Push the value once the data is there.
 - **One component per handle per segment.** A second mounted component that
   pushes the same handle in the same segment is a development error; both
-  values show, in the order the components mounted, which Suspense timing can
-  change. Push the segment's values from one component.
+  values show, in the order the components started pushing, which Suspense
+  timing and a render that pushes nothing can change. Push the segment's
+  values from one component.
 - **Unmount removes them.** A component that unmounts (a toggle, a tab, an
   error boundary that replaces it, a navigation away) takes its values with
   it in the same commit, and the server's show again. A remount with new data
   pushes new values; nothing is left from the last mount.
 - **Equal values do nothing.** A fresh object literal on each render is
-  compared by structure (arrays, plain objects, React elements), so a
+  compared by structure (arrays, plain objects, React elements, dates), so a
   component that pushes and reads the same handle does not re-render itself.
+  A function or a class instance compares by identity: a fresh one on every
+  render publishes every render, and a component that also reads the handle
+  loops. Keep such values stable (`useCallback`, `useMemo`) or out of the
+  pushed value.
 - **Router store only.** The values live in the router's store, apart from
   the server's: a history entry never stores them, so Back/Forward restores
   the server's values and the restored page's components push again when

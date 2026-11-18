@@ -334,7 +334,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // (client.tsx). None of it can load lazily: useHandle reads the layer on
 // every handle read, and the controller and useHandle are in the eager
 // runtime. Production error text is shortened to its rule. By the owner's
-// rule above: 55497B + 256B, rounded up to the next 128B step.
+// rule above: 55497B + 256B, rounded up to the next 128B step. The review's
+// follow-up (readers skip other handles' notifications, dates by time)
+// measures 55538B.
 const ROUTER_CHUNK_GZIP_MAX = 54.5 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 

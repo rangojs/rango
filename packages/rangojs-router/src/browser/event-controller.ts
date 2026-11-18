@@ -389,7 +389,13 @@ export interface EventController {
    * document's HTML was rendered from the server's values alone.
    */
   withClientHandles(data: HandleData, handleId: string): HandleData;
-  subscribeToClientHandles(listener: () => void): () => void;
+  /**
+   * `listener` hears the id of the handle whose client layer changed, or
+   * undefined for every handle (the hydration window's release).
+   */
+  subscribeToClientHandles(
+    listener: (handleId: string | undefined) => void,
+  ): () => void;
   /**
    * From flushRouteState("anchor") until the page it announced commits: the
    * server handle state readers show over the page being left; undefined
@@ -661,7 +667,7 @@ export function createEventController(
   let hydrationSnapshot: HydrationSnapshot | undefined;
   let writesAfterHydration: (() => void)[] = [];
   const clientPushes: ClientPushes = new Map();
-  const clientHandleListeners = new Set<() => void>();
+  const clientHandleListeners = new Set<(handleId?: string) => void>();
   // getHeldHandleState: set by the first flushRouteState("anchor"), before
   // the payload's own handle writes, cleared when the page commits.
   let heldHandleState: HandleState | undefined;
@@ -1418,17 +1424,17 @@ export function createEventController(
         owners.size > 1
       ) {
         console.error(
-          `[rango] usePushHandle: ${owners.size} mounted components push handle "${handleId}" in segment "${segmentId}". One component per segment pushes a handle: their values show in the order they mounted, which Suspense timing can change. Push the values from one component.`,
+          `[rango] usePushHandle: ${owners.size} mounted components push handle "${handleId}" in segment "${segmentId}". One component per segment pushes a handle: their values show in the order they started pushing, which Suspense timing can change. Push the values from one component.`,
         );
       }
     }
-    if (!hydrationSnapshot) notifyClientHandles();
+    if (!hydrationSnapshot) notifyClientHandles(handleId);
   }
 
-  function notifyClientHandles(): void {
+  function notifyClientHandles(handleId?: string): void {
     notifyListeners(
       [...clientHandleListeners],
-      (listener) => listener(),
+      (listener) => listener(handleId),
       (listener) => clientHandleListeners.has(listener),
     );
   }
@@ -1439,7 +1445,9 @@ export function createEventController(
       : withClientPushes(data, handleId, clientPushes);
   }
 
-  function subscribeToClientHandles(listener: () => void): () => void {
+  function subscribeToClientHandles(
+    listener: (handleId?: string) => void,
+  ): () => void {
     clientHandleListeners.add(listener);
     return () => clientHandleListeners.delete(listener);
   }

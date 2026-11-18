@@ -45,7 +45,9 @@ describe("samePushValue", () => {
       createElement("b", null, "b"),
       false,
     ],
-    ["dates, by identity", new Date(0), new Date(0), false],
+    ["dates, by time", new Date(0), new Date(0), true],
+    ["other dates", new Date(0), new Date(1), false],
+    ["fresh functions, by identity", () => 1, () => 1, false],
     ["null and an object", null, {}, false],
   ])("%s", (_, a, b, same) => {
     expect(samePushValue(a, b)).toBe(same);
@@ -92,6 +94,18 @@ describe("withClientPushes", () => {
 
 describe("EventController client handle layer", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("names the handle that changed; the hydration release names none", () => {
+    const controller = createEventController();
+    const listener = vi.fn();
+    controller.subscribeToClientHandles(listener);
+    controller.setClientHandle("H", "R0", {}, ["a"]);
+    expect(listener).toHaveBeenLastCalledWith("H");
+    controller.lockHydration();
+    controller.setClientHandle("G", "R0", {}, ["b"]);
+    controller.releaseHydrationLock();
+    expect(listener).toHaveBeenLastCalledWith(undefined);
+  });
 
   it("notifies on a change, not on equal values, and never writes the server state", () => {
     const controller = createEventController();
