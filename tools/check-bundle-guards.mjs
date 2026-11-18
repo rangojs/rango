@@ -337,6 +337,12 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // rule above: 55497B + 256B, rounded up to the next 128B step. The review's
 // follow-up (readers skip other handles' notifications, dates by time)
 // measures 55538B.
+//
+// Not lowered on 2026-11-18 after a loader read's apply half was tried behind
+// the dynamic import load() awaits: getManualChunks puts every router source
+// module in this chunk, so `await import()` of browser/fetched-loader-handles.ts
+// keeps it here and adds the import glue (measured +88B gzip). A chunk of its
+// own would cost the first load() a fetch it does not make today.
 const ROUTER_CHUNK_GZIP_MAX = 54.5 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
