@@ -25,6 +25,12 @@ import { decodeLoaderEntry } from "./decode-loader-results.js";
 import { warnAwaitedSsrSuspension } from "./ssr-suspension-warning.js";
 import { SETTLED_THENABLE } from "./thenable-status.js";
 import { useReadAudit } from "./suspense-audit-react.js";
+import {
+  startFetchedLoaderRead,
+  type FetchedLoaderHandles,
+  type FetchedLoaderPage,
+  type FetchedLoaderPushedBy,
+} from "./browser/fetched-loader-handles.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
@@ -122,6 +128,10 @@ function extractContentLoaderData(
 interface LoaderRscPayload<T = unknown> {
   loaderResult: T;
   loaderError?: { message: string; name: string };
+  /** What the loader's body pushed to each handle (rsc/loader-fetch.ts). */
+  handles?: FetchedLoaderHandles;
+  /** Which loader's run pushed each of `handles` (rsc/loader-fetch.ts). */
+  pushedBy?: FetchedLoaderPushedBy;
 }
 
 export type LoadFunction<T> = (options?: LoadOptions) => Promise<T>;
@@ -268,8 +278,18 @@ function useLoaderInternal<T>(
 
   // The router store's loader data (loader-store.ts). None on the server,
   // where the hook reads the route's loader data only.
-  const loaders: LoaderStore | undefined = useContext(NavigationStoreContext)
-    ?.store?.loaders;
+  const navigation = useContext(NavigationStoreContext);
+  const loaders: LoaderStore | undefined = navigation?.store?.loaders;
+  // Where a read's handle values go (browser/fetched-loader-handles.ts).
+  const navigationStore = navigation?.store;
+  const eventController = navigation?.eventController;
+  const page = useMemo<FetchedLoaderPage | undefined>(
+    () =>
+      navigationStore && eventController
+        ? { store: navigationStore, eventController }
+        : undefined,
+    [navigationStore, eventController],
+  );
 
   // Committed route data (updated by the reset effect below), read by the
   // store when a refresh begins: the snapshot it produces belongs to it.
@@ -283,6 +303,7 @@ function useLoaderInternal<T>(
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("_rsc_loader", loaderId);
+      const applyHandles = startFetchedLoaderRead(loaderId, page);
       const response = fetch(url.toString(), {
         method: "GET",
         headers: { Accept: "text/x-component" },
@@ -293,6 +314,7 @@ function useLoaderInternal<T>(
         throw new Error(payload.loaderError.message);
       }
       loaders.finishData(bucketKey, requestId, payload.loaderResult);
+      applyHandles(payload.handles, payload.pushedBy);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       loaders.finishError(bucketKey, requestId, err);
@@ -300,7 +322,7 @@ function useLoaderInternal<T>(
     } finally {
       loaders.setLoading(bucketKey, requestId, false);
     }
-  }, [loaderId, bucketKey, loaders]);
+  }, [loaderId, bucketKey, loaders, page]);
 
   // Held-navigation pin: a transition commit whose stream for this loader is
   // still pending announces it (loader-store.ts announcePendingStreams, which
@@ -545,6 +567,12 @@ function useLoaderInternal<T>(
           };
         }
 
+        // Only a refetch of the page's own read (the page's params, no body)
+        // applies its handle values: a read with other params or a body is
+        // data the page does not show, and its pushes would retitle the page.
+        const applyHandles = isPlainRefetch(loadOptions)
+          ? startFetchedLoaderRead(id, page)
+          : undefined;
         const response = fetch(url.toString(), fetchOptions);
 
         const { createFromFetch } = await import("./deps/browser.js");
@@ -563,6 +591,7 @@ function useLoaderInternal<T>(
             setLocalIsLoading(false);
           });
         }
+        applyHandles?.(payload.handles, payload.pushedBy);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
@@ -582,7 +611,7 @@ function useLoaderInternal<T>(
         }
       }
     },
-    [throwOnError, loaders, routeDataOf],
+    [throwOnError, loaders, routeDataOf, page],
   );
 
   if (throwOnError) {

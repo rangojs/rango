@@ -30,20 +30,21 @@ A `Prerender` route is served as in production: from the artifact `router.matchF
 
 ### Returns — `ServeShellRequestResult`
 
-| Field               | Type                                                  | Meaning                                                                                                                                                                                                                            |
-| ------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shellStatus`       | `"HIT" \| "MISS" \| null`                             | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                                                                  |
-| `replayStatus`      | `PprReplayStatus \| null`                             | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                                                                     |
-| `prelude`           | `string \| undefined`                                 | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                                                                 |
-| `flight`            | `string \| undefined`                                 | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).                                                         |
-| `key`               | `string`                                              | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.                                                 |
-| `readEntry`         | `() => Promise<ShellCacheEntry \| null>`              | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count.                                                |
-| `readHandles`       | `() => Promise<ShellRequestHandles \| undefined>`     | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                                                            |
-| `readDeferred`      | `() => Promise<string[] \| undefined>`                | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered.                                        |
-| `readAction`        | `() => Promise<ShellRequestAction \| undefined>`      | For an `action` request, the call's answer as the browser reads it: `{ ok, result, revalidationError }` (see "A server action called from the page"). `undefined` when no Flight rendered or the payload carries no action result. |
-| `readLocationState` | `() => Promise<Record<string, unknown> \| undefined>` | The payload's location state as the browser reads it: `{ [Def.__rsc_ls_key]: value }` (see "Location state on a document"). `undefined` when it carries none or no Flight rendered.                                                |
-| `response`          | `Response`                                            | Status and headers. Its body is already read.                                                                                                                                                                                      |
-| `body`              | `string`                                              | The body text.                                                                                                                                                                                                                     |
+| Field               | Type                                                  | Meaning                                                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shellStatus`       | `"HIT" \| "MISS" \| null`                             | `x-rango-shell`; null when the serve path did not consider the request (not a `ppr` route, a nonce'd request, a partial request).                                                                                                        |
+| `replayStatus`      | `PprReplayStatus \| null`                             | `x-rango-ppr-replay` on a partial request: `{ outcome: "HIT", freshness }` or `{ outcome: "BYPASS", reason }`.                                                                                                                           |
+| `prelude`           | `string \| undefined`                                 | The prelude a HIT served (the capture's Flight text). `undefined` unless `shellStatus` is `"HIT"`.                                                                                                                                       |
+| `flight`            | `string \| undefined`                                 | The Flight payload this request rendered: a HIT's tail, a document render, or a partial response. `undefined` when no Flight rendered (a redirect, a middleware response).                                                               |
+| `key`               | `string`                                              | The shell key the serve path resolved for a document it read (MISS or HIT), request partition included. Otherwise (no `ppr`, a partial request) the URL's key without a partition.                                                       |
+| `readEntry`         | `() => Promise<ShellCacheEntry \| null>`              | Reads the document entry under `key` from the request's store (a passive `getShell`). A read: on a store with a shell memo it warms the memo, so call it after the reads you count.                                                      |
+| `readHandles`       | `() => Promise<ShellRequestHandles \| undefined>`     | Decodes the response's handle data as the browser reads it: `{ hydration, late }` (see "Handles and loader data"). `undefined` when no Flight rendered.                                                                                  |
+| `readDeferred`      | `() => Promise<string[] \| undefined>`                | The ids of the segments the payload marks deferred (a prefetch skipped them; the fill renders them), in payload order. `[]` when nothing was deferred, `undefined` when no Flight rendered.                                              |
+| `readAction`        | `() => Promise<ShellRequestAction \| undefined>`      | For an `action` request, the call's answer as the browser reads it: `{ ok, result, revalidationError }` (see "A server action called from the page"). `undefined` when no Flight rendered or the payload carries no action result.       |
+| `readLoader`        | `() => Promise<ShellRequestLoader \| undefined>`      | For a fetchable loader read (`?_rsc_loader=<id>`), its answer as the browser reads it: `{ result, error, handles, pushedBy }` (see "A loader read from the page"). `undefined` when no Flight rendered or the payload is not a loader's. |
+| `readLocationState` | `() => Promise<Record<string, unknown> \| undefined>` | The payload's location state as the browser reads it: `{ [Def.__rsc_ls_key]: value }` (see "Location state on a document"). `undefined` when it carries none or no Flight rendered.                                                      |
+| `response`          | `Response`                                            | Status and headers. Its body is already read.                                                                                                                                                                                            |
+| `body`              | `string`                                              | The body text.                                                                                                                                                                                                                           |
 
 ### `resetShellTestState(): Promise<void>`
 
@@ -490,6 +491,24 @@ expect(answer).toEqual({
   result: { saved: true },
   // a build redacts the message; onError gets the error itself
   revalidationError: expect.objectContaining({ message: "An error occurred" }),
+});
+```
+
+## A loader read from the page
+
+`load()`, `refetch()` and a `useRefreshLoaders()` group refresh send a GET for the page's URL with `_rsc_loader=<the loader's $$id>`. Serve it with an `accept: text/x-component` header and read the answer with `result.readLoader()`: `result` (what the read resolves with, `null` when it rejects), `error` (the message it rejects with, or `null`) and `handles`, the values the loader's body pushed to each handle (by handle `$$id`, in push order, a pushed promise settled), which the browser applies to the segment that registers the loader, and `pushedBy`, for each handle the loader whose run pushed each value (another loader the body awaited with `ctx.use()`, or `null` for the body's own; a handle with no entry holds only the body's own). The browser leaves a value pushed by a loader the page also registers to that loader's own run. The pinned example is `src/testing/__tests__/loader-read-handles.rsc-test.tsx`.
+
+```tsx
+const answer = await (
+  await serveShellRequest(router, `/chat?_rsc_loader=${ChatLoader.$$id}`, {
+    headers: { accept: "text/x-component" },
+  })
+).readLoader();
+expect(answer).toEqual({
+  result: { name: "Renamed" },
+  error: null,
+  handles: { [Meta.$$id]: [{ title: "Renamed" }] },
+  pushedBy: {},
 });
 ```
 

@@ -1,6 +1,10 @@
 import type { HandleData, HandleStore } from "../server/handle-store.js";
 import { isThenable } from "./is-thenable.js";
-import { isPushedByKey, pushedByKey } from "./pushed-by.js";
+import {
+  isPushedByKey,
+  pushedByKey,
+  type LoaderReadPushes,
+} from "./pushed-by.js";
 
 /**
  * Runtime-neutral resolution of deferred (Promise) handle values. Shared by the
@@ -68,6 +72,29 @@ export async function resolveDeferredHandleValues(
   return out;
 }
 
+/**
+ * A fetched loader read's pushes, as its reply carries them, with deferred
+ * values awaited as resolveDeferredHandleValues awaits them; `pushedBy` loses
+ * the entries of the dropped values.
+ */
+export async function resolveDeferredPushes(
+  pushes: Readonly<Record<string, readonly unknown[]>>,
+  pushedBy: Readonly<Record<string, readonly (string | null)[]>> = {},
+): Promise<LoaderReadPushes> {
+  const out: LoaderReadPushes = { values: {}, pushedBy: {} };
+  await Promise.all(
+    Object.entries(pushes).map(async ([handleName, values]) => {
+      const resolved = await resolveValues(values);
+      out.values[handleName] = keptValues(resolved);
+      const by = pushedBy[handleName];
+      if (by) {
+        out.pushedBy[handleName] = by.filter((_, i) => resolved[i].keep);
+      }
+    }),
+  );
+  return out;
+}
+
 interface ResolvedValue {
   keep: boolean;
   value: unknown;
@@ -78,7 +105,7 @@ interface ResolvedValue {
 // A thenable is awaited and dropped when it rejects OR resolves to null/undefined
 // (the `.defer({ else })` skip semantics: a forgotten resolver times out to
 // `else ?? undefined`), so a nullish deferred slot never reaches a collector.
-function resolveValues(values: unknown[]): Promise<ResolvedValue[]> {
+function resolveValues(values: readonly unknown[]): Promise<ResolvedValue[]> {
   return Promise.all(
     values.map(async (v) => {
       if (!isThenable(v)) return { keep: true, value: v };

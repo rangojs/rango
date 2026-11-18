@@ -299,8 +299,14 @@ breadcrumbs like any DSL loader, and
 `loader(Def, { ssr: "await" })` makes document delivery
 deterministic. The open questions below were resolved by that framing —
 pushes attribute to the loader's owning segment, and no second ownership
-lifetime exists. Fetchable loaders invoked outside a route render still have
-no segment owner and their pushes are not exposed.
+lifetime exists. A fetchable loader read outside a route render (`load()`,
+a `useRefreshLoaders()` group refresh) carries the body's pushes in its reply
+beside the data, and the browser files them under the segment that registers
+the loader, in place of the loader's earlier values there
+(`browser/fetched-loader-handles.ts`): the same owner, not a bucket of the
+loader's own. A loader no segment on the page registers has no owner, and its
+pushes are not applied; nor are those of a `load()` with params or a body,
+which reads data the page does not show.
 
 ## Future Design: Parallel Routes
 

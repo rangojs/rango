@@ -15,7 +15,11 @@ import {
   filterRouteSegmentIds,
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
-import { mergePartialHandleData } from "../handles/pushed-by.js";
+import {
+  mergeLoaderReadHandleData,
+  mergePartialHandleData,
+  type LoaderReadPushes,
+} from "../handles/pushed-by.js";
 import {
   locationStateSnapshot,
   type LocationStateSnapshot,
@@ -315,6 +319,15 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
   /**
+   * Apply the handle values a fetched read of `loaderId` pushed to the page's
+   * handle data, keeping its segment order: they replace the loader's earlier
+   * values in its segment (handles/pushed-by.ts mergeLoaderReadHandleData).
+   * Waits like setHandleData while the hydration window is open. False, and
+   * nothing applied, when no segment of the page's handle data registers the
+   * loader.
+   */
+  setLoaderReadHandleData(loaderId: string, pushes: LoaderReadPushes): boolean;
+  /**
    * Open the hydration window. Until releaseHydrationLock(), getHandleState()
    * returns the state the document's HTML was rendered with, and handle writes
    * (setHandleData, setRouteSegmentIds) wait in order. initBrowserApp opens it
@@ -601,6 +614,9 @@ export function createEventController(
 
   let handleData: HandleData = {};
   let handleSegmentOrder: string[] = [];
+  // The raw `matched` handleData was built from: which loaders each segment
+  // registers (setLoaderReadHandleData).
+  let handleMatched: string[] = [];
   let routeSegmentIds: string[] = [];
   // The hydration window (lockHydration): what the document's HTML was
   // rendered with, and the handle writes waiting for its release.
@@ -1231,9 +1247,40 @@ export function createEventController(
       handleData = data;
     }
     handleSegmentOrder = newSegmentOrder;
+    handleMatched = rawMatched;
     routeSegmentIds = newRouteSegmentIds;
 
     notifyHandles.schedule();
+  }
+
+  function setLoaderReadHandleData(
+    loaderId: string,
+    pushes: LoaderReadPushes,
+  ): boolean {
+    const merge = () =>
+      mergeLoaderReadHandleData(
+        handleData,
+        handleSegmentOrder,
+        handleMatched,
+        loaderId,
+        pushes,
+      );
+    if (hydrationSnapshot) {
+      // Decided on the data the waiting writes start from, applied after
+      // them, in order, when the window closes.
+      const applies = merge() !== undefined;
+      if (applies) {
+        writesAfterHydration.push(() => {
+          setLoaderReadHandleData(loaderId, pushes);
+        });
+      }
+      return applies;
+    }
+    const merged = merge();
+    if (!merged) return false;
+    handleData = merged;
+    notifyHandles.schedule();
+    return true;
   }
 
   function getHandleState(): HandleState {
@@ -1361,6 +1408,7 @@ export function createEventController(
     // Handles
     setHandleData,
     getHandleState,
+    setLoaderReadHandleData,
     lockHydration,
     getHydrationSnapshot: () => hydrationSnapshot,
     releaseHydrationLock,

@@ -380,6 +380,7 @@ import { actionLatestCallPatterns } from "./pages/action-latest-call.js";
 import { actionPersistsPatterns } from "./pages/action-persists.js";
 import { hookFieldsPatterns } from "./pages/hook-fields.js";
 import { loaderRemountRefreshPatterns } from "./pages/loader-remount-refresh.js";
+import { loaderReadHandlesPatterns } from "./pages/loader-read-handles.js";
 import {
   includeScopeCollisionPatterns,
   includeScopePublicPatterns,
@@ -3313,6 +3314,9 @@ export const urlpatterns = urls(
         // A refreshed registered reader across navigations (mirrors the
         // router e2e app's /key-refresh-remount/*).
         include("/", loaderRemountRefreshPatterns, { name: "" }),
+        // A loader read on its own applies its handle pushes (mirrors the
+        // router e2e app's /loader-read-handles/chat).
+        include("/", loaderReadHandlesPatterns, { name: "" }),
         // intercept({ when }) from/to locations (mirrors the router e2e app's
         // intercept-when-shape).
         include("/intercept-when-shape", interceptWhenShapePatterns, {

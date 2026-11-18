@@ -53,6 +53,8 @@
  *     rejection is the loader's error. Needs the testing kit's
  *     `@vitejs/plugin-rsc/browser` alias (rangoTestAliases). A load() with params
  *     is answered with a loaderError; a body and non-GET loads are not answered.
+ *     The answer carries no handle values: what a loader pushes on a read is
+ *     serveShellRequest's readLoader() and e2e territory.
  *   - A spec's transition({ when }) decides every commit with production's
  *     browser decision: navigate() and useRouter().push model kind "push",
  *     useRouter().replace kind "replace", refresh() kind "revalidate", and a

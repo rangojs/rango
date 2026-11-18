@@ -76,6 +76,81 @@ export function withSegmentHandles(
 }
 
 /**
+ * What a fetched loader read pushed, settled: the values by handle $$id, and
+ * the loader whose run pushed each (index-aligned; null, or no entry for the
+ * handle, for the read loader's own body).
+ */
+export interface LoaderReadPushes {
+  values: Record<string, unknown[]>;
+  pushedBy: Record<string, (string | null)[]>;
+}
+
+/**
+ * The handle data after a fetched read of loader `loaderId` (the `_rsc_loader`
+ * lane: `load()`, a `refreshGroup` refresh) pushed `pushes`. The read renders
+ * no segment, so its pushes go where the page's run of the loader put its
+ * own: the first segment of `segmentOrder` holding a value the loader pushed,
+ * else the first segment of `matched` (the raw list `current` was built from)
+ * that registers it, where a render files them (loader-resolution.ts
+ * loaderOwner). The loader's earlier values give way to these in their
+ * position, in every segment that registers it, and every other run keeps its
+ * own (mergePartialHandleData, with the loader as the run that ran). A value
+ * pushed by another loader the page registers, one the body read with
+ * ctx.use, belongs to that loader's run, which the read did not refresh: the
+ * page keeps that run's values, as it keeps its data. Undefined when no
+ * segment registers the loader: its pushes have no segment to belong to.
+ */
+export function mergeLoaderReadHandleData(
+  current: HandleData,
+  segmentOrder: readonly string[],
+  matched: readonly string[],
+  loaderId: string,
+  pushes: LoaderReadPushes,
+): HandleData | undefined {
+  const registrations: string[] = [];
+  const registers = new Set<string>();
+  const otherLoaders = new Set<string | null>();
+  for (const id of matched) {
+    const marker = LOADER_SEGMENT_ID.exec(id);
+    if (!marker) continue;
+    const loader = id.slice(marker.index + marker[0].length);
+    if (loader !== loaderId) {
+      otherLoaders.add(loader);
+      continue;
+    }
+    registrations.push(id);
+    registers.add(id.slice(0, marker.index));
+  }
+  if (registrations.length === 0) return undefined;
+  const pushedHere = (segmentId: string): boolean =>
+    Object.keys(current).some(
+      (name) =>
+        isPushedByKey(name) &&
+        current[name][segmentId]?.includes(loaderId) === true,
+    );
+  const owner =
+    segmentOrder.find((id) => registers.has(id) && pushedHere(id)) ??
+    [...registers][0]!;
+  const incoming: HandleData = {};
+  for (const name in pushes.values) {
+    const by = pushes.pushedBy[name];
+    const own = pushes.values[name].filter(
+      (_, i) => !otherLoaders.has(by?.[i] ?? null),
+    );
+    if (own.length === 0) continue;
+    incoming[name] = { [owner]: own };
+    incoming[pushedByKey(name)] = { [owner]: own.map(() => loaderId) };
+  }
+  return mergePartialHandleData(
+    current,
+    incoming,
+    segmentOrder,
+    matched,
+    registrations,
+  );
+}
+
+/**
  * The handle data after a partial response's snapshot `incoming` (each stream
  * yield holds everything the response pushed so far). A segment outside
  * `segmentOrder` loses its buckets. In the others a value stands for the run

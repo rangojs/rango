@@ -63,7 +63,10 @@ import {
 } from "../rsc/shell-capture-constants.js";
 import { SEGMENT_FRAGMENT_CAPABILITY_HEADER } from "../segment-fragments.js";
 import { PREFETCH_HEADER } from "../prefetch-markers.js";
-import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import {
+  resolveDeferredHandleValues,
+  resolveDeferredPushes,
+} from "../handles/deferred-resolution.js";
 import { withoutPushedBy } from "../handles/pushed-by.js";
 import type { HandleData } from "../server/handle-store.js";
 import type { ResolvedSegment } from "../types.js";
@@ -209,6 +212,31 @@ export interface ShellRequestAction {
   revalidationError: Error | null;
 }
 
+/**
+ * A fetchable loader read's answer (`?_rsc_loader=<id>`), as `load()` and a
+ * `refreshGroup` refresh read it (use-loader.tsx).
+ */
+export interface ShellRequestLoader {
+  /** What the read resolves with; null when it rejects. */
+  result: unknown;
+  /** The message the read rejects with, or null. */
+  error: string | null;
+  /**
+   * The values the loader's body pushed to each handle, by handle $$id, in
+   * push order, a pending one settled (dropped when it rejects or resolves
+   * nullish, as the browser drops it). The browser applies them to the
+   * segment that registers the loader, in place of its earlier ones.
+   */
+  handles: Record<string, unknown[]>;
+  /**
+   * Which loader's run pushed each of `handles`, index-aligned per handle:
+   * another loader the body read with `ctx.use()`, or null for the body's
+   * own. A handle with no entry holds only the body's own. The browser leaves
+   * a value another loader on the page pushed to that loader's own run.
+   */
+  pushedBy: Record<string, (string | null)[]>;
+}
+
 /** Result of {@link serveShellRequest}. */
 export interface ServeShellRequestResult {
   /** The handler's Response. Its body is already read: see `body`. */
@@ -288,6 +316,13 @@ export interface ServeShellRequestResult {
    * result.
    */
   readAction(): Promise<ShellRequestAction | undefined>;
+  /**
+   * For a fetchable loader read (`?_rsc_loader=<id>` with an `accept:
+   * text/x-component` header), its answer as the browser reads it: the
+   * loader's value or error, and the handle values its body pushed.
+   * Undefined when no Flight was rendered or the payload is not a loader's.
+   */
+  readLoader(): Promise<ShellRequestLoader | undefined>;
 }
 
 type ShellHandler = ReturnType<typeof createRSCHandler>;
@@ -438,6 +473,29 @@ async function decodeAction(
     revalidationError:
       (returnValue.ok && (await revalidationErrorOf(metadata?.segments))) ||
       null,
+  };
+}
+
+/** A loader read's answer, read as use-loader.tsx reads it. */
+async function decodeLoader(
+  flight: string,
+): Promise<ShellRequestLoader | undefined> {
+  const payload = await decodePayload<{
+    loaderResult?: unknown;
+    loaderError?: { message: string };
+    handles?: Record<string, unknown[]>;
+    pushedBy?: Record<string, (string | null)[]>;
+  }>(flight);
+  if (!("loaderResult" in payload)) return undefined;
+  const { values, pushedBy } = await resolveDeferredPushes(
+    payload.handles ?? {},
+    payload.pushedBy,
+  );
+  return {
+    result: payload.loaderError ? null : payload.loaderResult,
+    error: payload.loaderError?.message ?? null,
+    handles: values,
+    pushedBy,
   };
 }
 
@@ -827,6 +885,9 @@ export async function serveShellRequest<TEnv = any>(
     },
     async readAction() {
       return flight ? decodeAction(flight) : undefined;
+    },
+    async readLoader() {
+      return flight ? decodeLoader(flight) : undefined;
     },
   };
 }
