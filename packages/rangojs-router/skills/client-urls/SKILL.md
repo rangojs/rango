@@ -562,9 +562,9 @@ the shell and always apply client-side. See `/loader` for the full contract.
 
 **Client pushes.** A group has no handlers, so a handle value has two
 writers: the group's loaders, and the components that read them. Push from
-the loader when the value comes from the loader's data: it is in the
-document, and every read of the loader (a navigation, `load()`, a group
-refresh) brings the new one. Push with `usePushHandle` beside the
+the loader when the value comes from the loader's data: registered with
+`ssr: "await"` it is in the document, and every read of the loader (a
+navigation, `load()`, a group refresh) brings the new one. Push with `usePushHandle` beside the
 `useLoader` read when the value comes from what the client holds (a draft,
 a count, a selection): it shows after the loader's values in the same
 segment, so a `Meta` title or a `Breadcrumbs` crumb for the same `href` takes

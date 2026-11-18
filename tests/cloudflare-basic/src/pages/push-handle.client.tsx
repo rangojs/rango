@@ -10,7 +10,10 @@ import {
   usePushHandle,
   useSearchParams,
 } from "@rangojs/router/client";
-import { PushHandleProjectLoader } from "./push-handle.loaders.js";
+import {
+  PushHandleFeedLoader,
+  PushHandleProjectLoader,
+} from "./push-handle.loaders.js";
 
 const BASE = "/push-handle";
 
@@ -98,6 +101,53 @@ export function PushHandleChat() {
       </button>
       <button data-testid="ph-hide" onClick={() => setShown((s) => !s)}>
         Hide
+      </button>
+    </section>
+  );
+}
+
+/**
+ * A transition() page (`${BASE}/held/:id`): the server pushes `PH Held <id>`;
+ * each ph-bump adds one to a count the component pushes as
+ * `PH Held <id> (<count>)`. ph-to-slow goes to the page the server answers
+ * late, so a bump meanwhile lands on the page React holds on screen.
+ */
+export function PushHandleHeld({ id }: { id: string }) {
+  const [count, setCount] = useState(0);
+  const push = usePushHandle(Meta);
+  if (count > 0) push({ title: `PH Held ${id} (${count})` });
+  return (
+    <section data-testid="ph-held">
+      <p data-testid="ph-held-id">{id}</p>
+      <button data-testid="ph-bump" onClick={() => setCount((n) => n + 1)}>
+        Bump
+      </button>
+      <Link to={`${BASE}/held/slow`} prefetch="none" data-testid="ph-to-slow">
+        Slow
+      </Link>
+    </section>
+  );
+}
+
+/**
+ * A title from a fetch, pushed as a promise (`${BASE}/stream`): ph-stream-load
+ * reads a slow fetch loader with load() and keeps the title's promise in
+ * state; readers keep the server's "PH Stream" until it resolves.
+ */
+export function PushHandleStream() {
+  const { load } = useFetchLoader(PushHandleFeedLoader);
+  const [title, setTitle] = useState<Promise<{ title: string }>>();
+  const push = usePushHandle(Meta);
+  if (title) push(title);
+  return (
+    <section data-testid="ph-stream">
+      <button
+        data-testid="ph-stream-load"
+        onClick={() =>
+          setTitle(load().then((feed) => ({ title: `PH Stream ${feed.name}` })))
+        }
+      >
+        Load
       </button>
     </section>
   );

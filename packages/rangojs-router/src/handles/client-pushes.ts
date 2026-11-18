@@ -1,19 +1,36 @@
 import type { HandleData } from "../server/handle-store.js";
 
 /**
- * The client handle layer (usePushHandle): handle id -> segment id -> pusher
- * -> the values that pusher's last committed render pushed. Pushers keep the
- * order they first committed in (Map insertion order).
+ * A usePushHandle component's owner object, as setClientHandle sees it:
+ * `resync` renders it again; `generation` counts the renders resync asked
+ * for, as of the render that published. Both are set by the hook before it
+ * publishes; a bare owner has neither and is never asked to resync.
  */
-export type ClientPushes = Map<string, Map<string, Map<object, unknown[]>>>;
+export interface ClientPushOwner {
+  resync?: () => void;
+  generation?: number;
+}
+
+/**
+ * The client handle layer (usePushHandle): handle id -> segment id -> pusher
+ * -> the values that pusher's last committed render pushed, its promises
+ * resolved. Pushers are kept in tree order (Map insertion order, which
+ * EventController.setClientHandle rebuilds when a pusher joins).
+ */
+export type ClientPushes = Map<
+  string,
+  Map<string, Map<ClientPushOwner, unknown[]>>
+>;
 
 /**
  * Structural equality for pushed values: arrays and plain objects by their
  * entries, React elements by type, key and props, dates by time, anything
- * else (a function, a class instance, a null-prototype object) by Object.is. A component that pushes a fresh literal on each render (nested
- * objects included) and reads the same handle would otherwise re-render
- * itself without end: each render's push would look new. `depth` bounds a
- * cyclic value; past it two values count as different.
+ * else (a promise, a function, a Map, a Set, a class instance, a
+ * null-prototype object) by Object.is. A component that pushes a fresh
+ * literal on each render (nested objects included) and reads the same handle
+ * would otherwise re-render itself without end: each render's push would
+ * look new. `depth` bounds a cyclic value; past it two values count as
+ * different.
  */
 export function samePushValue(a: unknown, b: unknown, depth = 0): boolean {
   if (Object.is(a, b)) return true;

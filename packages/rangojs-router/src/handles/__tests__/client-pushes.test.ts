@@ -5,6 +5,7 @@ import {
   samePushValue,
   withClientPushes,
   type ClientPushes,
+  type ClientPushOwner,
 } from "../client-pushes.js";
 
 describe("samePushValue", () => {
@@ -130,7 +131,7 @@ describe("EventController client handle layer", () => {
   it("hides the layer and holds its notifications while the hydration window is open", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const controller = createEventController();
-    controller.setHandleData({ H: { R0: ["server"] } }, ["R0"]);
+    controller.setHandleData({ H: { R0: ["server"] } }, ["R0", "R1"]);
     controller.lockHydration();
     const listener = vi.fn();
     controller.subscribeToClientHandles(listener);
@@ -144,9 +145,22 @@ describe("EventController client handle layer", () => {
     expect(
       controller.withClientHandles(controller.getHandleState().data, "H"),
     ).toEqual({ H: { R0: ["server", "client"] } });
-    // What a reader shows changed after the document's first paint.
+    // The server pushed into the client's segment: the server-then-client
+    // pattern, no warning.
+    expect(warn.mock.calls.map(String).join("\n")).not.toContain(
+      "usePushHandle",
+    );
+  });
+
+  it("warns at the hydration release when a client value lands in a segment the server pushed nothing into", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const controller = createEventController();
+    controller.setHandleData({ H: { R0: ["server"] } }, ["R0", "R1"]);
+    controller.lockHydration();
+    controller.setClientHandle("H", "R1", {}, ["client"]);
+    controller.releaseHydrationLock();
     expect(warn.mock.calls.map(String).join("\n")).toContain(
-      'handle "H" shows a different value once the client\'s push applies',
+      'handle "H" shows a value only after hydration',
     );
   });
 
@@ -167,20 +181,43 @@ describe("EventController client handle layer", () => {
     expect(controller.getHeldHandleState()).toBeUndefined();
   });
 
-  it("a second pusher in one segment is a development error; both values show in mount order", () => {
+  it("keeps one segment's pushers in the order they publish in from the resync a join asks for", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const controller = createEventController();
-    const first = {};
-    const second = {};
-    controller.setClientHandle("H", "R0", first, ["a"]);
-    controller.setClientHandle("H", "R0", second, ["b"]);
-    controller.setClientHandle("H", "R0", first, ["a2"]);
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(String(error.mock.calls[0][0])).toContain(
-      '2 mounted components push handle "H" in segment "R0"',
-    );
+    const resyncs: string[] = [];
+    const owner = (name: string): ClientPushOwner => ({
+      resync: () => void resyncs.push(name),
+      generation: 0,
+    });
+    const a = owner("a");
+    const b = owner("b");
+    const at = (o: ClientPushOwner, generation: number): ClientPushOwner => {
+      o.generation = generation;
+      return o;
+    };
+    // b commits first; a, before it in the tree, joins later.
+    controller.setClientHandle("H", "R0", at(b, 0), ["b"]);
+    controller.setClientHandle("H", "R0", at(a, 0), ["a"]);
+    expect(resyncs).toEqual(["b", "a"]);
+    expect(controller.withClientHandles({}, "H")).toEqual({
+      H: { R0: ["b", "a"] },
+    });
+    // A publish from before the resync's render moves nothing.
+    controller.setClientHandle("H", "R0", at(b, 0), ["b"]);
+    expect(controller.withClientHandles({}, "H")).toEqual({
+      H: { R0: ["b", "a"] },
+    });
+    // The resync's commit, in tree order.
+    controller.setClientHandle("H", "R0", at(a, 1), ["a"]);
+    controller.setClientHandle("H", "R0", at(b, 1), ["b"]);
+    expect(controller.withClientHandles({}, "H")).toEqual({
+      H: { R0: ["a", "b"] },
+    });
+    // Later renders keep their place.
+    controller.setClientHandle("H", "R0", at(a, 1), ["a2"]);
     expect(controller.withClientHandles({}, "H")).toEqual({
       H: { R0: ["a2", "b"] },
     });
+    expect(error).not.toHaveBeenCalled();
   });
 });

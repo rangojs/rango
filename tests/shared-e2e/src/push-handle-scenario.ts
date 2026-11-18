@@ -20,7 +20,13 @@ import { expect, test, type Page } from "@playwright/test";
  * (ph-own-title) with it. `${groupBase}` is a clientUrls group page whose
  * loader pushes `PHG Group <n>` (phg-name, phg-load reads it again) and whose
  * component pushes `PHG Draft` while a draft is set (phg-rename, phg-clear),
- * with a title reader (phg-title).
+ * with a title reader (phg-title). `${base}/held/<id>` is a transition() page
+ * whose server pushes `PH Held <id>` and whose component pushes
+ * `PH Held <id> (<n>)` once ph-bump was clicked n times (id in ph-held-id);
+ * ph-to-slow goes to `${base}/held/slow`, which the server answers seconds
+ * late. `${base}/stream` pushes the title "PH Stream" on the server; its
+ * ph-stream-load reads a fetch that answers 1.5 s late and pushes the
+ * promise of `PH Stream Feed <n>`.
  */
 
 export interface PushHandleScenarioOptions {
@@ -41,6 +47,7 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 interface Frame {
   chat: boolean;
   project: boolean;
+  held: string;
   title: string;
   own: string;
   doc: string;
@@ -63,6 +70,7 @@ async function startFrames(page: Page): Promise<void> {
       w.__phFrames.push({
         chat: document.querySelector('[data-testid="ph-chat"]') !== null,
         project: document.querySelector('[data-testid="ph-project"]') !== null,
+        held: text("ph-held-id"),
         title: text("ph-title"),
         own: text("ph-own-title"),
         doc: document.title,
@@ -200,6 +208,76 @@ export function runPushHandleTests(options: PushHandleScenarioOptions): void {
       projectFrames.filter(
         (f) => f.title !== "PH Project" || f.doc.includes("PH Chat"),
       ),
+    ).toEqual([]);
+  });
+
+  test("a view transition holds the next page: a push on the page on screen shows at once, and the next page's title comes with it", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(url(`${base}/held/1`));
+    await waitForHydration(page);
+    await expectTitle(page, "PH Held 1");
+
+    await startFrames(page);
+    await testId(page, "ph-to-slow").click();
+    await testId(page, "ph-bump").click();
+    // React holds the slow page: the page on screen takes its own push, over
+    // its own server title.
+    await expectTitle(page, "PH Held 1 (1)");
+    await expect(testId(page, "ph-held-id")).toHaveText("1");
+
+    await expect(testId(page, "ph-held-id")).toHaveText("slow", {
+      timeout: 15000,
+    });
+    await expectTitle(page, "PH Held slow");
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const frames = await stopFrames(page);
+
+    // The held page's title showed while it was held, and the next page's
+    // server title never showed over the page being left.
+    expect(
+      frames.some((f) => f.held === "1" && f.title === "PH Held 1 (1)"),
+    ).toBe(true);
+    expect(
+      frames.filter((f) => f.held === "1" && f.title.includes("slow")),
+    ).toEqual([]);
+    // The page that committed never shows the left page's client value
+    // once its own title has shown.
+    const shown = frames.findIndex(
+      (f) => f.held === "slow" && f.title === "PH Held slow",
+    );
+    expect(shown).toBeGreaterThanOrEqual(0);
+    expect(
+      frames.slice(shown).filter((f) => f.title !== "PH Held slow"),
+    ).toEqual([]);
+  });
+
+  test("a promise from a fetch pushed as the title: the server's title stays until it resolves, then the fetched one shows", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(url(`${base}/stream`));
+    await waitForHydration(page);
+    await expectTitle(page, "PH Stream");
+
+    await startFrames(page);
+    await testId(page, "ph-stream-load").click();
+    // Pending: readers keep the server's title, never a blank.
+    await expect(testId(page, "ph-title")).toHaveText("PH Stream");
+    await expect(testId(page, "ph-title")).toHaveText(/^PH Stream Feed \d+$/, {
+      timeout: 10000,
+    });
+    const fetched = (await testId(page, "ph-title").textContent()) ?? "";
+    await expect(page).toHaveTitle(new RegExp(escape(fetched)));
+    const frames = await stopFrames(page);
+    expect(
+      frames.filter((f) => f.title !== "PH Stream" && f.title !== fetched),
     ).toEqual([]);
   });
 

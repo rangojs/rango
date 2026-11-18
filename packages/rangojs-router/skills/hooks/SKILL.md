@@ -1,6 +1,6 @@
 ---
 name: hooks
-description: Client-side React hooks for navigation, loaders, and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, or loader data — e.g. "how do I read the route param in a component".
+description: Client-side React hooks for navigation, loaders, handles and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, loader data, or handle data (useHandle), or pushes a handle value from client state (usePushHandle, for a page title, Meta tag or breadcrumb from a live value, a draft or a fetch) — e.g. "how do I read the route param in a component", "set the page title from a client component".
 argument-hint: [hook-name]
 ---
 
@@ -96,7 +96,7 @@ the one for your case.
 | `useFetchLoader()`        | Loader with on-demand fetch                                    | data, load, isLoading, error, refetch                                           |
 | `useRefreshLoaders()`     | Refresh cross-loader group(s)                                  | `() => (groups: string \| string[]) => Promise<void>`                           |
 | `useHandle()`             | Accumulated handle data                                        | T (handle type)                                                                 |
-| `usePushHandle()`         | Push handle values from a client component, during render      | `(value: T) => void`                                                            |
+| `usePushHandle()`         | Push handle values from a client component, during render      | `(value: T \| Promise<T>) => void`                                              |
 | `useAction()`             | Server action state                                            | state, actionId, payload, error, result                                         |
 | `useLocationState()`      | History state (persists or flash)                              | T \| undefined                                                                  |
 | `invalidateClientCache()` | Force client caches to miss (function, not a hook; root entry) | `void`                                                                          |

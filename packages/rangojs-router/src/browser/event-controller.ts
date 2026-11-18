@@ -16,10 +16,13 @@ import {
 } from "./react/filter-segment-order.js";
 import { notifyListeners } from "./notify-listeners.js";
 import { collectHandleData, type Handle } from "../handle.js";
+import { resolveDeferredList } from "../handles/deferred-resolution.js";
+import { isThenable } from "../handles/is-thenable.js";
 import {
   samePushValue,
   withClientPushes,
   type ClientPushes,
+  type ClientPushOwner,
 } from "../handles/client-pushes.js";
 import {
   mergeLoaderReadHandleData,
@@ -369,17 +372,24 @@ export interface EventController {
   /**
    * The client handle layer (usePushHandle): set what `owner`, a mounted
    * component, pushes for `handleId` in `segmentId`; `values` undefined or
-   * empty removes it. Kept apart from the server's handle data, so a history entry
-   * never stores it and a late server write never overwrites it, nor it one:
-   * readers merge the two when they read (withClientHandles). Values equal to
-   * the owner's last ones (samePushValue) change nothing. Readers subscribed
-   * with subscribeToClientHandles hear a change at once, in the caller's
-   * task; while the hydration window is open they hear it at its release.
+   * empty removes it. Kept apart from the server's handle data, so a history
+   * entry never stores it and a late server write never overwrites it, nor
+   * it one: readers merge the two when they read (withClientHandles). Values
+   * equal to the owner's last ones (samePushValue; a promise by reference)
+   * change nothing. A promise among `values` is awaited as a server
+   * push(promise) is (resolveDeferredList): the owner's values show as they
+   * were until it settles, and a newer call or a removal drops its result.
+   * Owners of one handle in one segment show in tree order: when one joins,
+   * each owner's `pusher.resync` renders it again, and the order they publish
+   * in from those renders (a `generation` past the one they were asked at)
+   * is kept. Readers subscribed with subscribeToClientHandles hear a change
+   * at once, in the caller's task; while the hydration window is open they
+   * hear it at its release.
    */
   setClientHandle(
     handleId: string,
     segmentId: string,
-    owner: object,
+    owner: ClientPushOwner,
     values: unknown[] | undefined,
   ): void;
   /**
@@ -668,6 +678,14 @@ export function createEventController(
   let writesAfterHydration: (() => void)[] = [];
   const clientPushes: ClientPushes = new Map();
   const clientHandleListeners = new Set<(handleId?: string) => void>();
+  // setClientHandle: what each pusher's last committed render pushed, before
+  // its promises resolve; and, per segment's pushers, the ones a resync
+  // still waits to hear from, with the generation it asked them from.
+  const pushedValues = new WeakMap<ClientPushOwner, unknown[]>();
+  const resyncing = new WeakMap<
+    Map<ClientPushOwner, unknown[]>,
+    Map<ClientPushOwner, number>
+  >();
   // getHeldHandleState: set by the first flushRouteState("anchor"), before
   // the payload's own handle writes, cleared when the page commits.
   let heldHandleState: HandleState | undefined;
@@ -1357,22 +1375,34 @@ export function createEventController(
     const ssr = hydrationSnapshot.handles;
     hydrationSnapshot = undefined;
     if (process.env.NODE_ENV !== "production") {
-      // The document's HTML shows the server's values alone; a client push
-      // that changes what a reader shows changes it after the first paint.
-      for (const handleId of clientPushes.keys()) {
+      // The document's HTML shows the server's values alone. Where the server
+      // pushed a value into the client's segment, the client's change after
+      // hydration is the server-then-client pattern; where it pushed none, a
+      // reader shows another segment's value (or none) until hydration ends.
+      for (const [handleId, bySegment] of clientPushes) {
+        const unseeded: ClientPushes = new Map([
+          [
+            handleId,
+            new Map(
+              [...bySegment].filter(
+                ([segmentId]) => !ssr.data[handleId]?.[segmentId]?.length,
+              ),
+            ),
+          ],
+        ]);
         const handle = { $$id: handleId } as Handle<unknown, unknown>;
         if (
           !samePushValue(
             collectHandleData(handle, ssr.data, ssr.segmentOrder),
             collectHandleData(
               handle,
-              withClientHandles(ssr.data, handleId),
+              withClientPushes(ssr.data, handleId, unseeded),
               ssr.segmentOrder,
             ),
           )
         ) {
           console.warn(
-            `[rango] usePushHandle: handle "${handleId}" shows a different value once the client's push applies than the document was rendered with. The first paint shows the server's values: push the value on the server too.`,
+            `[rango] usePushHandle: handle "${handleId}" shows a value only after hydration: the server pushed none into the segment of the component that pushes it, so the document showed another value. If the first paint must show it, push its first value from the server (a handler, or a loader with ssr: "await"; under a collect that keeps every value, from the server alone). A value only the client knows changes after hydration.`,
           );
         }
       }
@@ -1403,32 +1433,81 @@ export function createEventController(
   function setClientHandle(
     handleId: string,
     segmentId: string,
-    owner: object,
+    owner: ClientPushOwner,
     values: unknown[] | undefined,
   ): void {
     let bySegment = clientPushes.get(handleId);
     let owners = bySegment?.get(segmentId);
-    const previous = owners?.get(owner);
+    const waiting = owners && resyncing.get(owners);
     if (!values?.length) {
+      pushedValues.delete(owner);
+      waiting?.delete(owner);
       if (!owners?.delete(owner)) return;
       if (owners.size === 0) bySegment!.delete(segmentId);
       if (bySegment!.size === 0) clientPushes.delete(handleId);
-    } else {
-      if (previous && samePushValue(previous, values)) return;
+      if (!hydrationSnapshot) notifyClientHandles(handleId);
+      return;
+    }
+    const joined = !owners?.has(owner);
+    // The resync's commit: each pusher publishes from the render the resync
+    // asked for, in tree order, and moves behind the ones before it. A
+    // publish from an earlier render (the joining commit itself) moves none.
+    const asked = waiting?.get(owner);
+    const moved =
+      !joined &&
+      asked !== undefined &&
+      (owner.generation ?? asked) > asked &&
+      waiting!.delete(owner);
+    if (moved) {
+      const shown = owners!.get(owner)!;
+      owners!.delete(owner);
+      owners!.set(owner, shown);
+    }
+    const previous = pushedValues.get(owner);
+    const same = previous !== undefined && samePushValue(previous, values);
+    if (same && !moved) return;
+    if (joined) {
       if (!bySegment) clientPushes.set(handleId, (bySegment = new Map()));
       if (!owners) bySegment.set(segmentId, (owners = new Map()));
-      owners.set(owner, values);
-      if (
-        process.env.NODE_ENV !== "production" &&
-        !previous &&
-        owners.size > 1
-      ) {
-        console.error(
-          `[rango] usePushHandle: ${owners.size} mounted components push handle "${handleId}" in segment "${segmentId}". One component per segment pushes a handle: their values show in the order they started pushing, which Suspense timing can change. Push the values from one component.`,
-        );
+      owners.set(owner, []);
+      // Commit order is not tree order (a sibling that suspends commits
+      // later): every pusher of this handle in this segment renders again,
+      // so their layout effects publish in one commit, in tree order.
+      if (owners.size > 1) {
+        const ask = new Map<ClientPushOwner, number>();
+        for (const other of owners.keys()) {
+          if (!other.resync) continue;
+          ask.set(other, other.generation ?? 0);
+          other.resync();
+        }
+        resyncing.set(owners, ask);
       }
     }
-    if (!hydrationSnapshot) notifyClientHandles(handleId);
+    // A render that only swaps in a pending promise changes nothing a reader
+    // shows: it notifies no one (unless the pusher joined or moved) and a
+    // fresh promise per render settles to the value already shown.
+    let changed = joined || moved;
+    if (!same) {
+      pushedValues.set(owner, values);
+      if (values.some(isThenable)) {
+        // As a server push(promise): the owner's values show as they were
+        // until this render's resolve, in the owner's place; a newer render
+        // or an unmount drops the result.
+        void resolveDeferredList(values).then((resolved) => {
+          const current = clientPushes.get(handleId)?.get(segmentId);
+          if (pushedValues.get(owner) !== values || !current?.has(owner)) {
+            return;
+          }
+          if (samePushValue(current.get(owner), resolved)) return;
+          current.set(owner, resolved);
+          if (!hydrationSnapshot) notifyClientHandles(handleId);
+        });
+      } else {
+        owners!.set(owner, values);
+        changed = true;
+      }
+    }
+    if (changed && !hydrationSnapshot) notifyClientHandles(handleId);
   }
 
   function notifyClientHandles(handleId?: string): void {

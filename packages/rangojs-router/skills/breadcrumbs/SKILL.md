@@ -1,6 +1,6 @@
 ---
 name: breadcrumbs
-description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, or asking how to show the current navigation path in a layout.
+description: Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, asking how to show the current navigation path in a layout, or pushing a crumb from client state (usePushHandle).
 argument-hint: "[setup]"
 ---
 
@@ -143,6 +143,13 @@ value), so a server crumb for the first paint and a client crumb for later
 changes show as one crumb. The client crumb is never in the SSR HTML, leaves
 with the component, and is never stored in a history entry. Rules and timing:
 [hooks → usePushHandle()](../hooks/handle-and-actions.md#usepushhandle).
+
+A client crumb's `content` is passed through as it is, as on the server: an
+element, or a promise the reader resolves with `use()` (next section). A
+promise compares by reference, so a client crumb whose `content` is a fresh
+promise on every render publishes on every render, and a component that
+also reads `Breadcrumbs` loops. Pass an element, or keep the promise stable
+(from a loader, or `useMemo`).
 
 ## Async Content
 

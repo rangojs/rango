@@ -27,3 +27,17 @@ export const PushHandleGroupLoader = createLoader(
   },
   true,
 );
+
+// A slow fetch the stream page (push-handle.client.tsx PushHandleStream)
+// reads with load() and pushes as a promise: answers PH_FEED_DELAY ms late.
+const PH_FEED_DELAY = 1500;
+let pushHandleFeedRun = 0;
+
+export const PushHandleFeedLoader = createLoader(
+  async (): Promise<{ name: string }> => {
+    await new Promise((resolve) => setTimeout(resolve, PH_FEED_DELAY));
+    pushHandleFeedRun++;
+    return { name: `Feed ${pushHandleFeedRun}` };
+  },
+  true,
+);

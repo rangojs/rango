@@ -237,18 +237,27 @@ effect into the event controller's client layer (`setClientHandle`: handle id
 an unmount, or a render that pushes nothing, removes them. Readers merge the
 layer per segment after the server's values (`withClientHandles`,
 `handles/client-pushes.ts` `withClientPushes`), so the order is the tree's and
-render order, never arrival order. Equal values (`samePushValue`: arrays,
-plain objects, React elements by structure) publish nothing, so a pusher
-that reads its own handle does not loop. The layer is hidden while the
-hydration window is open (dev warns when it changes what a reader showed in
-the SSR HTML), never written into a history entry, and a push made while a
+render order, never arrival order. Two pushers of one handle in one segment
+are kept in tree order: when one joins, `setClientHandle` asks every pusher
+there to render again (`ClientPushOwner.resync`) and keeps the order their
+layout effects publish in from those renders (a `generation` past the one
+they were asked at); a pusher nested in another comes before it, as React
+runs a child's effects first. `push(promise)` resolves as a server push does
+(`resolveDeferredList`, `handles/deferred-resolution.ts`: shallow, a
+rejected or nullish value dropped): the pusher's place is fixed at the push,
+readers keep its last values until the render's promises settle, and a
+newer render or an unmount drops the result. Equal values (`samePushValue`:
+arrays, plain objects, React elements by structure, a promise by reference)
+publish nothing, so a pusher that reads its own handle does not loop. The
+layer is hidden while the hydration window is open (dev warns when a client
+value lands in a segment the server pushed nothing into and changes what a
+reader showed in the SSR HTML), never written into a history entry, and a push made while a
 navigation is held merges with the server state shown over the page being
 left (`getHeldHandleState`, set at the first `flushRouteState("anchor")`,
 cleared at the release) and is set at once (`useCommitAnchoredState`'s
 `now`). `useHandle` subscribes in a layout effect, so a reader mounted with
-the pusher reads its value before paint. `push` after its render committed,
-or of a thenable, throws; a second pusher of one handle in one segment is a
-dev error. A slot or intercept with neither a layout nor loaders provides its
+the pusher reads its value before paint. `push` after its render committed
+throws. A slot or intercept with neither a layout nor loaders provides its
 own segment to OutletContext (`client.tsx` `SlotSegment`). Guide and
 contract: `skills/hooks/handle-and-actions.md`. Pinned:
 `src/testing/__tests__/render-route-push-handle.test.tsx`,

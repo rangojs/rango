@@ -15,7 +15,9 @@ import {
   configure,
   fireEvent,
   render,
+  waitFor,
 } from "@testing-library/react";
+import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 import { Outlet, ParallelOutlet } from "../../client.js";
 import { OutletProvider } from "../../outlet-provider.js";
 import { collectHandleData, createHandle, type Handle } from "../../handle.js";
@@ -201,7 +203,7 @@ const messages = (spy: ReturnType<typeof vi.spyOn>, part: string): string[] =>
     .filter((m: string) => m.includes(part));
 
 describe("usePushHandle", () => {
-  it("G1/case 1: a late server push into the owned segment, in either arrival order; unmount shows the server's", async () => {
+  it("a late server push into the owned segment, in either arrival order; unmount shows the server's", async () => {
     // Order A: the pusher is mounted, then the late push lands.
     const a = await mount();
     expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
@@ -220,7 +222,7 @@ describe("usePushHandle", () => {
     expect(text("title")).toBe(screenA);
   });
 
-  it("case 2: a late push into another segment shows", async () => {
+  it("a late push into another segment shows", async () => {
     const { router } = await mount();
     await router.pushLateHandles([[Titles, ["Late layout"], 0]]);
     expect(text("title")).toBe(
@@ -228,7 +230,7 @@ describe("usePushHandle", () => {
     );
   });
 
-  it("G2: a plain load() refresh paints no frame with the new data and the old title", async () => {
+  it("a plain load() refresh paints no frame with the new data and the old title", async () => {
     const { router, getByTestId } = await mount();
     router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
     log = [];
@@ -238,7 +240,7 @@ describe("usePushHandle", () => {
     expect(painted(log).filter(mixes)).toEqual([]);
   });
 
-  it("G2 (commit level): a load() refresh commits the new data before the title, corrected before paint", async () => {
+  it("a load() refresh, by commit: the new data commits before the title, corrected before paint", async () => {
     const { router, getByTestId } = await mount();
     router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
     log = [];
@@ -253,7 +255,7 @@ describe("usePushHandle", () => {
     });
   });
 
-  it("case 3: a load() racing a navigation's revalidation of the same loader: the title follows what the component renders", async () => {
+  it("a load() racing a navigation's revalidation of the same loader: the title follows what the component renders", async () => {
     const { router, getByTestId } = await mount({ transition: true });
     router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
     const nav = deferred<string>();
@@ -285,7 +287,7 @@ describe("usePushHandle", () => {
     { variant: "held in a transition", transition: true },
     { variant: "committed at once", transition: false },
   ])(
-    "case 4: navigating away ($variant): no frame shows the old client value over the new page",
+    "navigating away ($variant): no frame shows the old client value over the new page",
     async ({ transition }) => {
       const { router } = await mount({ transition });
       log = [];
@@ -315,7 +317,7 @@ describe("usePushHandle", () => {
     { variant: "held in a transition", transition: true },
     { variant: "committed at once", transition: false },
   ])(
-    "G2: a reader that mounts with the pusher ($variant) paints no frame without its value",
+    "a reader that mounts with the pusher ($variant) paints no frame without its value",
     async ({ transition }) => {
       const { router } = await mount({ transition });
       log = [];
@@ -373,7 +375,175 @@ describe("usePushHandle", () => {
     expect(painted(log).some((f) => f.title.includes("two"))).toBe(false);
   });
 
-  it("case 5: a same-route navigation held in a transition: the push follows the committed render", async () => {
+  it("a held navigation replaced by an urgent one: the hold ends, and later server and client pushes land on the page that committed", async () => {
+    const { router, getByTestId } = await mount({ transition: true });
+    const abandoned = deferred<string>();
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, abandoned.promise]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+    });
+    expect(router.eventController.getHeldHandleState()).toBeDefined();
+    await act(async () => {
+      await router.navigate("/items?id=3", {
+        loaders: [[ItemLoader, "three"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server three"], 1],
+        ],
+        transition: false,
+      });
+    });
+    expect(router.eventController.getHeldHandleState()).toBeUndefined();
+    expect(text("title")).toBe(titleOf(["Server three"], "Client three"));
+    log = [];
+    await router.pushLateHandles([[Titles, ["Late server"], 1]]);
+    expect(text("title")).toBe(titleOf(["Late server"], "Client three"));
+    router.respondToLoads({ loaders: [[ItemLoader, "three 1"]] });
+    await loadAndSettle(getByTestId("load"));
+    expect(text("title")).toBe(titleOf(["Late server"], "Client three 1"));
+    await act(async () => {
+      abandoned.resolve("two");
+      await abandoned.promise;
+    });
+    expect(text("data")).toBe("three 1");
+    expect(text("title")).toBe(titleOf(["Late server"], "Client three 1"));
+    expect(painted(log).filter(mixes)).toEqual([]);
+  });
+
+  it("a held navigation that fails: the page being left keeps its values and its client push until the failure commits; then the destination's", async () => {
+    class PageBoundary extends Component<
+      { children: ReactNode },
+      { failed: boolean }
+    > {
+      state = { failed: false };
+      static getDerivedStateFromError(): { failed: boolean } {
+        return { failed: true };
+      }
+      render(): ReactNode {
+        return this.state.failed ? (
+          <p data-testid="failed">failed</p>
+        ) : (
+          this.props.children
+        );
+      }
+    }
+    function BoundaryLayout(): ReactNode {
+      return (
+        <Profiler id="page" onRender={record}>
+          <TitleReader />
+          <PageBoundary>
+            <Outlet />
+          </PageBoundary>
+        </Profiler>
+      );
+    }
+    const { router, getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: BoundaryLayout },
+        { path: "/items", Component: Page, transition: {} },
+      ],
+      {
+        request: "/items?id=1",
+        loaders: [[ItemLoader, "one"]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+    let fail!: (error: Error) => void;
+    const failing = new Promise<string>((_, reject) => (fail = reject));
+    failing.catch(() => {});
+    errors.mockImplementation(() => {});
+    log = [];
+    await router.navigate("/items?id=2", {
+      loaders: [[ItemLoader, failing]],
+      handles: [
+        [Titles, ["Layout"], 0],
+        [Titles, ["Server two"], 1],
+      ],
+    });
+    router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+    await loadAndSettle(getByTestId("load"));
+    // Held: the page on screen shows its new client value over its own
+    // server values, never the failing page's.
+    expect(text("data")).toBe("loaded");
+    expect(text("title")).toBe(titleOf(["Server one"], "Client loaded"));
+    await act(async () => {
+      fail(new Error("load failed"));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(router.eventController.getHeldHandleState()).toBeUndefined();
+    // The failed page committed (its error in place of the pusher): its
+    // server values, and no client value from the page it replaced.
+    expect(text("failed")).toBe("failed");
+    expect(text("data")).toBe("");
+    expect(text("title")).toBe(titleOf(["Server two"]));
+    await router.pushLateHandles([[Titles, ["Late server"], 1]]);
+    expect(text("title")).toBe(titleOf(["Late server"]));
+    expect(
+      painted(log).filter(
+        (f) => f.title.includes("Server two") && f.title.includes("Client"),
+      ),
+    ).toEqual([]);
+  });
+
+  // With view transitions every commit here runs through the browser's
+  // transition (the stub), and readers take a commit's handle values when
+  // its `ready` resolves, as for server values (the "When handle values
+  // change" contract): the new data can lead its title by a tick. What never
+  // shows is one page's server values with the other page's client value.
+  it("a navigation held by a view transition: a client push on the page being left shows with that page's server values; the destination's come with its commit", async () => {
+    const stub = installViewTransitionStub();
+    try {
+      const { router, getByTestId } = await mount({ transition: true });
+      log = [];
+      const nav = deferred<string>();
+      await router.navigate("/items?id=2", {
+        loaders: [[ItemLoader, nav.promise]],
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server two"], 1],
+        ],
+      });
+      router.respondToLoads({ loaders: [[ItemLoader, "loaded"]] });
+      await loadAndSettle(getByTestId("load"));
+      await waitFor(() =>
+        expect(text("title")).toBe(titleOf(["Server one"], "Client loaded")),
+      );
+      expect(text("data")).toBe("loaded");
+      await act(async () => {
+        nav.resolve("two");
+        await nav.promise;
+      });
+      await waitFor(() =>
+        expect(text("title")).toBe(titleOf(["Server two"], "Client two")),
+      );
+      expect(text("data")).toBe("two");
+      expect(stub.started()).toBeGreaterThan(0);
+      const frames = painted(log);
+      expect(
+        frames.filter(
+          (f) =>
+            (f.title.includes("Server two") &&
+              !f.title.endsWith("Client two")) ||
+            (f.title.includes("Server one") && f.title.endsWith("Client two")),
+        ),
+      ).toEqual([]);
+      expect(
+        frames.filter(
+          (f) => f.data === "two" && f.title.includes("Client one"),
+        ),
+      ).toEqual([]);
+    } finally {
+      stub.uninstall();
+    }
+  });
+
+  it("a same-route navigation held in a transition: the push follows the committed render", async () => {
     const { router } = await mount({ transition: true });
     log = [];
     const nav = deferred<string>();
@@ -395,7 +565,7 @@ describe("usePushHandle", () => {
     expect(painted(log).filter(mixes)).toEqual([]);
   });
 
-  it("case 6/G7: SSR values until the hydration lock releases, then the client layer; dev warns of the drift", async () => {
+  it("SSR values until the hydration lock releases, then the client layer; no warning where the server pushed into the client's segment", async () => {
     const result = (await mount({
       hydrate: true,
     })) as RenderRouteHydrateResult;
@@ -404,10 +574,47 @@ describe("usePushHandle", () => {
     );
     expect(result.recoverableErrors).toEqual([]);
     expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
-    expect(messages(warnings, "usePushHandle")).toHaveLength(1);
+    expect(messages(warnings, "usePushHandle")).toEqual([]);
   });
 
-  it("G7: no drift warning when the client value matches the SSR value", async () => {
+  it("a live count over the server's title (a chat's unread count): no warning", async () => {
+    function ChatPage(): ReactNode {
+      const [unread] = useState(3);
+      const push = usePushHandle(Meta);
+      if (unread > 0) push({ title: `Chat (${unread})` });
+      const meta = useHandle(Meta) as Record<string, unknown>[];
+      return (
+        <p data-testid="t">
+          {String([...meta].reverse().find((d) => "title" in d)?.title)}
+        </p>
+      );
+    }
+    const result = await renderRoute([{ path: "/chat", Component: ChatPage }], {
+      request: "/chat",
+      handles: [[Meta, [{ title: "Chat" }]]],
+      hydrate: true,
+    });
+    expect(result.serverHtml).toContain(`<p data-testid="t">Chat</p>`);
+    expect(text("t")).toBe("Chat (3)");
+    expect(messages(warnings, "usePushHandle")).toEqual([]);
+  });
+
+  it("dev warns when the client pushes into a segment the server pushed nothing into, and its value changes what readers show", async () => {
+    const result = await renderRoute(routes(false), {
+      request: "/items?id=1",
+      loaders: [[ItemLoader, "one"]],
+      handles: [[Titles, ["Layout"], 0]],
+      hydrate: true,
+    });
+    expect(result.serverHtml).toContain(`<p data-testid="title">Layout</p>`);
+    expect(text("title")).toBe("Layout / Client one");
+    const warned = messages(warnings, "usePushHandle");
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain("shows a value only after hydration");
+    expect(warned[0]).not.toContain("on the server too");
+  });
+
+  it("no drift warning when the client value matches the SSR value", async () => {
     function TitlePage(): ReactNode {
       usePushHandle(Title)("Same");
       return <p data-testid="t">{useHandle(Title)}</p>;
@@ -422,7 +629,7 @@ describe("usePushHandle", () => {
     expect(messages(warnings, "usePushHandle")).toEqual([]);
   });
 
-  it("case 7: a ppr live-lane push after hydration into the owned segment", async () => {
+  it("a ppr live-lane push after hydration into the owned segment", async () => {
     const result = await renderRoute(routes(false), {
       request: "/items?id=1",
       loaders: [[ItemLoader, "one"]],
@@ -437,7 +644,7 @@ describe("usePushHandle", () => {
     expect(text("title")).toBe(titleOf(["Live lane"], "Client one"));
   });
 
-  it("case 8: Back/Forward: no client value in the history snapshot; the restored page pushes again in its commit", async () => {
+  it("Back/Forward: no client value in the history snapshot; the restored page pushes again in its commit", async () => {
     const { router } = await mount();
     const seg = router.segmentId(1);
     // What production writes into the history entry (liveHandleDataForCache).
@@ -464,7 +671,7 @@ describe("usePushHandle", () => {
     expect(painted(log).filter(mixes)).toEqual([]);
   });
 
-  it("G6/case 9: two pushers of one handle in one segment: a dev error; both show, in the order they mounted", async () => {
+  it("two pushers of one handle in one segment show in tree order, with no dev error", async () => {
     function Second(): ReactNode {
       usePushHandle(Titles)("Second");
       return null;
@@ -490,13 +697,140 @@ describe("usePushHandle", () => {
         ],
       },
     );
-    expect(messages(errors, "2 mounted components push handle")).toHaveLength(
-      1,
-    );
+    expect(messages(errors, "usePushHandle")).toEqual([]);
     expect(text("title")).toBe(titleOf(["Server one", "Client one"], "Second"));
   });
 
-  it("case 10: a pusher in a layout's slot, an intercept, and a route's own slot files its values in that segment", async () => {
+  it("the first pusher in the tree comes first even when it suspends and commits after its sibling", async () => {
+    const gate = deferred<string>();
+    function First(): ReactNode {
+      const value = use(gate.promise);
+      usePushHandle(Title)(`First ${value}`);
+      usePushHandle(Titles)(`First ${value}`);
+      return null;
+    }
+    function Second(): ReactNode {
+      usePushHandle(Title)("Second");
+      usePushHandle(Titles)("Second");
+      return null;
+    }
+    function SiblingPage(): ReactNode {
+      return (
+        <>
+          <p data-testid="last">{useHandle(Title)}</p>
+          <Suspense fallback={null}>
+            <First />
+          </Suspense>
+          <Suspense fallback={null}>
+            <Second />
+          </Suspense>
+        </>
+      );
+    }
+    await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: SiblingPage },
+      ],
+      { request: "/items", handles: [[Titles, ["Layout"], 0]] },
+    );
+    expect(text("title")).toBe("Layout / Second");
+    expect(text("last")).toBe("Second");
+    await act(async () => {
+      gate.resolve("late");
+      await gate.promise;
+    });
+    expect(text("title")).toBe("Layout / First late / Second");
+    expect(text("last")).toBe("Second");
+    expect(messages(errors, "usePushHandle")).toEqual([]);
+  });
+
+  it("a pusher that joins between two others takes its place in the tree", async () => {
+    function Named({ name }: { name: string }): ReactNode {
+      usePushHandle(Titles)(name);
+      return null;
+    }
+    function Joining(): ReactNode {
+      const [shown, setShown] = useState(false);
+      return (
+        <>
+          <Named name="A" />
+          {shown && <Named name="B" />}
+          <Named name="C" />
+          <button data-testid="join" onClick={() => setShown(true)} />
+        </>
+      );
+    }
+    const { getByTestId } = await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: Joining },
+      ],
+      { request: "/items", handles: [[Titles, ["Layout"], 0]] },
+    );
+    expect(text("title")).toBe("Layout / A / C");
+    await act(async () => fireEvent.click(getByTestId("join")));
+    expect(text("title")).toBe("Layout / A / B / C");
+  });
+
+  it("two pushers of Meta, a title and a description: both show, no dev error", async () => {
+    function TitlePusher(): ReactNode {
+      usePushHandle(Meta)({ title: "T" });
+      return null;
+    }
+    function DescriptionPusher(): ReactNode {
+      usePushHandle(Meta)({ name: "description", content: "D" });
+      return null;
+    }
+    function MetaPage(): ReactNode {
+      return (
+        <>
+          <p data-testid="meta">{JSON.stringify(useHandle(Meta))}</p>
+          <TitlePusher />
+          <DescriptionPusher />
+        </>
+      );
+    }
+    await renderRoute([{ path: "/m", Component: MetaPage }], {
+      request: "/m",
+    });
+    const meta = JSON.parse(text("meta")) as Record<string, unknown>[];
+    expect(meta).toContainEqual({ title: "T" });
+    expect(meta).toContainEqual({ name: "description", content: "D" });
+    expect(messages(errors, "usePushHandle")).toEqual([]);
+  });
+
+  it("a pusher nested inside another pusher of the handle shows before it, so the outer one wins a last-wins collect", async () => {
+    function Inner(): ReactNode {
+      usePushHandle(Title)("Inner");
+      usePushHandle(Titles)("Inner");
+      return null;
+    }
+    function Outer(): ReactNode {
+      usePushHandle(Title)("Outer");
+      usePushHandle(Titles)("Outer");
+      return <Inner />;
+    }
+    function NestedPage(): ReactNode {
+      return (
+        <>
+          <p data-testid="last">{useHandle(Title)}</p>
+          <Outer />
+        </>
+      );
+    }
+    await renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: NestedPage },
+      ],
+      { request: "/items", handles: [[Titles, ["Layout"], 0]] },
+    );
+    expect(text("title")).toBe("Layout / Inner / Outer");
+    expect(text("last")).toBe("Outer");
+  });
+
+  it("a pusher in a layout's slot, an intercept, and a route's own slot files its values in that segment", async () => {
     const slotPusher = (value: string) =>
       function SlotPusher(): ReactNode {
         usePushHandle(Titles)(value);
@@ -551,7 +885,7 @@ describe("usePushHandle", () => {
     );
   });
 
-  it("case 11: an error boundary replacing the pusher brings back the server values", async () => {
+  it("an error boundary replacing the pusher brings back the server values", async () => {
     class Boundary extends Component<
       { children: ReactNode },
       { failed: boolean }
@@ -604,7 +938,7 @@ describe("usePushHandle", () => {
     expect(text("title")).toBe(titleOf(["Server one"]));
   });
 
-  it("case 12: StrictMode's double render and effects give the same result", async () => {
+  it("StrictMode's double render and effects give the same result", async () => {
     configure({ reactStrictMode: true });
     const { router, getByTestId } = await mount();
     expect(text("title")).toBe(titleOf(["Server one"], "Client one"));
@@ -614,7 +948,7 @@ describe("usePushHandle", () => {
     expect(messages(errors, "usePushHandle")).toEqual([]);
   });
 
-  it("case 13: an action revalidation updating the owned segment's server values", async () => {
+  it("an action revalidation updating the owned segment's server values", async () => {
     const { router } = await mount();
     log = [];
     await router.action({
@@ -629,7 +963,7 @@ describe("usePushHandle", () => {
     expect(painted(log).filter(mixes)).toEqual([]);
   });
 
-  it("G4: a pusher that suspends pushes nothing; the server's values show until it commits", async () => {
+  it("a pusher that suspends pushes nothing; the server's values show until it commits", async () => {
     const gate = deferred<string>();
     function Suspending(): ReactNode {
       const value = use(gate.promise);
@@ -665,21 +999,7 @@ describe("usePushHandle", () => {
     expect(text("title")).toBe(titleOf(["Server one"], "Client late"));
   });
 
-  it("G5: a thenable client value is an error", async () => {
-    function PushesPromise(): ReactNode {
-      usePushHandle(Titles)(Promise.resolve("x") as unknown as string);
-      return null;
-    }
-    errors.mockImplementation(() => {});
-    await renderRoute([{ path: "/p", Component: PushesPromise }], {
-      request: "/p",
-    });
-    expect(
-      messages(errors, "push() takes a plain value, not a promise"),
-    ).not.toEqual([]);
-  });
-
-  it("(a) a last-wins title: the client's title shows", async () => {
+  it("a last-wins title: the client's title shows", async () => {
     function TitlePage(): ReactNode {
       usePushHandle(Title)("Client title");
       return <p data-testid="t">{useHandle(Title)}</p>;
@@ -700,7 +1020,7 @@ describe("usePushHandle", () => {
     expect(text("t")).toBe("Client title");
   });
 
-  it("(b) Meta: the client's title wins over the segment's server title; its description stays", async () => {
+  it("Meta: the client's title wins over the segment's server title; its description stays", async () => {
     function MetaPage(): ReactNode {
       usePushHandle(Meta)({ title: "Client" });
       const meta = useHandle(Meta);
@@ -1106,6 +1426,229 @@ describe("usePushHandle: render cost and lifetime", () => {
     await act(async () => fireEvent.click(getByTestId("off")));
     expect(text("title")).toBe("Layout");
     expect(router.handleData(Titles)[router.segmentId(1)]).toBeUndefined();
+  });
+});
+
+/**
+ * push(promise) as on the server (handles/deferred-resolution.ts): the value
+ * takes its place when it is pushed, readers keep what they showed until it
+ * resolves, and a rejected or nullish one is dropped. `pushNext` sets what
+ * the first pusher pushes on its next render; a second pusher after it in
+ * the tree pushes "Second".
+ */
+describe("usePushHandle with a promise", () => {
+  let pushNext: (value: string | Promise<string | null> | undefined) => void;
+  function PromisePusher(): ReactNode {
+    const [value, setValue] = useState<
+      string | Promise<string | null> | undefined
+    >("Client v1");
+    pushNext = (next) => setValue(() => next);
+    const push = usePushHandle(Titles);
+    if (value !== undefined) push(value);
+    return null;
+  }
+  function Second(): ReactNode {
+    usePushHandle(Titles)("Second");
+    return null;
+  }
+  function PromisePage(): ReactNode {
+    const [shown, setShown] = useState(true);
+    return (
+      <>
+        {shown && <PromisePusher />}
+        <Second />
+        <button data-testid="unmount" onClick={() => setShown(false)} />
+      </>
+    );
+  }
+  const mountPromisePage = () =>
+    renderRoute(
+      [
+        { path: "/items", Component: Layout },
+        { path: "/items", Component: PromisePage },
+      ],
+      {
+        request: "/items",
+        handles: [
+          [Titles, ["Layout"], 0],
+          [Titles, ["Server one"], 1],
+        ],
+      },
+    );
+  const settle = (): Promise<void> =>
+    act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+  it("readers keep what they showed until it resolves; the value takes the place it was pushed in", async () => {
+    await mountPromisePage();
+    expect(text("title")).toBe(titleOf(["Server one", "Client v1"], "Second"));
+    const next = deferred<string | null>();
+    log = [];
+    await act(async () => pushNext(next.promise));
+    // Pending: the previous value stays, never a blank.
+    expect(text("title")).toBe(titleOf(["Server one", "Client v1"], "Second"));
+    await act(async () => {
+      next.resolve("Client v2");
+      await next.promise;
+    });
+    // Resolved after "Second" committed, shown before it: its place.
+    expect(text("title")).toBe(titleOf(["Server one", "Client v2"], "Second"));
+    expect(
+      log.filter((f) => !f.title.includes("Client v")).map((f) => f.title),
+    ).toEqual([]);
+  });
+
+  it.each([
+    { outcome: "rejects", settleWith: "reject" as const },
+    { outcome: "resolves to null", settleWith: null },
+  ])("a promise that $outcome is dropped", async ({ settleWith }) => {
+    await mountPromisePage();
+    let reject!: (error: Error) => void;
+    let resolve!: (value: string | null) => void;
+    const next = new Promise<string | null>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    next.catch(() => {});
+    await act(async () => pushNext(next));
+    await act(async () => {
+      if (settleWith === "reject") reject(new Error("fetch failed"));
+      else resolve(settleWith);
+    });
+    await settle();
+    expect(text("title")).toBe(titleOf(["Server one"], "Second"));
+  });
+
+  it("a newer push drops a pending promise's result", async () => {
+    await mountPromisePage();
+    const older = deferred<string | null>();
+    const newer = deferred<string | null>();
+    await act(async () => pushNext(older.promise));
+    await act(async () => pushNext(newer.promise));
+    await act(async () => {
+      newer.resolve("Newer");
+      await newer.promise;
+    });
+    expect(text("title")).toBe(titleOf(["Server one", "Newer"], "Second"));
+    await act(async () => {
+      older.resolve("Older");
+      await older.promise;
+    });
+    await settle();
+    expect(text("title")).toBe(titleOf(["Server one", "Newer"], "Second"));
+  });
+
+  it("an unmount while pending drops the result", async () => {
+    const { getByTestId } = await mountPromisePage();
+    const next = deferred<string | null>();
+    await act(async () => pushNext(next.promise));
+    await act(async () => fireEvent.click(getByTestId("unmount")));
+    expect(text("title")).toBe(titleOf(["Server one"], "Second"));
+    await act(async () => {
+      next.resolve("Too late");
+      await next.promise;
+    });
+    await settle();
+    expect(text("title")).toBe(titleOf(["Server one"], "Second"));
+  });
+
+  it.each([
+    { kind: "the same promise on every render", fresh: false },
+    { kind: "a fresh promise on every render", fresh: true },
+  ])(
+    "$kind, read by the pusher itself: no render loop, no blank frame",
+    async ({ fresh }) => {
+      let renders = 0;
+      const stable = Promise.resolve("Fetched");
+      function SelfReader(): ReactNode {
+        renders++;
+        usePushHandle(Title)(fresh ? Promise.resolve("Fetched") : stable);
+        return <p data-testid="t">{useHandle(Title) || "-"}</p>;
+      }
+      const seen: string[] = [];
+      await renderRoute(
+        [
+          {
+            path: "/t",
+            Component: () => (
+              <Profiler id="t" onRender={() => seen.push(text("t"))}>
+                <SelfReader />
+              </Profiler>
+            ),
+          },
+        ],
+        { request: "/t" },
+      );
+      await settle();
+      expect(text("t")).toBe("Fetched");
+      const settled = renders;
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 20));
+      });
+      expect(renders).toBe(settled);
+      expect(renders).toBeLessThanOrEqual(4);
+      // Once shown, the value never goes back to blank while a new promise
+      // is pending.
+      expect(seen.slice(seen.indexOf("Fetched"))).not.toContain("-");
+    },
+  );
+
+  const Plain = createHandle<{ title: string }, { title: string }[]>(
+    (segments) => segments.flat().map((v) => ({ ...v })),
+    "__test_push_handle_plain_promise__",
+  );
+  it.each([
+    { kind: "Meta", handle: Meta as Handle<any, any>, value: { title: "T" } },
+    { kind: "a plain object handle", handle: Plain, value: { title: "T" } },
+  ])(
+    "a fresh promise resolving to $kind on every render, read by the pusher itself or by a component above it: bounded renders",
+    async ({ handle, value }) => {
+      let renders = 0;
+      function SelfReader(): ReactNode {
+        renders++;
+        usePushHandle(handle)(Promise.resolve({ ...value }));
+        const read = useHandle(handle);
+        return <p data-testid="t">{JSON.stringify(read)}</p>;
+      }
+      let layoutRenders = 0;
+      function ReadingLayout(): ReactNode {
+        layoutRenders++;
+        useHandle(handle);
+        return <Outlet />;
+      }
+      await renderRoute(
+        [
+          {
+            path: "/t",
+            Component: ReadingLayout,
+          },
+          { path: "/t", Component: SelfReader },
+        ],
+        { request: "/t" },
+      );
+      await settle();
+      expect(text("t")).toContain("T");
+      const settled = [renders, layoutRenders];
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      expect([renders, layoutRenders]).toEqual(settled);
+      expect(renders).toBeLessThanOrEqual(4);
+    },
+  );
+
+  it("a promise inside a pushed value passes through untouched (a crumb's content)", async () => {
+    const content = Promise.resolve(<b>icon</b>);
+    function CrumbPage(): ReactNode {
+      usePushHandle(Breadcrumbs)({ label: "P", href: "/p", content });
+      const crumbs = useHandle(Breadcrumbs);
+      return <p data-testid="same">{String(crumbs[0]?.content === content)}</p>;
+    }
+    await renderRoute([{ path: "/p", Component: CrumbPage }], {
+      request: "/p",
+    });
+    expect(text("same")).toBe("true");
   });
 });
 

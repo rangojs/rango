@@ -17,7 +17,7 @@
     },
     {
       "name": "breadcrumbs",
-      "description": "Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, or asking how to show the current navigation path in a layout.",
+      "description": "Built-in Breadcrumbs handle for accumulating breadcrumb navigation across route segments. Use when building a breadcrumb trail for nested routes, asking how to show the current navigation path in a layout, or pushing a crumb from client state (usePushHandle).",
       "argumentHint": "[setup]",
       "path": "skills/breadcrumbs/SKILL.md"
     },
@@ -107,7 +107,7 @@
     },
     {
       "name": "hooks",
-      "description": "Client-side React hooks for navigation, loaders, and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, or loader data — e.g. \"how do I read the route param in a component\".",
+      "description": "Client-side React hooks for navigation, loaders, handles and state in @rangojs/router. Use when a client component needs the current URL, params, search params, navigation state, loader data, or handle data (useHandle), or pushes a handle value from client state (usePushHandle, for a page title, Meta tag or breadcrumb from a live value, a draft or a fetch) — e.g. \"how do I read the route param in a component\", \"set the page title from a client component\".",
       "argumentHint": "[hook-name]",
       "path": "skills/hooks/SKILL.md"
     },

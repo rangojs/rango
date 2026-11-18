@@ -27,19 +27,24 @@ function ChatTitle({ unread }: { unread: number }) {
 
 The values land in the component's own segment, after that segment's server
 values, so a `Meta` title or a `Breadcrumbs` crumb with the same `href` takes
-the client's value. The order is the tree's and render order, never arrival
-order: a server value that resolves late never overwrites a client value, nor
-the reverse. Values show with the render that pushed them (a reader mounted
-in the same navigation reads them before the browser paints), leave when the
-component unmounts, and are never stored in a history entry. They are never
-in SSR HTML or a `ppr` shell: a value the first paint must show is pushed on
-the server too, and development warns when a client value changes what the
+the client's value. The order is the tree's, never arrival order: a server
+value that resolves late never overwrites a client value, nor the reverse,
+and two components that push one handle in one segment show in tree order,
+whichever commits first (one nested inside the other shows before it).
+`push(promise)` works as on the server: the value keeps the place it was
+pushed in, readers keep what they showed until it resolves, and a rejected
+or `null` result is dropped. Values show with the render that pushed them (a
+reader mounted in the same navigation reads them before the browser paints),
+leave when the component unmounts, and are never stored in a history entry.
+They are never in SSR HTML or a `ppr` shell: a value the first paint must
+show is pushed on the server, and development warns when a client value
+lands in a segment the server pushed nothing into and changes what the
 document showed. `push` after its render committed (an effect, an event
-handler, a child that re-renders on its own) or with a promise throws; two
-components pushing one handle in one segment is a development error.
-`useHandle` is unchanged. Where a handle value should come from (a handler, a
-loader, or `usePushHandle`, and what to prefer in `clientUrls()` groups):
-`/hooks` skill, `handle-and-actions.md`.
+handler, a child that re-renders on its own) throws. `useHandle` is
+unchanged. Where a handle value should come from (the server for what it
+knows when a segment renders, `usePushHandle` for live data and live edits
+on the page, and what to prefer in `clientUrls()` groups): `/hooks` skill,
+`handle-and-actions.md`.
 
 Testing: `renderRoute`'s `handles` take a segment
 (`[handle, values, segment?]`), specs take `slots`, and the router handle

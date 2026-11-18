@@ -2099,7 +2099,15 @@ Here is how each hook gets there:
   commit, before `NavigationProvider`'s layout effect releases, so the
   release's update and theirs commit together. The client layer is hidden
   during the hydration window (the document's HTML has the server's values)
-  and is never written into a history entry.
+  and is never written into a history entry. Two pushers of one handle in
+  one segment follow tree order, not commit order: a sibling that suspends
+  commits after the one behind it, so a join renders every pusher of that
+  segment again, in one sync commit before paint, and their layout effects
+  publish in tree order. Limitation: a pusher nested inside another of the
+  same handle comes before it (React runs a child's effects first), so the
+  outer one wins a last-wins collect. A pushed promise keeps its place and
+  shows nothing new until it settles, as a server push(promise) on a
+  navigation.
 - `useLinkStatus` shows work at once and settles with the page. It sets its
   value in the lane of the notification that carries it and starts no
   transition of its own. The click's notification runs in a task of its
