@@ -228,6 +228,13 @@ export interface ShellRequestLoader {
    * segment that registers the loader, in place of its earlier ones.
    */
   handles: Record<string, unknown[]>;
+  /**
+   * Which loader's run pushed each of `handles`, index-aligned per handle:
+   * another loader the body read with `ctx.use()`, or null for the body's
+   * own. A handle with no entry holds only the body's own. The browser leaves
+   * a value another loader on the page pushed to that loader's own run.
+   */
+  pushedBy: Record<string, (string | null)[]>;
 }
 
 /** Result of {@link serveShellRequest}. */
@@ -477,12 +484,18 @@ async function decodeLoader(
     loaderResult?: unknown;
     loaderError?: { message: string };
     handles?: Record<string, unknown[]>;
+    pushedBy?: Record<string, (string | null)[]>;
   }>(flight);
   if (!("loaderResult" in payload)) return undefined;
+  const { values, pushedBy } = await resolveDeferredPushes(
+    payload.handles ?? {},
+    payload.pushedBy,
+  );
   return {
     result: payload.loaderError ? null : payload.loaderResult,
     error: payload.loaderError?.message ?? null,
-    handles: await resolveDeferredPushes(payload.handles ?? {}),
+    handles: values,
+    pushedBy,
   };
 }
 

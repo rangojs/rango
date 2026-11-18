@@ -18,6 +18,7 @@ import { notifyListeners } from "./notify-listeners.js";
 import {
   mergeLoaderReadHandleData,
   mergePartialHandleData,
+  type LoaderReadPushes,
 } from "../handles/pushed-by.js";
 import {
   locationStateSnapshot,
@@ -318,17 +319,14 @@ export interface EventController {
   ): void;
   getHandleState(): HandleState;
   /**
-   * Apply the handle values a fetched read of `loaderId` pushed (by handle
-   * $$id) to the page's handle data, keeping its segment order: they replace
-   * the loader's earlier values in its segment (handles/pushed-by.ts
-   * mergeLoaderReadHandleData). Waits like setHandleData while the hydration
-   * window is open. False, and nothing applied, when no segment of the page's
-   * handle data registers the loader.
+   * Apply the handle values a fetched read of `loaderId` pushed to the page's
+   * handle data, keeping its segment order: they replace the loader's earlier
+   * values in its segment (handles/pushed-by.ts mergeLoaderReadHandleData).
+   * Waits like setHandleData while the hydration window is open. False, and
+   * nothing applied, when no segment of the page's handle data registers the
+   * loader.
    */
-  setLoaderReadHandleData(
-    loaderId: string,
-    values: Readonly<Record<string, readonly unknown[]>>,
-  ): boolean;
+  setLoaderReadHandleData(loaderId: string, pushes: LoaderReadPushes): boolean;
   /**
    * Open the hydration window. Until releaseHydrationLock(), getHandleState()
    * returns the state the document's HTML was rendered with, and handle writes
@@ -1257,7 +1255,7 @@ export function createEventController(
 
   function setLoaderReadHandleData(
     loaderId: string,
-    values: Readonly<Record<string, readonly unknown[]>>,
+    pushes: LoaderReadPushes,
   ): boolean {
     const merge = () =>
       mergeLoaderReadHandleData(
@@ -1265,7 +1263,7 @@ export function createEventController(
         handleSegmentOrder,
         handleMatched,
         loaderId,
-        values,
+        pushes,
       );
     if (hydrationSnapshot) {
       // Decided on the data the waiting writes start from, applied after
@@ -1273,7 +1271,7 @@ export function createEventController(
       const applies = merge() !== undefined;
       if (applies) {
         writesAfterHydration.push(() => {
-          setLoaderReadHandleData(loaderId, values);
+          setLoaderReadHandleData(loaderId, pushes);
         });
       }
       return applies;

@@ -88,6 +88,30 @@ describe("startFetchedLoaderRead", () => {
     expect(data.Crumbs.R0).toEqual(["Page"]);
   });
 
+  it("leaves a value another loader on the page pushed to that loader, after a dropped pending one", async () => {
+    const page = mountPage();
+    page.eventController.setHandleData(
+      {
+        Crumbs: { L0: ["Home"], R0: ["Members", "Old crumb"] },
+        [pushedByKey("Crumbs")]: { R0: ["members", "title"] },
+      },
+      ["L0", "R0D0.members", "R0D1.title", "R0"],
+    );
+    startFetchedLoaderRead("title", page)(
+      {
+        Crumbs: [Promise.resolve(null), "Members", "New crumb"],
+      },
+      { Crumbs: [null, "members", null] },
+    );
+    await settle();
+    const { data } = page.eventController.getHandleState();
+    expect(data.Crumbs).toEqual({
+      L0: ["Home"],
+      R0: ["Members", "New crumb"],
+    });
+    expect(data[pushedByKey("Crumbs")]).toEqual({ R0: ["members", "title"] });
+  });
+
   it("applies the reads of a group refresh each to its own loader", async () => {
     const page = mountPage();
     page.eventController.setHandleData(rendered(), [

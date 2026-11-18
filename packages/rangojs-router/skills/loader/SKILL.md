@@ -1121,11 +1121,13 @@ in place of the loader's earlier values in the segment that registers it, so
 promise applies once it settles. This is how a live part of a page keeps its
 title current: a rename that reaches the page through a refresh renames the
 tab too. They apply only while the page the read was sent from is still on
-screen, and the newest read of the loader wins. A loader that no segment on
-the page registers with `loader()` (a `useFetchLoader()` of an unregistered
-loader) has no segment to own its values: they are not applied, and
-development warns once. Register the loader on the route or layout whose
-title or crumbs it writes.
+screen, and the newest read of the loader wins. A value pushed by a loader the
+body awaits that the page also registers belongs to that loader's own run,
+which the read did not refresh: the page keeps that run's values, as it keeps
+its data. A loader that no segment on the page registers with `loader()` (a
+`useFetchLoader()` of an unregistered loader) has no segment to own its
+values: they are not applied, and development warns once. Register the loader
+on the route or layout whose title or crumbs it writes.
 
 Under `cache()`, loader pushes are not stored with the cached segments: the
 loader re-runs on every hit and its live push is the only copy. (`ppr` keeps

@@ -29,6 +29,7 @@ import {
   startFetchedLoaderRead,
   type FetchedLoaderHandles,
   type FetchedLoaderPage,
+  type FetchedLoaderPushedBy,
 } from "./browser/fetched-loader-handles.js";
 import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
@@ -129,6 +130,8 @@ interface LoaderRscPayload<T = unknown> {
   loaderError?: { message: string; name: string };
   /** What the loader's body pushed to each handle (rsc/loader-fetch.ts). */
   handles?: FetchedLoaderHandles;
+  /** Which loader's run pushed each of `handles` (rsc/loader-fetch.ts). */
+  pushedBy?: FetchedLoaderPushedBy;
 }
 
 export type LoadFunction<T> = (options?: LoadOptions) => Promise<T>;
@@ -311,7 +314,7 @@ function useLoaderInternal<T>(
         throw new Error(payload.loaderError.message);
       }
       loaders.finishData(bucketKey, requestId, payload.loaderResult);
-      applyHandles(payload.handles);
+      applyHandles(payload.handles, payload.pushedBy);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       loaders.finishError(bucketKey, requestId, err);
@@ -583,7 +586,7 @@ function useLoaderInternal<T>(
             setLocalIsLoading(false);
           });
         }
-        applyHandles(payload.handles);
+        applyHandles(payload.handles, payload.pushedBy);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));

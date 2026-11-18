@@ -38,14 +38,19 @@ import {
 } from "./helpers.js";
 import type { HandlerContext } from "./handler-context.js";
 import { WIRE } from "../wire-params.js";
+import { isHandle } from "../handle.js";
+import { runInsideLoaderBodyScope } from "../server/context.js";
 
 /**
- * A successful read's reply: the loader's value, and the values its body
- * pushed to each handle (by handle $$id, in push order).
+ * A successful read's reply: the loader's value, the values its body pushed
+ * to each handle (by handle $$id, in push order), and which loader's run
+ * pushed each (index-aligned, null for the body's own; a handle with no entry
+ * holds only the body's own).
  */
 interface LoaderFetchPayload {
   loaderResult: unknown;
   handles: Record<string, unknown[]>;
+  pushedBy: Record<string, (string | null)[]>;
 }
 
 export interface LoaderErrorMeta<TEnv> {
@@ -265,8 +270,8 @@ export async function handleLoaderFetch<TEnv>(
         async () => {
           const reqCtx = getRequestContext();
           // ctx.use(Handle) pushes file under the request context's segment
-          // (request-context.ts createUseFunction), and this lane renders no
-          // segment: without one the push threw and the read was a 500. The
+          // (request-context.ts createUseFunction), which throws without one,
+          // and this lane renders no segment: the loader's id stands in. The
           // body's pushes, and those of the loaders it reads with ctx.use,
           // file under the loader's id and ride the reply; the browser files
           // them under the segments that register the loader
@@ -310,6 +315,17 @@ export async function handleLoaderFetch<TEnv>(
                 : undefined,
             ),
             ...(loaderFormData ? { formData: loaderFormData } : {}),
+            // A loader the body reads runs as its own run, as a render runs
+            // it (loader-resolution.ts): its pushes name it
+            // (getHandlePushOwner), so the reply's pushedBy tells the browser
+            // they are that loader's, not this one's.
+            use: ((item: any) =>
+              isHandle(item)
+                ? reqCtx.use(item)
+                : runInsideLoaderBodyScope(
+                    () => reqCtx.use(item),
+                    item.$$id,
+                  )) as typeof reqCtx.use,
           };
 
           // Meter the fetchable-loader execution via observePhase, the sole
@@ -324,6 +340,10 @@ export async function handleLoaderFetch<TEnv>(
             // The pushes the body made, a pending one as its promise: the
             // browser applies them once they settle, after the data.
             handles: reqCtx._handleStore.getDataForSegment(loaderId),
+            // A loader the body read with ctx.use pushed as its own run: the
+            // browser leaves the page's run of it alone when the page
+            // registers it (handles/pushed-by.ts mergeLoaderReadHandleData).
+            pushedBy: reqCtx._handleStore.getPushedBy(loaderId) ?? {},
           };
           // Read once here: onError can fire outside the ALS frame.
           const requestContext = _getRequestContext();

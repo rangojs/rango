@@ -9,6 +9,12 @@ import { resolveDeferredPushes } from "../handles/deferred-resolution.js";
  */
 export type FetchedLoaderHandles = Record<string, unknown[]>;
 
+/**
+ * Which loader's run pushed each of the reply's values, index-aligned per
+ * handle (null: the read loader's own body), as the reply carries it.
+ */
+export type FetchedLoaderPushedBy = Record<string, (string | null)[]>;
+
 /** The router state a read's handle values are applied to. */
 export interface FetchedLoaderPage {
   eventController: EventController;
@@ -37,7 +43,10 @@ const warnedUnregistered = new Set<string>();
 export function startFetchedLoaderRead(
   loaderId: string,
   page: FetchedLoaderPage | undefined,
-): (handles: FetchedLoaderHandles | undefined) => void {
+): (
+  handles: FetchedLoaderHandles | undefined,
+  pushedBy?: FetchedLoaderPushedBy,
+) => void {
   const seq = ++readSeq;
   latestRead.set(loaderId, seq);
   const historyKey = page?.store.getHistoryKey();
@@ -50,15 +59,16 @@ export function startFetchedLoaderRead(
 
   const apply = async (
     handles: FetchedLoaderHandles | undefined,
+    pushedBy: FetchedLoaderPushedBy | undefined,
   ): Promise<void> => {
     if (!handles || !current()) return;
-    const values = await resolveDeferredPushes(handles);
+    const pushes = await resolveDeferredPushes(handles, pushedBy);
     if (!current()) return;
     const { eventController, store } = page!;
-    if (!eventController.setLoaderReadHandleData(loaderId, values)) {
+    if (!eventController.setLoaderReadHandleData(loaderId, pushes)) {
       if (
         process.env.NODE_ENV !== "production" &&
-        Object.values(values).some((pushed) => pushed.length > 0) &&
+        Object.values(pushes.values).some((pushed) => pushed.length > 0) &&
         !warnedUnregistered.has(loaderId)
       ) {
         warnedUnregistered.add(loaderId);
@@ -78,8 +88,8 @@ export function startFetchedLoaderRead(
       navInstance!,
     );
   };
-  return (handles) => {
-    apply(handles).catch((error) =>
+  return (handles, pushedBy) => {
+    apply(handles, pushedBy).catch((error) =>
       console.error("[rango] Error applying a loader read's handles:", error),
     );
   };

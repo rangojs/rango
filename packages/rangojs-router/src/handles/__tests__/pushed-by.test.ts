@@ -4,6 +4,7 @@ import {
   mergeLoaderReadHandleData,
   pushedByKey,
   withSegmentHandles,
+  type LoaderReadPushes,
 } from "../pushed-by.js";
 
 describe("withSegmentHandles", () => {
@@ -53,6 +54,11 @@ describe("withSegmentHandles", () => {
 });
 
 describe("mergeLoaderReadHandleData", () => {
+  // A read whose values are all its body's own.
+  const own = (values: Record<string, unknown[]>): LoaderReadPushes => ({
+    values,
+    pushedBy: {},
+  });
   // A layout L0 and its route R0, which registers "title" and "other"; the
   // route's handler pushed first, then each loader.
   const segmentOrder = ["L0", "R0"];
@@ -70,7 +76,7 @@ describe("mergeLoaderReadHandleData", () => {
       segmentOrder,
       matched,
       "title",
-      { Meta: [{ title: "New" }], Crumbs: ["New crumb"] },
+      own({ Meta: [{ title: "New" }], Crumbs: ["New crumb"] }),
     );
     expect(out).toEqual({
       Meta: { L0: [{ title: "Site" }], R0: [{ title: "New" }, { desc: "x" }] },
@@ -86,7 +92,7 @@ describe("mergeLoaderReadHandleData", () => {
       segmentOrder,
       matched,
       "title",
-      { Meta: [{ title: "New" }] },
+      own({ Meta: [{ title: "New" }] }),
     );
     expect(out!.Crumbs).toEqual({ L0: ["Home"], R0: ["Page"] });
     expect(out![pushedByKey("Crumbs")]).toBeUndefined();
@@ -98,7 +104,7 @@ describe("mergeLoaderReadHandleData", () => {
       segmentOrder,
       matched,
       "title",
-      {},
+      own({}),
     );
     expect(out).toEqual({
       Meta: { L0: [{ title: "Site" }], R0: [{ desc: "x" }] },
@@ -113,7 +119,7 @@ describe("mergeLoaderReadHandleData", () => {
       segmentOrder,
       matched,
       "other",
-      { Crumbs: ["Other crumb"] },
+      own({ Crumbs: ["Other crumb"] }),
     );
     expect(out!.Crumbs).toEqual({
       L0: ["Home"],
@@ -131,18 +137,26 @@ describe("mergeLoaderReadHandleData", () => {
 
   it("files under the segment holding the loader's values when two register it", () => {
     const both = ["L0", "L0D0.title", "R0D0.title", "R0"];
-    const out = mergeLoaderReadHandleData(page(), segmentOrder, both, "title", {
-      Meta: [{ title: "New" }],
-    });
+    const out = mergeLoaderReadHandleData(
+      page(),
+      segmentOrder,
+      both,
+      "title",
+      own({ Meta: [{ title: "New" }] }),
+    );
     expect(out!.Meta).toEqual({
       L0: [{ title: "Site" }],
       R0: [{ title: "New" }, { desc: "x" }],
     });
     // Nothing of it on the page yet: the outermost registration, as a render
     // starts the layout's loaders first.
-    const fresh = mergeLoaderReadHandleData({}, segmentOrder, both, "title", {
-      Meta: [{ title: "New" }],
-    });
+    const fresh = mergeLoaderReadHandleData(
+      {},
+      segmentOrder,
+      both,
+      "title",
+      own({ Meta: [{ title: "New" }] }),
+    );
     expect(fresh!.Meta).toEqual({ L0: [{ title: "New" }] });
   });
 
@@ -158,7 +172,7 @@ describe("mergeLoaderReadHandleData", () => {
       ["R0", slot],
       ["R0", `${slot}D0.title`, slot],
       "title",
-      { Meta: [{ title: "New" }] },
+      own({ Meta: [{ title: "New" }] }),
     );
     expect(out!.Meta).toEqual({
       R0: [{ title: "Page" }],
@@ -168,9 +182,13 @@ describe("mergeLoaderReadHandleData", () => {
 
   it("is undefined for a loader no segment registers", () => {
     expect(
-      mergeLoaderReadHandleData(page(), segmentOrder, matched, "unregistered", {
-        Meta: [{ title: "New" }],
-      }),
+      mergeLoaderReadHandleData(
+        page(),
+        segmentOrder,
+        matched,
+        "unregistered",
+        own({ Meta: [{ title: "New" }] }),
+      ),
     ).toBeUndefined();
   });
 
@@ -184,17 +202,86 @@ describe("mergeLoaderReadHandleData", () => {
       ["R0"],
       ids,
       "src/a.ts#Title",
-      { Meta: [{ title: "New" }] },
+      own({ Meta: [{ title: "New" }] }),
     );
     expect(out!.Meta).toEqual({ R0: [{ title: "New" }] });
+  });
+
+  describe("a loader the read's body reads with ctx.use", () => {
+    // The route registers Members and Detail; Detail awaits ctx.use(Members),
+    // and each pushes a crumb. The render ran Members once, as its own run.
+    const deps = ["L0", "R0D0.members", "R0D1.detail", "R0"];
+    const rendered = (): HandleData => ({
+      Crumbs: { L0: ["Home"], R0: ["Members", "Detail 1"] },
+      [pushedByKey("Crumbs")]: { R0: ["members", "detail"] },
+    });
+
+    it("leaves its run's values to it when the page registers it", () => {
+      const out = mergeLoaderReadHandleData(
+        rendered(),
+        segmentOrder,
+        deps,
+        "detail",
+        {
+          values: { Crumbs: ["Members", "Detail 2"] },
+          pushedBy: { Crumbs: ["members", null] },
+        },
+      );
+      expect(out).toEqual({
+        Crumbs: { L0: ["Home"], R0: ["Members", "Detail 2"] },
+        [pushedByKey("Crumbs")]: { R0: ["members", "detail"] },
+      });
+    });
+
+    it("keeps the page's run of it when the read's values differ", () => {
+      const out = mergeLoaderReadHandleData(
+        rendered(),
+        segmentOrder,
+        deps,
+        "detail",
+        {
+          values: { Crumbs: ["Members (3)", "Detail 2"] },
+          pushedBy: { Crumbs: ["members", null] },
+        },
+      );
+      // The page still shows the members its own run loaded.
+      expect(out!.Crumbs).toEqual({
+        L0: ["Home"],
+        R0: ["Members", "Detail 2"],
+      });
+    });
+
+    it("counts its values as the read loader's when the page does not register it", () => {
+      const out = mergeLoaderReadHandleData(
+        {
+          Crumbs: { L0: ["Home"], R0: ["Members", "Detail 1"] },
+          [pushedByKey("Crumbs")]: { R0: ["detail", "detail"] },
+        },
+        segmentOrder,
+        ["L0", "R0D0.detail", "R0"],
+        "detail",
+        {
+          values: { Crumbs: ["Members", "Detail 2"] },
+          pushedBy: { Crumbs: ["members", null] },
+        },
+      );
+      expect(out).toEqual({
+        Crumbs: { L0: ["Home"], R0: ["Members", "Detail 2"] },
+        [pushedByKey("Crumbs")]: { R0: ["detail", "detail"] },
+      });
+    });
   });
 
   it("leaves the page's data as it was", () => {
     const current = page();
     const before = JSON.stringify(current);
-    mergeLoaderReadHandleData(current, segmentOrder, matched, "title", {
-      Meta: [{ title: "New" }],
-    });
+    mergeLoaderReadHandleData(
+      current,
+      segmentOrder,
+      matched,
+      "title",
+      own({ Meta: [{ title: "New" }] }),
+    );
     expect(JSON.stringify(current)).toBe(before);
   });
 });

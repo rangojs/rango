@@ -20,14 +20,16 @@ place of the loader's earlier values in the segment that registers it, so
 `useHandle()` readers and `<Html.Meta />` (the document's `<title>`) show the
 new values. A pushed promise applies once it settles, and never holds the data.
 The values apply only while the page the read was sent from is still on
-screen, and a newer read of the loader wins. A loader that no segment on the
-page registers with `loader()` (`useFetchLoader()` of an unregistered loader)
-has no segment to own its values: they are not applied, and development warns
-once. Nothing changes in your code.
+screen, and a newer read of the loader wins. A value pushed by a loader the
+body awaits that the page also registers stays that loader's: the page keeps
+its own run's value instead of adding the read's copy. A loader that no
+segment on the page registers with `loader()` (`useFetchLoader()` of an
+unregistered loader) has no segment to own its values: they are not applied,
+and development warns once. Nothing changes in your code.
 
 Testing: `serveShellRequest(router, "/page?_rsc_loader=<id>", { headers: {
 accept: "text/x-component" } })` now has `readLoader()`, the read's answer as
-the browser reads it: `{ result, error, handles }`.
+the browser reads it: `{ result, error, handles, pushedBy }`.
 
 ## 0.36.0 (2026-11-17)
 

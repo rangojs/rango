@@ -1873,15 +1873,21 @@ value within a group is therefore opt-in via a common `key`.
 refresh) runs the body with the request context's segment pinned to the
 loader's id (`rsc/loader-fetch.ts`), so `ctx.use(Handle)` pushes, the body's
 and those of the loaders it reads, land in one bucket, and the reply carries
-it as `handles` beside `loaderResult`. The browser applies it after the data
-(`browser/fetched-loader-handles.ts`), once its pushed promises settle, only
-while the page the read was sent from is on screen (same history key and nav
-instance) and no newer read of the loader was sent. The values go to the
-first segment that holds the loader's earlier values, else the first that
-registers it, and replace the loader's values in every segment that registers
-it (`mergeLoaderReadHandleData`, `handles/pushed-by.ts`, the partial merge
-with the loader as the run that ran). A loader no segment registers has
-nowhere to file them: they are dropped, with a development warning.
+it as `handles` beside `loaderResult`, with `pushedBy`, the loader whose run
+pushed each value. The read's ctx runs a loader the body reads with
+`ctx.use()` inside that loader's body scope, as a render does
+(`loader-resolution.ts`), so `getHandlePushOwner` names it. The browser
+applies the values after the data (`browser/fetched-loader-handles.ts`), once
+its pushed promises settle, only while the page the read was sent from is on
+screen (same history key and nav instance) and no newer read of the loader was
+sent. The values go to the first segment that holds the loader's earlier
+values, else the first that registers it, and replace the loader's values in
+every segment that registers it (`mergeLoaderReadHandleData`,
+`handles/pushed-by.ts`, the partial merge with the loader as the run that
+ran). A value another loader the page registers pushed is left out: that
+loader's own run, which the read did not refresh, keeps its values. A loader
+no segment registers has nowhere to file them: they are dropped, with a
+development warning.
 
 ## Client Route-State Commits
 

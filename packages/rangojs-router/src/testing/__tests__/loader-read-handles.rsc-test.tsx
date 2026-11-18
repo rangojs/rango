@@ -96,6 +96,12 @@ const router = createRouter({}).routes(
           () => [loader(ChatTitle), loader(ChatDetail), loader(GuardedTitle)],
         ),
         path(
+          "/team",
+          () => <p>team</p>,
+          { name: "team" },
+          () => [loader(Members), loader(ChatDetail)],
+        ),
+        path(
           "/cached",
           () => <p>cached</p>,
           { name: "cached" },
@@ -137,6 +143,7 @@ describe("a fetchable loader read carries its handle pushes", () => {
           [Meta.$$id]: [{ title: "Chat 1" }],
           [Breadcrumbs.$$id]: [{ label: "Chat 1", href: "/chat" }],
         },
+        pushedBy: {},
       },
     });
     // Each read is its own run.
@@ -149,6 +156,7 @@ describe("a fetchable loader read carries its handle pushes", () => {
       result: { name: null },
       error: null,
       handles: {},
+      pushedBy: {},
     });
   });
 
@@ -166,7 +174,27 @@ describe("a fetchable loader read carries its handle pushes", () => {
           { label: "Detail", href: "/chat/detail" },
         ],
       },
+      // Members' crumb is its run's: a page that registers Members keeps
+      // its own run's crumb, and this read's copy is not added beside it.
+      pushedBy: { [Breadcrumbs.$$id]: [Members.$$id, null] },
     });
+  });
+
+  it("names a loader the page also registers as the pusher of its values", async () => {
+    // The page's render runs Members once, as its own run.
+    const page = await serveShellRequest(router, "/team");
+    const crumbs = (await page.readHandles())!.hydration[Breadcrumbs.$$id];
+    expect(Object.values(crumbs).flat()).toEqual([
+      { label: "Members", href: "/chat/members" },
+      { label: "Detail", href: "/chat/detail" },
+    ]);
+    // The read of Detail runs Members again, and says so.
+    const { answer } = await read(ChatDetail, "/team");
+    expect(answer!.handles[Breadcrumbs.$$id]).toEqual([
+      { label: "Members", href: "/chat/members" },
+      { label: "Detail", href: "/chat/detail" },
+    ]);
+    expect(answer!.pushedBy[Breadcrumbs.$$id]).toEqual([Members.$$id, null]);
   });
 
   it("pushes through a loader's own middleware", async () => {
@@ -176,6 +204,7 @@ describe("a fetchable loader read carries its handle pushes", () => {
         result: "ok",
         error: null,
         handles: { [Meta.$$id]: [{ title: "Guarded" }] },
+        pushedBy: {},
       },
     });
     expect(seen).toEqual(["middleware"]);
@@ -193,6 +222,7 @@ describe("a fetchable loader read carries its handle pushes", () => {
         result: { title: "Cached 1" },
         error: null,
         handles: { [Meta.$$id]: [{ title: "Cached 1" }] },
+        pushedBy: {},
       },
     });
     expect(cachedRuns).toBe(1);
