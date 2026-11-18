@@ -387,10 +387,24 @@ Equal is the rule pushed values are compared with:
 - down to 32 levels; a value nested deeper, or a cyclic one, counts as
   changed.
 
-The comparison walks the whole value on each update, so it costs what the
-value's size does. A value that holds a fresh promise or function on every
-delivery is a new reference every time; select the part your effect needs
-(`useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`) when that matters.
+The comparison walks the value on each update, so it costs what the value's
+size does; a sub-object shared at several places is compared once.
+
+**What a response always brings fresh.** A server-pushed value reaches the
+client through the RSC response, which decodes some values anew each time, and
+those never compare equal:
+
+- a client component element (`content: <OrderIcon />` on a crumb): its type
+  decodes as a new lazy reference on every response;
+- async server content (an async server component), decoded the same way;
+- a promise (`push(promise)` resolves it, but a promise nested in a value,
+  such as a crumb's `content`, stays one).
+
+A value holding one of these, anywhere inside, is a new reference on every
+re-delivery, as is a value holding a fresh function from a client push. Key
+the effect on a primitive the value carries instead, such as a crumb's `href`
+or `label`: `useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`. Plain text and
+host elements (`<b>`, `<span>`) holding only those decode equal.
 
 ### Meta and Breadcrumbs
 

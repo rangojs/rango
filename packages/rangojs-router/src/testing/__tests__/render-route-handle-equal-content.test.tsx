@@ -1,6 +1,13 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Suspense, useEffect, useState, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+import { installViewTransitionStub } from "@shared/e2e/view-transition-stub";
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { Outlet } from "../../client.js";
 import { createHandle, type Handle } from "../../handle.js";
@@ -22,9 +29,11 @@ import {
  * Userland: useHandle keeps its reference while the collected value's content
  * is equal, so an effect keyed on it runs once per change, not once per
  * delivery. Every re-delivery here (an action's revalidation, a refresh, a
- * late push, a navigation and a Back/Forward) brings fresh objects, as a
- * decoded Flight response does; a crumb's `content` is a fresh React element
- * each time.
+ * late push, a navigation and a Back/Forward) is seeded with fresh objects;
+ * a crumb's `content` is a fresh host element (`<b>`) each time. The seeds do
+ * not cross Flight, where a client component's type decodes as a fresh lazy
+ * reference and never compares equal: handle-equal-content-flight.rsc-test
+ * pins both sides through the real codec.
  *
  * Each reader logs what its effect saw, with the page's loader data at that
  * moment, so a real change is also pinned to the commit of its page.
@@ -124,10 +133,18 @@ function Item(): ReactNode {
   return <p data-testid="item">{useLoader(ItemLoader).data}</p>;
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+  reject: (e: unknown) => void;
+} {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -385,4 +402,263 @@ describe("renderRoute: a selector returning a URL or a date", () => {
     await router.action({ handles: [[Updated, [new Date(2)]]] });
     expect(text("stamp")).toBe("2");
   });
+});
+
+/** The page fails into this boundary, which shows as the page (`item`). */
+class Boundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+  render(): ReactNode {
+    return this.state.failed ? (
+      <p data-testid="item">failed</p>
+    ) : (
+      this.props.children
+    );
+  }
+}
+
+function BoundaryLayout(): ReactNode {
+  return (
+    <>
+      <FullBreadcrumbs />
+      <SelectedBreadcrumb />
+      <DefaultCollect />
+      <MetaReader />
+      <TrailWithPath />
+      <Boundary>
+        <Suspense fallback={<p data-testid="fallback">loading</p>}>
+          <Outlet />
+        </Suspense>
+      </Boundary>
+    </>
+  );
+}
+
+/**
+ * How a held navigation ends: its response stream ends first, a newer held
+ * navigation takes over, a newer one is aborted before its response, or the
+ * page fails. Each re-delivers content equal to the page on screen (no
+ * reader's effect runs) or changes it (each runs once, with the page that
+ * commits). A newer urgent navigation over a held one is left out: it commits
+ * the held one's values for one commit on its way, which is tracked apart.
+ */
+describe.each([
+  { variant: "with a view transition", vt: true },
+  { variant: "without a view transition", vt: false },
+])(
+  "renderRoute: useHandle on a held navigation's endings ($variant)",
+  ({ vt }) => {
+    let stub: ReturnType<typeof installViewTransitionStub> | undefined;
+    afterEach(() => {
+      if (vt) expect(stub!.started()).toBeGreaterThan(0);
+      stub?.uninstall();
+      stub = undefined;
+    });
+    const mount = async () => {
+      if (vt) stub = installViewTransitionStub();
+      const result = await renderRoute(
+        [
+          { path: "/items", Component: BoundaryLayout },
+          { path: "/items", Component: Item, transition: {} },
+        ],
+        {
+          request: "/items?id=1",
+          loaders: [[ItemLoader, "one"]],
+          handles: seeds("Item"),
+        },
+      );
+      fired = [];
+      return result;
+    };
+    const settle = async (page: { promise: Promise<string> }) => {
+      await act(async () => {
+        await page.promise.catch(() => {});
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    };
+
+    it.each([
+      { content: "equal", label: "Item", expected: [] as string[] },
+      { content: "changed", label: "Other", expected: all("two") },
+    ])(
+      "the response stream ends before the page commits ($content content)",
+      async ({ label, expected }) => {
+        const { router } = await mount();
+        const page = deferred<string>();
+        const tail = deferred<void>();
+        await router.navigate("/items?id=2", {
+          loaders: [[ItemLoader, page.promise]],
+          handles: seeds(label),
+          streamUntil: tail.promise,
+        });
+        await act(async () => tail.resolve());
+        expect(text("item")).toBe("one");
+        expect(fired).toEqual([]);
+        page.resolve("two");
+        await settle(page);
+        await waitFor(() => expect(text("item")).toBe("two"));
+        expect(fired).toEqual(expected);
+      },
+    );
+
+    it.each([
+      { content: "equal", label: "Item", expected: [] as string[] },
+      { content: "changed", label: "Renamed", expected: all("three") },
+    ])(
+      "a newer held navigation takes over a held one ($content content to the page on screen)",
+      async ({ label, expected }) => {
+        const { router } = await mount();
+        const two = deferred<string>();
+        await router.navigate("/items?id=2", {
+          loaders: [[ItemLoader, two.promise]],
+          handles: seeds("Other"),
+        });
+        const three = deferred<string>();
+        await router.navigate("/items?id=3", {
+          loaders: [[ItemLoader, three.promise]],
+          handles: seeds(label),
+        });
+        expect(text("item")).toBe("one");
+        three.resolve("three");
+        await settle(three);
+        await waitFor(() => expect(text("item")).toBe("three"));
+        // The abandoned page's late response is ignored.
+        two.resolve("two");
+        await settle(two);
+        expect(text("item")).toBe("three");
+        expect(fired).toEqual(expected);
+      },
+    );
+
+    it("a navigation a newer one aborts before its response: its values never reach a reader, and equal content after it runs no reader's effect", async () => {
+      const { router } = await mount();
+      // Its response would arrive a task later; the newer navigation aborts it
+      // first, so it commits nothing.
+      const aborted = router.navigate("/items?id=2", {
+        loaders: [[ItemLoader, "two"]],
+        handles: seeds("Other"),
+        streamUntil: new Promise(() => {}),
+      });
+      await router.navigate("/items?id=3", {
+        loaders: [[ItemLoader, "three"]],
+        handles: seeds("Item"),
+      });
+      await aborted;
+      await waitFor(() => expect(text("item")).toBe("three"));
+      expect(fired).toEqual([]);
+    });
+
+    it.each([
+      { content: "equal", label: "Item", expected: [] as string[] },
+      { content: "changed", label: "Other", expected: all("failed") },
+    ])(
+      "a held page that fails into an error boundary ($content content)",
+      async ({ label, expected }) => {
+        const { router } = await mount();
+        const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+          const two = deferred<string>();
+          two.promise.catch(() => {});
+          await router.navigate("/items?id=2", {
+            loaders: [[ItemLoader, two.promise]],
+            handles: seeds(label),
+          });
+          expect(fired).toEqual([]);
+          await act(async () => two.reject(new Error("down")));
+          await settle(two);
+          await waitFor(() => expect(text("item")).toBe("failed"));
+          expect(fired).toEqual(expected);
+        } finally {
+          spy.mockRestore();
+        }
+      },
+    );
+  },
+);
+
+describe("renderRoute: useHandle across a stale prefetch's revalidation", () => {
+  // A click on a prefetch an action made stale commits it at once, then
+  // revalidates in the lane a Back to a stale history entry uses
+  // (revalidateInBackground). renderRoute models the lane from the click; a
+  // Back onto a stale entry and its own revalidation are not modeled.
+  it.each([
+    { variant: "a held page (transition())", transition: {} },
+    { variant: "a page that commits at once", transition: undefined },
+  ])(
+    "$variant: each reader's effect runs once, with the click's page, and not again on the revalidation",
+    async ({ transition }) => {
+      const { router } = await renderRoute(
+        [
+          { path: "/items", Component: Layout },
+          { path: "/items", Component: Item, transition },
+        ],
+        {
+          request: "/items?id=1",
+          loaders: [[ItemLoader, "one"]],
+          handles: seeds("Item"),
+        },
+      );
+      router.prefetch("/items?id=2", { loaders: [[ItemLoader, "two"]] });
+      await router.action({ loaders: [[ItemLoader, "fresh"]] });
+      fired = [];
+      await router.navigate("/items?id=2", { handles: seeds("Other") });
+      await waitFor(() => expect(router.revalidations()).toHaveLength(1));
+      await waitFor(() => expect(text("item")).toBe("fresh"));
+      expect(fired).toEqual(all("two"));
+    },
+  );
+});
+
+describe("renderRoute: a useSegments() full-state reader beside useHandle readers", () => {
+  function Segments(): null {
+    useLogged("segments", useSegments());
+    return null;
+  }
+  function SegmentsLayout(): ReactNode {
+    return (
+      <>
+        <Segments />
+        <FullBreadcrumbs />
+        <Suspense fallback={<p data-testid="fallback">loading</p>}>
+          <Outlet />
+        </Suspense>
+      </>
+    );
+  }
+  it.each([
+    { variant: "a held page (transition())", transition: {} },
+    { variant: "a page that commits at once", transition: undefined },
+  ])(
+    "$variant: equal re-deliveries run neither effect; a navigation runs each once, with its page",
+    async ({ transition }) => {
+      const { router } = await renderRoute(
+        [
+          { path: "/items", Component: SegmentsLayout },
+          { path: "/items", Component: Item, transition },
+        ],
+        {
+          request: "/items?id=1",
+          loaders: [[ItemLoader, "one"]],
+          handles: seeds("Item"),
+        },
+      );
+      fired = [];
+      await router.action({
+        loaders: [[ItemLoader, "two"]],
+        handles: seeds("Item"),
+      });
+      await router.pushLateHandles(seeds("Item"));
+      expect(text("item")).toBe("two");
+      expect(fired).toEqual([]);
+      await router.navigate("/items?id=3", {
+        loaders: [[ItemLoader, "three"]],
+        handles: seeds("Other"),
+        state: [],
+      });
+      await waitFor(() => expect(text("item")).toBe("three"));
+      expect(fired).toEqual(["segments:three", "breadcrumbs:three"]);
+    },
+  );
 });

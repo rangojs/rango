@@ -61,6 +61,64 @@ describe("samePushValue", () => {
     b.self = b;
     expect(samePushValue(a, b)).toBe(false);
   });
+
+  /** A binary DAG `levels` deep: each node's two keys hold the same child. */
+  type Node = Record<string, unknown>;
+  function dag(
+    levels: number,
+    leaf: unknown,
+    wrap: (node: Node) => Node = (node) => node,
+  ): Node {
+    let node = wrap({ leaf });
+    for (let i = 0; i < levels; i++) node = wrap({ l: node, r: node });
+    return node;
+  }
+
+  it("reads each shared sub-object once, not once per path to it", () => {
+    let reads = 0;
+    const counted = (node: Node): Node =>
+      new Proxy(node, {
+        get(target, key, receiver) {
+          reads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    // 2^18 paths reach the leaf; a walk per path reads millions of keys.
+    expect(samePushValue(dag(18, 1, counted), dag(18, 1, counted))).toBe(true);
+    expect(reads).toBeLessThan(500);
+  });
+
+  it("an equal DAG at the depth bound compares at once", () => {
+    const started = performance.now();
+    expect(samePushValue(dag(31, 1), dag(31, 1))).toBe(true);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it("a change under a shared sub-object is a change", () => {
+    expect(samePushValue(dag(24, 1), dag(24, 2))).toBe(false);
+    // `a` shares one node where `b` has three, the last one different; the
+    // padding walks past the pairs compared before any is remembered.
+    const pad = () => Array.from({ length: 70 }, () => ({}));
+    const shared = { v: 1 };
+    expect(
+      samePushValue(
+        { pad: pad(), x: shared, y: shared, z: [shared] },
+        { pad: pad(), x: { v: 1 }, y: { v: 1 }, z: [{ v: 2 }] },
+      ),
+    ).toBe(false);
+  });
+
+  it("a long equal trail, past the pairs it walks unremembered, is equal", () => {
+    const trail = () =>
+      Array.from({ length: 200 }, (_, i) => ({
+        label: `c${i}`,
+        content: createElement("b", null, `c${i}`),
+      }));
+    expect(samePushValue(trail(), trail())).toBe(true);
+    const changed = trail();
+    changed[150] = { label: "c150", content: createElement("b", null, "x") };
+    expect(samePushValue(trail(), changed)).toBe(false);
+  });
 });
 
 describe("withClientPushes", () => {

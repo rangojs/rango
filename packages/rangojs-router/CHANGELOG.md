@@ -67,11 +67,15 @@ returning a date kept the old value.
 the reader does not render. Equal is the rule `usePushHandle` values are
 compared with: arrays and plain objects by their entries, React elements by
 type, key and props, dates by time, anything else (a promise, a `URL`, a
-function, a `Map`) by identity, down to 32 levels. A real change still
-brings a new reference in the commit its page's values land in. The same
-rule applies to a `useSegments()` selector's result. Selecting an item is
-now optional; it still helps when the value holds a fresh promise or
-function on every delivery, which counts as a change.
+function, a `Map`) by identity, down to 32 levels, each shared sub-object
+compared once. A real change still brings a new reference in the commit its
+page's values land in. The same rule applies to a `useSegments()`
+selector's result. Selecting an item is now optional for plain data and host
+elements. It is still needed when the value holds what a response decodes
+fresh each time: a client component element (a crumb's
+`content: <OrderIcon />`), async server content, or a promise. Those count
+as a change on every re-delivery, so key the effect on a primitive, such as
+`useHandle(Breadcrumbs, (c) => c.at(-1)?.href)`.
 
 Testing: `renderRoute`'s `router.refresh()` takes `handles`, the values the
 response carries.

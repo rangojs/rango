@@ -2092,6 +2092,15 @@ Here is how each hook gets there:
   It only decides whether a value moved, never when: a changed value takes
   the path above. One level of own keys used to rebuild every array of
   objects on each delivery, and made any two URLs or dates equal.
+  Limitation: a value holding what Flight decodes fresh on each response
+  is never equal to its re-delivery. A client component element's type
+  decodes as a new `react.lazy` reference, async server content decodes as
+  a new lazy value, and a nested promise is a new promise, so a crumb with
+  `content: <OrderIcon />` gives the trail a new reference every time. The
+  router does not read lazy payloads to make them equal; the skills tell
+  the reader to key on a primitive (a crumb's `href`) instead. The walk
+  remembers pairs found equal once it has visited 64 object pairs, so a
+  sub-object Flight keeps shared costs once, not once per path to it.
 - A client handle push (`usePushHandle`) commits with the render that made
   it, and that rule beats the anchor's wait. The pusher publishes its
   render's values from its layout effect into the controller's client layer
