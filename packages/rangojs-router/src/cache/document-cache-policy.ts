@@ -113,9 +113,9 @@ export function shouldCacheResponse(
   // prefetch: false. The payload carries deferred units: it answers one
   // page's prefetch and nothing else. parseCacheControl refuses the
   // Cache-Control it is sent with (rsc-rendering.ts NOT_REUSED, or the
-  // route's own no-store), but a
-  // middleware can replace that after next(), and a navigation answered
-  // with this body would show a fallback no fill ever replaces.
+  // route's own no-store), but a middleware can replace that after next(),
+  // and a navigation answered with this body would show a fallback no fill
+  // ever replaces.
   if (requestCtx?._payloadDeferred) {
     return null;
   }

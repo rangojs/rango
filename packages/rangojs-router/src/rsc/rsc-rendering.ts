@@ -1651,8 +1651,9 @@ function publishTailTiming(
 const PENDING = Symbol("pending");
 
 /**
- * Cache-Control of a response that is not to be reused: one that carries
- * deferred units (`prefetch: false`), and a fill. `private` keeps it out of
+ * Cache-Control of a response that is not to be reused: a partial scoped to
+ * its source page, one that carries deferred units (`prefetch: false`), a
+ * fill, and a stale partial render. `private` keeps it out of
  * shared caches; `no-cache` makes the browser ask again, and with no
  * validator on the response that is a full request. The browser may keep the
  * body all the same (Chromium does) and answers from it, without asking,
