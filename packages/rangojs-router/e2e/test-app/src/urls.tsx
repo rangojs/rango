@@ -192,6 +192,7 @@ import {
   keptLayoutSourceTwoShapePatterns,
 } from "./urls/kept-layout-source.js";
 import { docCacheSourcePatterns } from "./urls/doc-cache-source.js";
+import { notReusedNoStorePatterns } from "./urls/not-reused-no-store.js";
 import { prefetchStoredPatterns } from "./urls/prefetch-stored.js";
 import { CompeteServerPage } from "./urls/client-urls-compete.server.js";
 import { settledLaneErrorsPatterns } from "./urls/settled-lane-errors.js";
@@ -1143,6 +1144,9 @@ export const urlpatterns = urls(
       // A kept hero above a PLP the document cache stores: its partial is
       // the source page's only (e2e/doc-cache-source.test.ts).
       include("/doc-cache-source", docCacheSourcePatterns),
+      // A route's no-store kept on the partials nothing may reuse
+      // (e2e/not-reused-no-store.test.ts).
+      include("/not-reused-no-store", notReusedNoStorePatterns),
       // Prefetch answers served from storage: cache() records, a Prerender
       // entry, the document cache (e2e/prefetch-stored.test.ts).
       include("/prefetch-stored", prefetchStoredPatterns, {

@@ -112,7 +112,8 @@ export function shouldCacheResponse(
 
   // prefetch: false. The payload carries deferred units: it answers one
   // page's prefetch and nothing else. parseCacheControl refuses the
-  // Cache-Control it is sent with (rsc-rendering.ts NOT_REUSED), but a
+  // Cache-Control it is sent with (rsc-rendering.ts NOT_REUSED, or the
+  // route's own no-store), but a
   // middleware can replace that after next(), and a navigation answered
   // with this body would show a fallback no fill ever replaces.
   if (requestCtx?._payloadDeferred) {
@@ -121,8 +122,8 @@ export function shouldCacheResponse(
 
   // A partial scoped to its source page: this cache keys it by
   // URL and the ids the client holds, so it would answer another page with
-  // the same ids. rsc-rendering.ts sends it NOT_REUSED; a middleware can
-  // replace that after next().
+  // the same ids. rsc-rendering.ts sends it NOT_REUSED (or keeps the route's
+  // no-store); a middleware can replace that after next().
   if (requestCtx?._payloadSourceScoped) {
     return null;
   }
