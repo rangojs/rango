@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.37.0 (2026-11-19)
 
-### Added: client components push handle values with `usePushHandle()`
+### Added: client components push handle values with `usePushHandle()` ([#1447](https://github.com/rangojs/rango/pull/1447))
 
 **Before.** Only the server wrote handles: a handler or a loader body with
 `ctx.use(Handle)`. A value a client component learned or changed after the
@@ -51,7 +51,7 @@ Testing: `renderRoute`'s `handles` take a segment
 gains `handleData(handle)`, `segmentId(segment?)`, `pushLateHandles()`,
 `action({ handles })` and `respondToLoads({ loaders, handles })`.
 
-### Changed: `useHandle()` keeps its reference while the content is equal
+### Changed: `useHandle()` keeps its reference while the content is equal ([#1448](https://github.com/rangojs/rango/pull/1448))
 
 **Before.** `useHandle()` compared a new value with the last one a single
 level deep. A re-delivery decodes fresh objects (an action's revalidation, a
@@ -80,7 +80,7 @@ as a change on every re-delivery, so key the effect on a primitive, such as
 Testing: `renderRoute`'s `router.refresh()` takes `handles`, the values the
 response carries.
 
-### Fixed: a loader read's handle values, on late pushes, the hydration window and several routers
+### Fixed: a loader read's handle values, on late pushes, the hydration window and several routers ([#1449](https://github.com/rangojs/rango/pull/1449))
 
 **Before.** On a `load()` / `refetch()` or `useRefreshLoaders()` read:
 
@@ -103,7 +103,7 @@ response carries.
   data: the page keeps what it showed, as with a navigation superseded by one
   that fails.
 
-### Fixed: Back shows a refreshed page as you left it, its data and its title together
+### Fixed: Back shows a refreshed page as you left it, its data and its title together ([#1454](https://github.com/rangojs/rango/pull/1454))
 
 **Before.** After a `load()` / `refetch()` or a `useRefreshLoaders()`
 refresh, the page showed the new data and the new title. Leave it with a
@@ -156,7 +156,7 @@ does, so a test can pin what Back shows after a refresh.
 loader whose run pushed them and goes through production's late handle
 channel.
 
-### Fixed: a route's `Cache-Control: no-store` survives scoped prefetches, `prefetch: false` responses and stale partials
+### Fixed: a route's `Cache-Control: no-store` survives scoped prefetches, `prefetch: false` responses and stale partials ([#1451](https://github.com/rangojs/rango/pull/1451))
 
 **Before.** Four partial responses that must not be reused were sent
 `Cache-Control: private, no-cache` whatever the route set: a prefetch scoped
