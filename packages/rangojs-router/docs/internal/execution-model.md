@@ -1888,9 +1888,13 @@ its handle values) is decided once, by the rule that decides its data, and
 the entry is written from that same unit (`browser/fetched-loader-handles.ts`).
 A read lands exactly when its data lands: the loader store accepts the result
 into the reader's bucket (the bucket's newest request, not cleared by a
-route-data change: `LoaderStore.holdsRequest`), and the history entry the read
-was sent from still holds the loader data the read was requested for, by
-identity (`NavigationStore.beginPageRead`). When the loader store drops the
+route-data change: `LoaderStore.holdsRequest`), and an entry of the page the
+read was sent from still holds the loader data the read was requested for, by
+identity (`NavigationStore.beginPageRead`). The page's entries are the key
+the read was sent from, the twin keys of a shallow navigation, and any entry a
+later commit wrote in their place (an action on the twin key writes a new
+array there): the read lands on each that still holds that data, so the
+screen and both keys agree. When the loader store drops the
 data, nothing else is written anywhere. The bucket's newest-request gate is
 per router (each router's `NavigationStore` owns one `LoaderStore`), so two
 routers on one page never cross. Within one bucket, a newer read that fails
@@ -1902,12 +1906,16 @@ land with their data; the last to land writes the values and the entry.
 When a read lands, the entry keeps its data: every loader segment of the
 entry that registers the loader is swapped for a copy carrying the read's
 result, in place in the entry's segments array, so the twin keys of a shallow
-navigation share it and a `prefetch: false` fill still finds its entry. The
-store records the read by loader id on the page, and every later write of
+navigation share it and a `prefetch: false` fill still finds its entry. That
+is every segment, whatever data each held (a held layout copy beside a re-run
+route copy): the read captured each one's data when it was sent, as the
+loader store's bucket shows the result to every reader it was requested for.
+The store records the read by loader id on the page, and every later write of
 the page's segments (a commit onto the page, a shallow navigation's copy, a
 fill) carries it over: a loader segment that still holds the data the read
-replaced takes the read's data, and one the server sent anew ends the record
-(the loader re-ran). Back then renders the restored page with the read's data
+replaced, or an earlier read's result (a commit that reconciled from the entry
+before several reads landed), takes the newest read's data, and one the server
+sent anew ends the record (the loader re-ran). Back then renders the restored page with the read's data
 as its route data, so every reader shows it from its first frame. The values
 apply live once their pending pushes settle, while the entry still holds this
 read's data and is the page on screen, and the entry's copy is written from

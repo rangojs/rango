@@ -678,9 +678,10 @@ server projection.
   `mergeLoaderReadHandleData` in `handles/pushed-by.ts`,
   `EventController.setLoaderReadHandleData`); the values land exactly when
   the read's data lands (`LoaderStore.holdsRequest`, and
-  `NavigationStore.beginPageRead`: the history entry still holds the data
-  the read was requested for), and the entry keeps the read's data and
-  values together for Back (its loader segments swapped in place, the read
+  `NavigationStore.beginPageRead`: an entry of the page it was sent from
+  still holds the data the read was requested for), and the entry keeps the
+  read's data and values together for Back (its loader segments swapped in
+  place, the read
   record carried over by `cacheSegmentsForHistory` and
   `replaceEntrySegments`); a late document push merges around the loaders a
   read refreshed (`applyLateHandles`, `mergeLateHandleData`,

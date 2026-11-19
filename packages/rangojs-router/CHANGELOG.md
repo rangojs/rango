@@ -143,7 +143,9 @@ function Chat() {
 - A `load()` from a component outside the page's route tree keeps its data
   and changes no handle value, even for a loader the page registers;
   development warns once and points at refreshing the page's own data from
-  inside the route, or `useRouter().refresh()`.
+  inside the route, or `useRouter().refresh()`. One that shares a `key` with
+  a reader inside the route refreshes the page's data, so it is a page read:
+  the title changes with the data.
 
 Nothing changes in your code.
 

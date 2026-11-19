@@ -616,22 +616,28 @@ export type UpdateSubscriber = (update: NavigationUpdate) => void;
 export type StateListener = () => void;
 
 /**
- * A page read in flight (NavigationStore.beginPageRead): the history entry it
- * was sent from and the loader data that entry held for the loader then.
+ * A page read in flight (NavigationStore.beginPageRead): the page it was
+ * sent from and the loader data that page held for the loader then. The
+ * page's entries are those of the key it was sent from, those a shallow
+ * navigation shares its segments with, and those a later commit wrote in
+ * their place.
  */
 export interface PageRead {
-  /** The history key of the entry the read was sent from. */
-  readonly historyKey: string;
-  /** The entry still holds the loader data the read was requested for. */
+  /**
+   * The keys of the page's entries the read is for: those holding the data
+   * it was requested for, and once it landed, those holding its result.
+   */
+  historyKeys(): string[];
+  /** An entry of the page still holds the data the read was requested for. */
   current(): boolean;
   /**
-   * Write `result` into the entry: each of its loader segments for the
-   * loader becomes a copy carrying it, in place, and the page's read record
-   * names it. False, and nothing written, when the entry no longer holds
-   * the data the read was requested for.
+   * Write `result` into every entry of the page that holds the data the read
+   * was requested for: each of their loader segments for the loader becomes
+   * a copy carrying it, in place, and the page's read record names it.
+   * False, and nothing written, when none does.
    */
   land(result: unknown): boolean;
-  /** The read landed and the entry still holds its result. */
+  /** The read landed and an entry of the page still holds its result. */
   holds(): boolean;
 }
 
@@ -675,7 +681,8 @@ export interface NavigationStore {
   /**
    * Begin a page read of `loaderId` (`load()`, a group refresh) from the
    * entry on screen: it captures, by identity, the loader data that entry
-   * holds (browser/fetched-loader-handles.ts).
+   * holds in every loader segment of the loader
+   * (browser/fetched-loader-handles.ts).
    */
   beginPageRead(loaderId: string): PageRead;
   /**

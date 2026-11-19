@@ -15,9 +15,10 @@ import { expect, test, type Page } from "@playwright/test";
  * `LRH Chat <n>` and the crumb `Chat <n>`. A reader of the loader in a
  * refresh group shows its name (lrh-name), with a group refresh button
  * (lrh-refresh), a load() button (lrh-load) and a link to the same route
- * under `?id=2` (lrh-next). `${base}/late` is the same page with a second
- * loader that pushes the crumb `Late` `?lateDelay` ms into the request, on
- * the document's late handle channel.
+ * under `?id=2` (lrh-next). `${base}/late?lateHold=<probe>` is the same page
+ * with a second loader that pushes the crumb `Late` on the document's late
+ * handle channel once a request to `${base}/late?lateRelease=<probe>`
+ * released it.
  *
  * Back onto a refreshed page shows it as it was left, its data and the title
  * and crumb the refresh pushed together, and a late push from the document
@@ -120,17 +121,18 @@ export function runLoaderReadHandlesTests(
     page,
   }) => {
     using _ = expectNoPageError(page);
-    // Loads the fixture's modules once, so the timed load hydrates before
-    // its late push.
+    // Loads the fixture's modules once, so the held document hydrates
+    // quickly.
     await page.goto(url(`${base}/chat`));
     await waitForHydration(page);
 
-    // The late loader's crumb is pushed 4 s into the document's request and
+    // The late loader's crumb is held until the test releases it, then
     // reaches the browser on the late handle channel with the document's
     // own state of the chat loader.
     // The document's stream stays open until the late push, so the page
     // hydrates before DOMContentLoaded: wait for the marker itself.
-    await page.goto(url(`${base}/late?lateDelay=4000`), {
+    const probe = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await page.goto(url(`${base}/late?lateHold=${probe}`), {
       waitUntil: "commit",
     });
     await page.waitForFunction(
@@ -141,8 +143,14 @@ export function runLoaderReadHandlesTests(
     const first = await nameAfter(page, null);
     await testId(page, "lrh-load").click();
     const refreshed = await nameAfter(page, first);
+    // The read landed before the late push: its title and crumb alone.
     await expect(testId(page, "lrh-title")).toHaveText(`LRH ${refreshed}`);
+    await expect(testId(page, "lrh-crumb")).toHaveText(["Chats", refreshed]);
 
+    const released = await page.request.get(
+      url(`${base}/late?lateRelease=${probe}`),
+    );
+    expect(released.ok()).toBe(true);
     await expect(testId(page, "lrh-crumb")).toHaveText(
       ["Chats", refreshed, "Late"],
       { timeout: 15000 },

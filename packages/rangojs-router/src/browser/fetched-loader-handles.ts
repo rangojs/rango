@@ -107,15 +107,15 @@ function warnOutside(
 }
 
 /**
- * The entry of every key showing `historyKey`'s page gets `data` written by
- * `write` from its own copy (a shallow navigation's twin keys share the page).
+ * The entry of every key of a page (`keys`) gets `data` written by `write`
+ * from its own copy.
  */
 function writePageEntries(
   store: NavigationStore,
-  historyKey: string,
+  keys: readonly string[],
   write: (cached: HandleData, matched: string[]) => HandleData | undefined,
 ): void {
-  for (const key of store.getPageHistoryKeys(historyKey)) {
+  for (const key of keys) {
     const cached = store.getCachedSegments(key);
     if (!cached) continue;
     const next = write(
@@ -126,8 +126,8 @@ function writePageEntries(
   }
 }
 
-const onScreen = (store: NavigationStore, historyKey: string): boolean =>
-  store.getPageHistoryKeys(historyKey).includes(store.getHistoryKey());
+const onScreen = (store: NavigationStore, keys: readonly string[]): boolean =>
+  keys.includes(store.getHistoryKey());
 
 /**
  * Start a read of `loaderId`. Call it when the request is sent; the returned
@@ -139,9 +139,11 @@ const onScreen = (store: NavigationStore, historyKey: string): boolean =>
  * that unit, so Back shows the page as it was left. It lands exactly when its
  * data lands: the loader store holds its result in `bucket`
  * (LoaderStore.holdsRequest: no newer request or route-data change since)
- * and the entry it was sent from still holds the loader data it was requested
- * for (NavigationStore.beginPageRead). Then the entry takes the read's data
- * (its loader segments, in place), and its handle values, once their pending
+ * and an entry of the page it was sent from (its key, a shallow navigation's
+ * twin, a commit written in their place) still holds the loader data it was
+ * requested for (NavigationStore.beginPageRead). Then each such entry takes
+ * the read's data (every loader segment of the loader, in place), and its
+ * handle values, once their pending
  * pushes settle, replace the loader's earlier ones in its segment (a rejected
  * or nullish one dropped, as on the navigation lane), on their own after the
  * data: a handle value never holds the loader's data. They apply live while
@@ -182,12 +184,12 @@ export function startFetchedLoaderRead(
   ): Promise<void> => {
     const pushes = await resolveDeferredPushes(handles, pushedBy);
     if (dataWaits ? !read.current() : !read.holds()) return;
-    if (onScreen(store, read.historyKey)) {
+    if (onScreen(store, read.historyKeys())) {
       // The entry's copy is written when the values apply: after the
       // hydration window, from the data they were applied to.
       const applied = (data: HandleData): void => {
         if (dataWaits && !read.land(result)) return;
-        writePageEntries(store, read.historyKey, () => data);
+        writePageEntries(store, read.historyKeys(), () => data);
       };
       if (!eventController.setLoaderReadHandleData(loaderId, pushes, applied)) {
         if (dataWaits) read.land(result);
@@ -196,7 +198,7 @@ export function startFetchedLoaderRead(
       return;
     }
     if (dataWaits && !read.land(result)) return;
-    writePageEntries(store, read.historyKey, (cached, matched) =>
+    writePageEntries(store, read.historyKeys(), (cached, matched) =>
       mergeLoaderReadHandleData(
         cached,
         filterSegmentOrder(matched),
@@ -216,7 +218,7 @@ export function startFetchedLoaderRead(
     const dataWaits =
       handles !== undefined &&
       eventController.getHydrationSnapshot() !== undefined &&
-      onScreen(store, read.historyKey);
+      onScreen(store, read.historyKeys());
     if (!dataWaits && !read.land(result)) return;
     if (!handles) return;
     applyHandles(result, handles, pushedBy, dataWaits).catch((error) =>
@@ -243,13 +245,16 @@ export function applyLateHandles(
   historyKey: string,
 ): void {
   const { eventController, store } = page;
+  // The keys of the document's page (a shallow navigation's twin keys
+  // share its segments array).
+  const pageKeys = (): string[] => store.getPageHistoryKeys(historyKey);
   const readRefreshed = (): ReadonlySet<string> =>
     store.getPageReadLoaders(historyKey);
   const writeEntries = (): void =>
-    writePageEntries(store, historyKey, (cached) =>
+    writePageEntries(store, pageKeys(), (cached) =>
       mergeLateHandleData(cached, late, matched, readRefreshed()),
     );
-  if (!onScreen(store, historyKey)) {
+  if (!onScreen(store, pageKeys())) {
     writeEntries();
     return;
   }
@@ -259,6 +264,6 @@ export function applyLateHandles(
   // entry takes the push now too, through the same merge.
   if (eventController.getHydrationSnapshot()) writeEntries();
   eventController.setLateHandleData(late, matched, readRefreshed, (data) =>
-    writePageEntries(store, historyKey, () => data),
+    writePageEntries(store, pageKeys(), () => data),
   );
 }

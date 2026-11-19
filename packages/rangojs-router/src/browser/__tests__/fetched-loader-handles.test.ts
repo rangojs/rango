@@ -308,6 +308,57 @@ describe("startFetchedLoaderRead", () => {
     expect(entryMeta(page, "/chat?tab=2")?.R0).toEqual([{ title: "New" }]);
   });
 
+  it("a read lands across a shallow navigation and then an action on the new key, live and on both entries", async () => {
+    const page = mountPage();
+    const apply = sendRead(page, "title");
+    const segments = page.store.getCachedSegments("/chat")!.segments;
+    page.store.cacheSegmentsForHistory("/chat?tab=2", segments, rendered());
+    page.store.setHistoryKey("/chat?tab=2");
+    // An action on the new key writes a new array there, the loader's
+    // segment kept; /chat keeps the array the read was sent from.
+    page.store.cacheSegmentsForHistory(
+      "/chat?tab=2",
+      segments.map((s) => ({ ...s })),
+      rendered(),
+    );
+    const result = apply({ Meta: [{ title: "New" }] });
+    await settle();
+    expect(page.store.loaders.getSnapshot("title").value).toBe(result);
+    expect(liveMeta(page).R0).toEqual([{ title: "New" }]);
+    expect(entryData(page, "/chat?tab=2")).toEqual([result]);
+    expect(entryMeta(page, "/chat?tab=2")?.R0).toEqual([{ title: "New" }]);
+    expect(entryData(page, "/chat")).toEqual([result]);
+    expect(entryMeta(page, "/chat")?.R0).toEqual([{ title: "New" }]);
+  });
+
+  it("a read writes its data to every loader segment of the loader, each holding other data", async () => {
+    const page = mountPage();
+    // A layout's held copy of the loader beside the route's re-run copy:
+    // the bucket's readers on both show the read's result.
+    const held = { name: "held" };
+    page.store.cacheSegmentsForHistory(
+      "/chat",
+      [
+        segment("L0", "layout"),
+        segment("L0D0.title", "loader", {
+          loaderId: "title",
+          loaderData: held,
+        }),
+        segment("R0D0.title", "loader", {
+          loaderId: "title",
+          loaderData: routeData,
+        }),
+        segment("R0", "route"),
+      ],
+      rendered(),
+    );
+    const result = sendRead(page, "title")({ Meta: [{ title: "New" }] });
+    await settle();
+    expect(entryData(page, "/chat")).toEqual([result, result]);
+    expect(entryMeta(page)?.R0).toEqual([{ title: "New" }]);
+    expect(liveMeta(page).R0).toEqual([{ title: "New" }]);
+  });
+
   it("a read that replies after the page was left lands on its own entry only", async () => {
     const page = mountPage();
     const apply = sendRead(page, "title");
@@ -564,6 +615,29 @@ describe("the page's read record across entry writes", () => {
     });
     page.store.cacheSegmentsForHistory("/chat", reconciled, rendered());
     expect(entryData(page, "/chat")).toEqual([second]);
+  });
+
+  it("a commit that reconciled after one read and wrote after two more keeps the newest", async () => {
+    const page = mountPage();
+    sendRead(page, "title")(undefined, undefined, { name: "r1" });
+    // The commit reconciles from the entry (holding r1), then renders.
+    const reconciled = page.store
+      .getCachedSegments("/chat")!
+      .segments.map((s) => ({ ...s }));
+    sendRead(page, "title")(undefined, undefined, { name: "r2" });
+    const r3 = sendRead(page, "title")({ Meta: [{ title: "R3" }] }, undefined, {
+      name: "r3",
+    });
+    await settle();
+    // It writes once rendered, with the live handle state.
+    page.store.cacheSegmentsForHistory(
+      "/chat",
+      reconciled,
+      page.eventController.getHandleState().data,
+    );
+    expect(entryData(page, "/chat")).toEqual([r3]);
+    expect(entryMeta(page)?.R0).toEqual([{ title: "R3" }]);
+    expect(page.store.getPageReadLoaders("/chat")).toEqual(new Set(["title"]));
   });
 
   it("a fill's splice keeps a read that landed while the answer rendered", () => {
