@@ -396,7 +396,8 @@ The public DOM seam is
   `revalidate()` it skipped, or the route's own segments on a search-only
   change. A scoped partial is marked `_payloadSourceScoped`
   ([server/request-context.ts](../../src/server/request-context.ts)) and sent
-  `NOT_REUSED` by `rsc/rsc-rendering.ts`, and
+  `NOT_REUSED` by `rsc/rsc-rendering.ts` (a route's own `no-store` is kept,
+  `keepsRouteNoStore`), and
   [cache/document-cache-policy.ts](../../src/cache/document-cache-policy.ts)
   (`shouldCacheResponse`) never stores it: the document cache keys a partial
   without its source (pinned by
