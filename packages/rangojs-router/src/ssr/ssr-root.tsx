@@ -120,6 +120,7 @@ function createSsrEventController(opts: {
     setHandleData: () => {},
     getHandleState: () => handleState,
     setLoaderReadHandleData: () => false,
+    setLateHandleData: () => {},
     lockHydration: () => {},
     getHydrationSnapshot: () => undefined,
     releaseHydrationLock: () => {},

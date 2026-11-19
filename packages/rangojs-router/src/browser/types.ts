@@ -616,6 +616,32 @@ export type UpdateSubscriber = (update: NavigationUpdate) => void;
 export type StateListener = () => void;
 
 /**
+ * A page read in flight (NavigationStore.beginPageRead): the page it was
+ * sent from and the loader data that page held for the loader then. The
+ * page's entries are those of the key it was sent from, those a shallow
+ * navigation shares its segments with, and those a later commit wrote in
+ * their place.
+ */
+export interface PageRead {
+  /**
+   * The keys of the page's entries the read is for: those holding the data
+   * it was requested for, and once it landed, those holding its result.
+   */
+  historyKeys(): string[];
+  /** An entry of the page still holds the data the read was requested for. */
+  current(): boolean;
+  /**
+   * Write `result` into every entry of the page that holds the data the read
+   * was requested for: each of their loader segments for the loader becomes
+   * a copy carrying it, in place, and the page's read record names it.
+   * False, and nothing written, when none does.
+   */
+  land(result: unknown): boolean;
+  /** The read landed and an entry of the page still holds its result. */
+  holds(): boolean;
+}
+
+/**
  * Navigation store interface
  *
  * Owns segment state, history snapshots, and partial-update notifications.
@@ -653,12 +679,27 @@ export interface NavigationStore {
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
   /**
-   * Begin a fetched read of `loaderId` (`load()`, a group refresh) from the
-   * page on screen. The returned check is true while that page is still on
-   * screen (same history entry, no commit since) and no newer read of the
-   * loader began on this router (browser/fetched-loader-handles.ts).
+   * Begin a page read of `loaderId` (`load()`, a group refresh) from the
+   * entry on screen: it captures, by identity, the loader data that entry
+   * holds in every loader segment of the loader
+   * (browser/fetched-loader-handles.ts).
    */
-  beginLoaderRead(loaderId: string): () => boolean;
+  beginPageRead(loaderId: string): PageRead;
+  /**
+   * The loaders whose data a landed page read replaced on the page of
+   * `historyKey`'s entry, since the server last sent them: the run of each
+   * is newer on the page than the document's (a late handle push keeps it).
+   */
+  getPageReadLoaders(historyKey: string): ReadonlySet<string>;
+  /**
+   * Rewrite an entry's segments array in place (a `prefetch: false` fill):
+   * the array keeps its identity, and the page's read record is carried over
+   * as cacheSegmentsForHistory carries it.
+   */
+  replaceEntrySegments(
+    segments: ResolvedSegment[],
+    next: readonly ResolvedSegment[],
+  ): void;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],

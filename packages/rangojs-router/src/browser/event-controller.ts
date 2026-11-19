@@ -25,6 +25,7 @@ import {
   type ClientPushOwner,
 } from "../handles/client-pushes.js";
 import {
+  mergeLateHandleData,
   mergeLoaderReadHandleData,
   mergePartialHandleData,
   type LoaderReadPushes,
@@ -342,6 +343,21 @@ export interface EventController {
     pushes: LoaderReadPushes,
     applied?: (data: HandleData) => void,
   ): boolean;
+  /**
+   * Apply a late handle yield of the document (`metadata.handlesLate`, the
+   * document render's full state so far) to the page: swapped in whole but
+   * for the runs of the loaders `readRefreshed()` names, read when the write
+   * applies (handles/pushed-by.ts mergeLateHandleData). Waits like
+   * setHandleData while the hydration window is open. `applied` gets the
+   * handle data once the yield is in it (the history entry's copy is written
+   * from it).
+   */
+  setLateHandleData(
+    data: HandleData,
+    matched: string[],
+    readRefreshed: () => ReadonlySet<string>,
+    applied?: (data: HandleData) => void,
+  ): void;
   /**
    * Open the hydration window. Until releaseHydrationLock(), getHandleState()
    * returns the state the document's HTML was rendered with, and handle writes
@@ -1360,6 +1376,28 @@ export function createEventController(
     return true;
   }
 
+  function setLateHandleData(
+    data: HandleData,
+    matched: string[],
+    readRefreshed: () => ReadonlySet<string>,
+    applied?: (data: HandleData) => void,
+  ): void {
+    if (hydrationSnapshot) {
+      writesAfterHydration.push(() =>
+        setLateHandleData(data, matched, readRefreshed, applied),
+      );
+      return;
+    }
+    const merged = mergeLateHandleData(
+      handleData,
+      data,
+      matched,
+      readRefreshed(),
+    );
+    setHandleData(merged, matched);
+    applied?.(merged);
+  }
+
   function getHandleState(): HandleState {
     if (hydrationSnapshot) return hydrationSnapshot.handles;
     return {
@@ -1627,6 +1665,7 @@ export function createEventController(
     setHandleData,
     getHandleState,
     setLoaderReadHandleData,
+    setLateHandleData,
     lockHydration,
     getHydrationSnapshot: () => hydrationSnapshot,
     releaseHydrationLock,

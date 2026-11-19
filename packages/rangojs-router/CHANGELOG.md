@@ -98,11 +98,63 @@ response carries.
   late. Push a promise, or reserve the slot with `.defer()`, before returning.
 - The history entry keeps the values the read applied, written when they
   apply, so Back shows them.
-- Each router tracks its own newest read per loader. Within one loader
-  bucket, a newer read that fails still leaves an older one's values
-  unapplied, as it leaves its data: the page keeps what it showed, as with a
-  navigation superseded by one that fails. A newer read of the same loader
-  under another `key` also supersedes the older read's values, not its data.
+- Each router decides its own reads. Within one loader bucket, a newer read
+  that fails still leaves an older one's values unapplied, as it leaves its
+  data: the page keeps what it showed, as with a navigation superseded by one
+  that fails.
+
+### Fixed: Back shows a refreshed page as you left it, its data and its title together
+
+**Before.** After a `load()` / `refetch()` or a `useRefreshLoaders()`
+refresh, the page showed the new data and the new title. Leave it with a
+link to the same route (another item) and come Back, and it showed the old
+data under the new title, a screen you never saw: the history entry kept the
+read's title but not its data. A push from the document's own render that
+arrived after the refresh (a streamed loader's late title or crumb) replaced
+the refresh's title with the document's older one. A read that replied after
+you left the page, or across an action that kept the loader, dropped its
+title while its data landed. A `load()` from a component outside the page's
+route tree (a `useFetchLoader` in a root-level header) retitled the page
+although its data stayed in that component.
+
+**Now.** A refresh changes the page as one unit: its data and the handle
+values it pushed land together, exactly when the loader store takes the data
+for the page it was requested for, and the history entry keeps both.
+
+```tsx
+"use client";
+function Chat() {
+  const { data, load } = useLoader(ChatLoader); // pushes Meta { title }
+  return <button onClick={() => load()}>{data.name}</button>;
+}
+// Rename, refresh, open another chat, Back: the renamed chat under its new
+// title.
+```
+
+- Back onto the page shows the refreshed data with the title and crumbs the
+  refresh pushed, whichever reader shows it (`useLoader`, a `key` or
+  `refreshGroup` reader, `useHandle` with a selector).
+- A late push from the document keeps the values of every loader a refresh
+  replaced since; its other values apply as before.
+- A refresh that replies after you left lands on its own page's history
+  entry only, and one that replies across an action that did not re-run the
+  loader lands with its title. An action or a navigation that re-runs the
+  loader replaces both, as before.
+- A `load()` from a component outside the page's route tree keeps its data
+  and changes no handle value, even for a loader the page registers;
+  development warns once and points at refreshing the page's own data from
+  inside the route, or `useRouter().refresh()`. One that shares a `key` with
+  a reader inside the route refreshes the page's data, so it is a page read:
+  the title changes with the data.
+
+Nothing changes in your code.
+
+Testing: `renderRoute`'s Back restores the page from the router's history
+cache, and its `action()` and `refresh()` re-cache the entry, as production
+does, so a test can pin what Back shows after a refresh.
+`router.pushLateHandles(handles, { pushedBy })` tags the values with the
+loader whose run pushed them and goes through production's late handle
+channel.
 
 ### Fixed: a route's `Cache-Control: no-store` survives scoped prefetches, `prefetch: false` responses and stale partials
 

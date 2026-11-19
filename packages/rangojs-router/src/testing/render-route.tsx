@@ -97,8 +97,11 @@ import { renderSegments } from "../segment-system.js";
 import {
   createNavigationStore,
   generateHistoryKey,
+  liveHandleDataForCache,
 } from "../browser/navigation-store.js";
 import { createEventController } from "../browser/event-controller.js";
+import { applyLateHandles } from "../browser/fetched-loader-handles.js";
+import { pushedByKey } from "../handles/pushed-by.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
 import {
   commitInTransition,
@@ -625,14 +628,24 @@ export interface TestRouterHandle {
    * A server push that arrives after the page committed (a settled
    * `push(promise)` or `.defer()`, a streamed loader's push, a `ppr`
    * live-lane push): each `[handle, values, segment?]` replaces that handle's
-   * server values in that segment, through the controller's late handle write
-   * (setHandleData), as production's late handle channel applies one. The
-   * other segments' server values stay.
+   * server values in that segment, through production's late handle channel
+   * (`applyLateHandles`: the controller's late write, then the page's history
+   * entry). The other segments' server values stay. `pushedBy`: the loader
+   * whose run pushed the values (a streamed loader body's push, tagged as the
+   * server tags it), so a seed replaces only that run's values in the
+   * segment; omitted, the segment's handler pushed them. A loader whose data
+   * a `load()` refreshed since keeps the page's values: the read is newer.
    *
    * @example
    * await router.pushLateHandles([[Meta, [{ title: "Late" }], 0]]);
+   * await router.pushLateHandles([[Meta, [{ title: "Item" }]]], {
+   *   pushedBy: ItemLoader,
+   * });
    */
-  pushLateHandles(handles: ReadonlyArray<HandleSeed>): Promise<void>;
+  pushLateHandles(
+    handles: ReadonlyArray<HandleSeed>,
+    options?: { pushedBy?: LoaderDefinition<any> },
+  ): Promise<void>;
   /**
    * What `useHandle(handle)` collects over, per segment id: the server's
    * values followed by the client's pushes (`usePushHandle`), as readers
@@ -1148,6 +1161,8 @@ export async function renderRoute(
   const resolvedSeed = await resolveDeferredHandleValues(handleSeed);
   const initialSegmentIds = initialSegments.map((s) => s.id);
   eventController.setHandleData(resolvedSeed, initialSegmentIds);
+  // As initBrowserApp: the document's entry keeps its handle data.
+  store.updateCacheHandleData(historyKey, resolvedSeed);
   // As initBrowserApp before hydrateRoot: until the provider's barrier commit,
   // handle reads return this state and later writes wait.
   if (options.hydrate) eventController.lockHydration();
@@ -1159,7 +1174,7 @@ export async function renderRoute(
     : undefined;
   // A late update carries the full state: the seed with these handles' values
   // replaced, resolved as the browser resolves a late yield before applying.
-  let applyLateHandles: (() => void) | undefined;
+  let applyDocumentLate: (() => void) | undefined;
   if (options.lateHandles) {
     const lateState = await resolveDeferredHandleValues(
       seedHandles(
@@ -1170,8 +1185,14 @@ export async function renderRoute(
     );
     // Flushed, not left to the notify timer: renderRoute's act() has
     // returned by then.
-    applyLateHandles = () => {
-      eventController.setHandleData(lateState, initialSegmentIds);
+    applyDocumentLate = () => {
+      // Production's late channel (browser/rsc-router.tsx).
+      applyLateHandles(
+        { store, eventController },
+        lateState,
+        initialSegmentIds,
+        historyKey,
+      );
       eventController.flushRouteState();
     };
   }
@@ -1190,17 +1211,18 @@ export async function renderRoute(
   };
 
   // The page each history entry shows, by the entry's `idx` stamp (the
-  // seeded entry has none: 0), so a back/forward can restore it as
-  // production restores a history-cache entry. `state` is the entry's
-  // history state as the router last wrote it: an entry the test wrote over
-  // it (no `idx` reads as 0) is not that page. `handleData` is the page's
-  // pushes, taken when it is left.
+  // seeded entry has none: 0), so a back/forward can restore it. `state` is
+  // the entry's history state as the router last wrote it: an entry the test
+  // wrote over it (no `idx` reads as 0) is not that page. What a restore
+  // renders, its segments and handle data, comes from the store's history
+  // cache under the entry's URL key, as production restores it
+  // (navigation-bridge.ts handlePopstate); `segments` stands in when the
+  // cache no longer holds the key.
   interface EntryPage {
     url: URL;
     segments: ResolvedSegment[];
     params: Record<string, string>;
     state: unknown;
-    handleData?: HandleData;
   }
   const entries = new Map<number, EntryPage>();
   const entryIndex = (): number => {
@@ -1226,10 +1248,9 @@ export async function renderRoute(
   /**
    * The history-cache reads production's stale-prefetch guards make
    * (navigation-bridge.ts scheduleStalePrefetchRevalidation), over this
-   * harness's history: the store's own history key never moves here, so the
-   * key on screen is its location's, and the one cached page is the entry on
-   * screen. Marking it stale writes nothing: a stale entry's revalidation on
-   * Back is not modeled.
+   * harness's history: the key on screen is its location's, and the one
+   * cached page is the entry on screen. Marking it stale writes nothing: a
+   * stale entry's revalidation on Back is not modeled.
    */
   const historyView: Pick<
     NavigationStore,
@@ -1242,15 +1263,45 @@ export async function renderRoute(
       return {
         segments: page.segments,
         stale: false,
-        handleData: page.handleData,
+        handleData: store.getCachedSegments(key)?.handleData,
       };
     },
     updateCacheHandleData: () => {},
   };
-  /** The page being left keeps its pushes for a back/forward onto it. */
+  /**
+   * The page being left keeps its pushes for a back/forward onto it, written
+   * to its history-cache entry as production's navigate does before it
+   * leaves (navigation-bridge.ts).
+   */
   const leaveEntry = (): void => {
-    const left = entries.get(entryOnScreen);
-    if (left) left.handleData = eventController.getHandleState().data;
+    const key = store.getHistoryKey();
+    if (!store.getCachedSegments(key)) return;
+    store.updateCacheHandleData(
+      key,
+      liveHandleDataForCache(eventController, store, key),
+    );
+  };
+  /**
+   * A commit of `segments` at `pageUrl`: the store moves to its entry and
+   * caches it with the handle data on screen, as production's commit does
+   * (navigation-transaction.ts; a commit onto the page on screen, an action's
+   * or a revalidation's, as its storeOnly re-cache) before the response's
+   * handle stream writes the entry's own.
+   */
+  const cacheCommit = (
+    pageUrl: URL,
+    segments: ResolvedSegment[],
+    samePage: boolean,
+  ): void => {
+    const key = generateHistoryKey(pageUrl.href);
+    store.setHistoryKey(key);
+    store.cacheSegmentsForHistory(
+      key,
+      segments,
+      samePage
+        ? liveHandleDataForCache(eventController, store, key)
+        : eventController.getHandleState().data,
+    );
   };
   let popGeneration = 0;
   // The navigation's lifecycle, as navigation-transaction.ts drives it:
@@ -1432,6 +1483,7 @@ export async function renderRoute(
       params: match.params,
       state: window.history.state,
     });
+    cacheCommit(nextUrl, segments, navOptions?.sameEntry === true);
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
     await act(async () => {
       // As production's emitters name their cause (suspense-audit.ts I6).
@@ -1529,6 +1581,7 @@ export async function renderRoute(
         store.setSegmentIds(segments.map((s) => s.id));
         const shown = entries.get(entryOnScreen);
         if (shown) shown.segments = segments;
+        cacheCommit(url, segments, true);
         const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
         await act(async () => {
           auditTreeCause(kind === "action" ? "action" : "stale-revalidation");
@@ -1613,9 +1666,12 @@ export async function renderRoute(
     const generation = ++popGeneration;
     eventController.abortNavigation();
     const historyState = window.history.state;
+    const historyKey = generateHistoryKey(page.url.href);
+    const cached = store.getCachedSegments(historyKey);
+    const segments = cached?.segments ?? page.segments;
     // transition({ when }) decides the restore (kind "pop") against the
     // entry being left.
-    const gatedOff = decideTransitionGatedOff(page.segments, () => ({
+    const gatedOff = decideTransitionGatedOff(segments, () => ({
       kind: "pop",
       from: {
         url: eventController.getLocation().href,
@@ -1630,7 +1686,7 @@ export async function renderRoute(
         state: historyState,
       },
     }));
-    const root = await renderSegments(page.segments, {
+    const root = await renderSegments(segments, {
       forceAwait: true,
       outletPending: options.outletPending,
       transitionGatedOff: gatedOff,
@@ -1639,14 +1695,15 @@ export async function renderRoute(
     if (generation !== popGeneration) return;
     leaveEntry();
     entryOnScreen = index;
+    store.setHistoryKey(historyKey);
     store.setCurrentUrl(page.url.href);
-    store.setSegmentIds(page.segments.map((s) => s.id));
+    store.setSegmentIds(segments.map((s) => s.id));
     const update: NavigationUpdate = {
       root,
       metadata: {
-        ...makeMetadata(page.url.pathname, page.segments, page.params),
+        ...makeMetadata(page.url.pathname, segments, page.params),
         isPartial: true,
-        cachedHandleData: page.handleData,
+        cachedHandleData: store.getCachedSegments(historyKey)?.handleData,
       },
     };
     await act(async () => {
@@ -1656,7 +1713,7 @@ export async function renderRoute(
       eventController.setParams(page.params);
       eventController.commitLocationState(historyState);
       auditTreeCause("popstate");
-      if (!shouldStartViewTransition(page.segments, gatedOff)) {
+      if (!shouldStartViewTransition(segments, gatedOff)) {
         store.emitUpdate(update);
       } else {
         startTransition(() => {
@@ -1747,7 +1804,7 @@ export async function renderRoute(
       <LinkInterceptionRegistration bridge={bridge} />
       <LoaderEndpoint answer={answerLoad} />
       {options.hydrate && <HydratedMarker />}
-      {applyLateHandles && <AfterTree run={applyLateHandles} />}
+      {applyDocumentLate && <AfterTree run={applyDocumentLate} />}
       {resolveDocumentRevealed && <AfterTree run={resolveDocumentRevealed} />}
     </>
   );
@@ -1840,17 +1897,46 @@ export async function renderRoute(
       }
     },
     revalidations: () => [...revalidations],
-    pushLateHandles: async (late) => {
+    pushLateHandles: async (late, lateOptions) => {
       const segments = shownSegments();
-      const next = seedHandles(
-        cloneHandleSeed(eventController.getHandleState().data),
-        late,
-        segments,
-      );
+      // The yield: the page's state with each seed's run replaced, its
+      // pushedBy record kept aligned (handles/pushed-by.ts), as the server's
+      // handle store tags every yield.
+      const run =
+        lateOptions?.pushedBy === undefined
+          ? null
+          : ensureSyntheticId(lateOptions.pushedBy);
+      const next = cloneHandleSeed(eventController.getHandleState().data);
+      for (const [handle, values, at] of late) {
+        const id = (handle as unknown as { $$id: string }).$$id;
+        const segmentId = segmentIdIn(segments, at);
+        const byName = pushedByKey(id);
+        const oldValues = next[id]?.[segmentId] ?? [];
+        const oldBy = next[byName]?.[segmentId] ?? [];
+        // A seed replaces its run's values in the segment: every value for
+        // the handler's (untagged) run, as a seed always did; only the
+        // loader's own for a tagged one.
+        const kept = run === null ? [] : oldValues.map((_, i) => i);
+        const keep = kept.filter((i) => (oldBy[i] ?? null) !== run);
+        const by = [
+          ...keep.map((i) => oldBy[i] ?? null),
+          ...values.map(() => run),
+        ];
+        (next[id] ??= {})[segmentId] = [
+          ...keep.map((i) => oldValues[i]),
+          ...values,
+        ];
+        if (by.some((r) => r !== null)) (next[byName] ??= {})[segmentId] = by;
+        else if (next[byName]) delete next[byName][segmentId];
+      }
       await act(async () => {
-        eventController.setHandleData(
+        // Production's late channel (browser/rsc-router.tsx): merged with
+        // the reads that landed on the page, then its entry written.
+        applyLateHandles(
+          { store, eventController },
           next,
           segments.map((s) => s.id),
+          store.getHistoryKey(),
         );
         eventController.flushRouteState();
       });

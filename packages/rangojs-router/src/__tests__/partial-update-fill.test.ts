@@ -109,6 +109,14 @@ function createStore(cachedSegments: ResolvedSegment[]) {
     rememberDisplayedEntry: vi.fn(),
     updateCacheHandleData: vi.fn(),
     cacheSegmentsForHistory: vi.fn(),
+    // The store's in-place rewrite of an entry (navigation-store.ts); no
+    // fetched read lands in these tests, so there is no record to carry.
+    replaceEntrySegments: (
+      segments: ResolvedSegment[],
+      next: readonly ResolvedSegment[],
+    ) => {
+      segments.splice(0, segments.length, ...next);
+    },
   };
 }
 

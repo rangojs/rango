@@ -16,3 +16,29 @@ export const LoaderReadHandlesChat = createLoader(
   },
   true,
 );
+
+// The ?lateHold probes a request with ?lateRelease has released.
+const releasedLate = new Set<string>();
+
+// Registered on /loader-read-handles/late beside the chat loader: pushes its
+// crumb once a request to the page with ?lateRelease=<probe> released its
+// ?lateHold=<probe> (at most 30 s), so the push misses the handler barrier
+// and reaches the browser on the document's late handle channel, carrying
+// the document's state of the chat loader with it.
+export const LoaderReadHandlesLate = createLoader(
+  async (ctx): Promise<{ late: true }> => {
+    const release = ctx.searchParams.get("lateRelease");
+    if (release !== null) {
+      releasedLate.add(release);
+      return { late: true };
+    }
+    const probe = ctx.searchParams.get("lateHold") ?? "";
+    const until = Date.now() + 30000;
+    while (!releasedLate.has(probe) && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    releasedLate.delete(probe);
+    ctx.use(Breadcrumbs)({ label: "Late", href: "/loader-read-handles/late" });
+    return { late: true };
+  },
+);

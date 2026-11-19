@@ -1880,21 +1880,51 @@ pushed each value. The read's ctx runs a loader the body reads with
 what the body pushed by the time it returned: the lane then closes the
 loader's bucket (`HandleStore.closeSegment`), and a later push (a timer, a
 promise the body did not await) records nothing and warns in development,
-once per read, that it came too late. The browser applies the values after
-the data (`browser/fetched-loader-handles.ts`), once its pushed promises
-settle, only while the page the read was sent from is on screen (same history
-key and nav instance) and no newer read of the loader was sent on the same
-router (`NavigationStore.beginLoaderRead`, per router, so two routers on one
-page never supersede each other's reads). Within one loader bucket, a newer
-read that fails leaves an older one's values unapplied, as the loader store
-drops the older one's data: the page keeps the data and the values it showed,
-as a navigation superseded by one that fails does. The newest-read gate is
-per loader on the router, not per bucket: a newer read of the same loader
-under another `key` also leaves the older read's values unapplied, while the
-older read's data still lands in its own bucket. The history entry's copy is written when the values
-apply, from the data they were applied to: during the hydration window that
-is when the window closes (`setLoaderReadHandleData`'s `applied`), since
-`getHandleState()` is the document's snapshot until then. The values go to the first segment that holds the loader's earlier
+once per read, that it came too late.
+
+A read's values travel with its data, by one rule: the history entry is the
+page as the screen shows it, so a change to what the page shows (its data and
+its handle values) is decided once, by the rule that decides its data, and
+the entry is written from that same unit (`browser/fetched-loader-handles.ts`).
+A read lands exactly when its data lands: the loader store accepts the result
+into the reader's bucket (the bucket's newest request, not cleared by a
+route-data change: `LoaderStore.holdsRequest`), and an entry of the page the
+read was sent from still holds the loader data the read was requested for, by
+identity (`NavigationStore.beginPageRead`). The page's entries are the key
+the read was sent from, the twin keys of a shallow navigation, and any entry a
+later commit wrote in their place (an action on the twin key writes a new
+array there): the read lands on each that still holds that data, so the
+screen and both keys agree. When the loader store drops the
+data, nothing else is written anywhere. The bucket's newest-request gate is
+per router (each router's `NavigationStore` owns one `LoaderStore`), so two
+routers on one page never cross. Within one bucket, a newer read that fails
+leaves an older one unapplied, its data and its values together: the page
+keeps what it showed, as a navigation superseded by one that fails does.
+Reads of one loader under two buckets (a `key` and the plain bucket) each
+land with their data; the last to land writes the values and the entry.
+
+When a read lands, the entry keeps its data: every loader segment of the
+entry that registers the loader is swapped for a copy carrying the read's
+result, in place in the entry's segments array, so the twin keys of a shallow
+navigation share it and a `prefetch: false` fill still finds its entry. That
+is every segment, whatever data each held (a held layout copy beside a re-run
+route copy): the read captured each one's data when it was sent, as the
+loader store's bucket shows the result to every reader it was requested for.
+The store records the read by loader id on the page, and every later write of
+the page's segments (a commit onto the page, a shallow navigation's copy, a
+fill) carries it over: a loader segment that still holds the data the read
+replaced, or an earlier read's result (a commit that reconciled from the entry
+before several reads landed), takes the newest read's data, and one the server
+sent anew ends the record (the loader re-ran). Back then renders the restored page with the read's data
+as its route data, so every reader shows it from its first frame. The values
+apply live once their pending pushes settle, while the entry still holds this
+read's data and is the page on screen, and the entry's copy is written from
+the live state in that moment, to every key of the page
+(`setLoaderReadHandleData`'s `applied`). During the hydration window that is
+when the window closes, and the entry takes the read's data with them. Off
+screen, the values go to the entry directly, through the same merge.
+
+A read's values go to the first segment that holds the loader's earlier
 values, else the first that registers it, and replace the loader's values in
 every segment that registers it (`mergeLoaderReadHandleData`,
 `handles/pushed-by.ts`, the partial merge with the loader as the run that
@@ -1903,10 +1933,31 @@ loader's own run, which the read did not refresh, keeps its values. A loader
 no segment registers has nowhere to file them: they are dropped, with a
 development warning. Only a read the page itself would make applies them: a
 group refresh, or a `load()` / `refetch()` with no `params` and no body (GET)
-(`isPlainRefetch` in `use-loader.tsx`). A `load()` with `params`, a body or
-another method reads data the page does not show: its result goes to the
-reader, and its pushes are not applied, nor does it count as the loader's
-newest read.
+(`isPlainRefetch` in `use-loader.tsx`), into a loader store bucket a reader
+with route context reads (`LoaderStore.hasRouteReaders`). A `load()` with
+`params`, a body or another method reads data the page does not show: its
+result goes to the reader, and its pushes are not applied. A plain `load()`
+from a reader with no route context (a `useFetchLoader` outside the page's
+route tree) is local the same way, even for a loader the page registers: a
+value applies only when it has a segment to belong to, and that read's data
+belongs to no segment of the page. Its pushes are dropped with a one-time
+development warning that points at refreshing the page's own data, or
+`useRouter().refresh()`. Such a reader that shares a `key` with a reader
+inside the route refreshes the page's data in that shared bucket, so its
+read is the page's and applies its values.
+
+A late document push (`metadata.handlesLate`) yields the document render's
+full state, so it is merged, not swapped in: its values replace every run's
+except those of the loaders a landed read refreshed since the document
+(`mergeLateHandleData` in `handles/pushed-by.ts`, the read-refreshed set being
+the page's read record). While the page is on screen the push goes through
+the live store first (`EventController.setLateHandleData`, waiting in the
+hydration window like any handle write) and the entry is written from the
+result, to every key of the page; off screen it goes to the entry directly,
+through the same merge. During the hydration window the entry also takes it
+at arrival, through the same merge: a commit made in the window (a link to
+the page, a navigation that takes a shared segment's pushes) reads the page
+from its entry (`liveHandleDataForCache`), and would otherwise lose the push.
 
 ## Client Route-State Commits
 

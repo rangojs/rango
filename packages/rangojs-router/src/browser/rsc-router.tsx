@@ -10,6 +10,7 @@ import {
 } from "./navigation-store.js";
 import { createEventController } from "./event-controller.js";
 import { resolveDeferredHandleValues } from "../handles/deferred-resolution.js";
+import { applyLateHandles } from "./fetched-loader-handles.js";
 import { validateRedirectOrigin } from "./validate-redirect-origin.js";
 import { awaitDocumentRevealed } from "./document-revealed.js";
 import { createNavigationClient } from "./navigation-client.js";
@@ -346,23 +347,19 @@ export async function initBrowserApp(
             // deferred values here exactly like the nav lane's processHandles
             // does before applying.
             const lateData = await resolveDeferredHandleValues(rawLateData);
-            // Live store only while the document's page is on screen: a full
-            // replace with its `matched` would overwrite another page's handles.
-            const pageKeys = store.getPageHistoryKeys(initialHistoryKey);
-            const onScreen = pageKeys.includes(store.getHistoryKey());
             bootLog("handles: late push", {
               segments: Object.keys(lateData),
-              onScreen,
             });
-            if (onScreen) {
-              eventController.setHandleData(
-                lateData,
-                initialPayload.metadata?.matched,
-              );
-            }
-            for (const key of pageKeys) {
-              store.updateCacheHandleData(key, lateData);
-            }
+            // Live store only while the document's page is on screen (a
+            // replace with its `matched` would overwrite another page's
+            // handles), merged with the reads that landed since the
+            // document, and the entry written from the result.
+            applyLateHandles(
+              { store, eventController },
+              lateData,
+              initialPayload.metadata?.matched ?? [],
+              initialHistoryKey,
+            );
           }
         } catch (err) {
           console.error("[rsc-router] Error consuming late handles:", err);

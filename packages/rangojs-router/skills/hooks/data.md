@@ -161,6 +161,13 @@ semantics as the old per-component `useState`):
   registered on the current route. Two unrelated components calling
   `load()` on the same fetchable-but-unregistered loader keep
   independent results.
+- The handle values of any `load()` from a component outside the page's
+  route tree (no route context), even for a loader the page registers: its
+  data stays with that component, so its pushes change no title or crumb
+  (development warns once). To change the page's title from there, refresh
+  the page's own data from a reader inside the route, or call
+  `useRouter().refresh()`. A `key` it shares with a reader inside the route
+  makes its data the page's, and then its values apply.
 
 So the search/list pattern still works — two components calling
 `load({ params: { q } })` with different `q` values each keep their
@@ -204,7 +211,9 @@ A refreshed value belongs to the route data of the readers on screen when
 `load()` was called: a reader that mounts on another page or on a new visit,
 or that a navigation brings new route data, shows that route data from its
 first frame, and a `load()` still in flight when you leave lands on no other
-page; Back onto the refreshed page shows the refresh again.
+page; Back onto the refreshed page shows the refresh again, with the title
+and crumbs the refresh pushed: the history entry keeps a refresh's data and
+handle values together.
 
 **Refreshing multiple loaders together (`refreshGroup` + `useRefreshLoaders`)**:
 

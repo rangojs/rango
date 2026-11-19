@@ -8,6 +8,10 @@ import { pushedByKey } from "../handles/pushed-by.js";
 import { createEventController } from "../browser/event-controller.js";
 import { createNavigationBridge } from "../browser/navigation-bridge.js";
 import {
+  applyLateHandles,
+  startFetchedLoaderRead,
+} from "../browser/fetched-loader-handles.js";
+import {
   createNavigationStore,
   generateHistoryKey,
 } from "../browser/navigation-store.js";
@@ -475,9 +479,13 @@ describe("a link navigation to a page the history cache holds", () => {
     await act(async () => {
       navigation = bridge.navigate(B);
     });
-    // A late document push: queued in the controller, written to the entry.
-    eventController.setHandleData(aHandles(section("section:late")), aMatched);
-    store.updateCacheHandleData(aKey(), aHandles(section("section:late")));
+    // A late document push: queued in the controller.
+    applyLateHandles(
+      { store, eventController },
+      aHandles(section("section:late")),
+      aMatched,
+      aKey(),
+    );
     await act(async () => {
       release(
         answer(
@@ -519,11 +527,12 @@ describe("a link navigation to a page the history cache holds", () => {
         { onScreen: section("section"), cached: section("section") },
       );
       eventController.lockHydration();
-      eventController.setHandleData(
+      applyLateHandles(
+        { store, eventController },
         aHandles(section("section:late")),
         aMatched,
+        aKey(),
       );
-      store.updateCacheHandleData(aKey(), aHandles(section("section:late")));
       // NavigationProvider ends the hydration window before the update of a
       // navigation committed during it.
       const emit = store.emitUpdate.bind(store);
@@ -543,4 +552,86 @@ describe("a link navigation to a page the history cache holds", () => {
       expect(crumbsIn(store, aKey())?.M0L0).toEqual(["section:late"]);
     });
   }
+});
+
+describe("Back onto a stale entry a loader read wrote", () => {
+  /**
+   * On A, a load() of the section loader lands: A's entry holds its data and
+   * its crumb. The page then goes to B, every entry is marked stale (an
+   * action), and Back restores A from the entry and revalidates it.
+   */
+  async function readThenLeave(revalidation: () => Answer) {
+    let respond = () =>
+      answer(["M0L0L1R0D0.tick"], [tickSeg(2)], stream(tickPush(2)));
+    const page = await setup(() => respond(), {
+      onScreen: section("section"),
+      cached: section("section"),
+    });
+    const { store, eventController, bridge, container } = page;
+    // A reader of the section loader on the page (useLoader).
+    store.loaders.subscribe("sec", () => {}, {
+      loaderId: "sec",
+      routeData: () => ({ runs: 1 }),
+    });
+    const requestId = store.loaders.reserveRequestId("sec");
+    store.loaders.beginRequest("sec", requestId);
+    const landRead = startFetchedLoaderRead(
+      "sec",
+      { store, eventController },
+      { bucketKey: "sec", requestId },
+    );
+    const result = { runs: "read" };
+    store.loaders.finishData("sec", requestId, result);
+    landRead(result, { [Crumbs.$$id]: ["sec:read"] });
+    await expectScreen(container, "section > sec:read > a-page | A");
+
+    await act(async () => {
+      await bridge.navigate(B);
+    });
+    await settle();
+    store.markHistoryCacheStale();
+    respond = revalidation;
+    await traverseTo(bridge, A);
+    return { ...page, result };
+  }
+
+  const secData = (store: {
+    getCachedSegments(key: string): { segments: ResolvedSegment[] } | undefined;
+  }) =>
+    store.getCachedSegments(aKey())?.segments.find((s) => s.loaderId === "sec")
+      ?.loaderData;
+
+  it("restores the read's data and crumb, and a revalidation that keeps the loader keeps them", async () => {
+    const { store, container, result } = await readThenLeave(() =>
+      answer(
+        ["M0L0R0"],
+        [seg("M0L0R0")],
+        stream({
+          [Crumbs.$$id]: { M0L0R0: ["a-page:2"] },
+          [Title.$$id]: { M0L0R0: ["A"] },
+        }),
+        A,
+      ),
+    );
+    await expectScreen(container, "section > sec:read > a-page:2 | A");
+    expect(secData(store)).toBe(result);
+    expect(store.getPageReadLoaders(aKey())).toEqual(new Set(["sec"]));
+  });
+
+  it("a revalidation that re-runs the loader replaces the read's data and crumb", async () => {
+    const { store, container } = await readThenLeave(() =>
+      answer(
+        ["M0L0D0.sec"],
+        [loaderSeg("M0L0D0.sec", "sec", 2)],
+        stream({
+          [Crumbs.$$id]: { M0L0: ["sec:2"] },
+          [pushedByKey(Crumbs.$$id)]: { M0L0: ["sec"] },
+        }),
+        A,
+      ),
+    );
+    await expectScreen(container, "section > sec:2 > a-page | A");
+    expect(secData(store)).toEqual({ runs: 2 });
+    expect(store.getPageReadLoaders(aKey()).size).toBe(0);
+  });
 });

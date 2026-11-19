@@ -555,8 +555,9 @@ export function createPartialUpdater(
       // the tree: the entry is rewritten in place, not re-cached.
       // cacheSegmentsForHistory would advance the store's nav instance and
       // disown the tree's handle stream, and would reset the entry's stale
-      // flag.
-      replace(live, reconciled.segments);
+      // flag. Through the store, which carries over a fetched read that
+      // landed while the answer rendered (NavigationStore.replaceEntrySegments).
+      store.replaceEntrySegments(live, reconciled.segments);
       store.setSegmentIds(matched);
       filled = true;
     } catch (thrown) {

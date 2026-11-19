@@ -1127,8 +1127,17 @@ later (a timer, a promise it did not await) is not applied, and development
 warns that it came too late, so push a promise or reserve the slot with
 `.defer()` before returning. This is how a live part of a page keeps its
 title current: a rename that reaches the page through a refresh renames the
-tab too. They apply only while the page the read was sent from is still on
-screen, and the newest read of the loader wins. A value pushed by a loader the
+tab too. They apply together with the read's data, exactly when it lands: the
+newest read of the reader's bucket, for the page it was sent from. The history
+entry keeps the read's data and title together, so Back shows the page as you
+left it, and a late push from the document's own render never undoes a read's
+values. A plain `load()` from a component outside the page's route tree (a
+`useFetchLoader` in a root-level header) keeps its data with that component
+and changes no handle value, even for a loader the page registers;
+development warns once. To change the title from there, refresh the page's
+own data from a reader inside the route, or call `useRouter().refresh()`.
+(With a `key` it shares with a reader inside the route, its data is the
+page's and its values apply.) A value pushed by a loader the
 body awaits that the page also registers belongs to that loader's own run,
 which the read did not refresh: the page keeps that run's values, as it keeps
 its data. A loader that no segment on the page registers with `loader()` (a

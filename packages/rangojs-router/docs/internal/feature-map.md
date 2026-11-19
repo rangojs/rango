@@ -677,11 +677,20 @@ server projection.
   the browser applies them in place of the loader's earlier values in the
   segment that registers it (`browser/fetched-loader-handles.ts`,
   `mergeLoaderReadHandleData` in `handles/pushed-by.ts`,
-  `EventController.setLoaderReadHandleData`, the newest read per router in
-  `NavigationStore.beginLoaderRead`); a push the body makes after it
+  `EventController.setLoaderReadHandleData`); the values land exactly when
+  the read's data lands (`LoaderStore.holdsRequest`, and
+  `NavigationStore.beginPageRead`: an entry of the page it was sent from
+  still holds the data the read was requested for), and the entry keeps the
+  read's data and values together for Back (its loader segments swapped in
+  place, the read
+  record carried over by `cacheSegmentsForHistory` and
+  `replaceEntrySegments`); a late document push merges around the loaders a
+  read refreshed (`applyLateHandles`, `mergeLateHandleData`,
+  `EventController.setLateHandleData`); a push the body makes after it
   returned is not in the reply and warns in development
-  (`HandleStore.closeSegment`); a `load()` with params or a body reads data
-  the page does not show, and its values are not applied
+  (`HandleStore.closeSegment`); a `load()` with params or a body, or from a
+  reader with no route context, reads data the page does not show, and its
+  values are not applied
 - Client refresh `key` (per-loader refresh groups) and `useRefreshLoaders()`
   (cross-loader refresh groups via `refreshGroup`; reads may carry multiple group
   tags, and the inverted hook takes the group(s) at call time)
