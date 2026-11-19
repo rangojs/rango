@@ -108,6 +108,8 @@ setSearchParams({ view: "grid" }, { revalidate: false });
 Options: `replace` (default false — push), `scroll` (default true),
 `revalidate` (default true; `false` skips the server fetch — legal because
 the setter never changes the pathname).
+A navigation whose server answer redraws nothing (every segment held) does not
+scroll, whatever `scroll` says.
 
 ### When the URL hooks change
 
