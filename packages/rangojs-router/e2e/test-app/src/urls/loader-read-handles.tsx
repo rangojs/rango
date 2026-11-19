@@ -4,7 +4,10 @@ import {
   LoaderReadHandlesHead,
   LoaderReadHandlesReader,
 } from "./loader-read-handles.client.js";
-import { LoaderReadHandlesChat } from "./loader-read-handles.loaders.js";
+import {
+  LoaderReadHandlesChat,
+  LoaderReadHandlesLate,
+} from "./loader-read-handles.loaders.js";
 
 function LoaderReadHandlesLayout(ctx: HandlerContext) {
   ctx.use(Breadcrumbs)({ label: "Chats", href: "/loader-read-handles" });
@@ -29,6 +32,14 @@ export const loaderReadHandlesPatterns = urls(({ path, layout, loader }) => [
       () => <LoaderReadHandlesReader />,
       { name: "loaderReadHandlesChat" },
       () => [loader(LoaderReadHandlesChat)],
+    ),
+    // The chat again, with a loader whose crumb arrives on the document's
+    // late handle channel after a load() refreshed the chat.
+    path(
+      "/loader-read-handles/late",
+      () => <LoaderReadHandlesReader />,
+      { name: "loaderReadHandlesLate" },
+      () => [loader(LoaderReadHandlesChat), loader(LoaderReadHandlesLate)],
     ),
   ]),
 ]);

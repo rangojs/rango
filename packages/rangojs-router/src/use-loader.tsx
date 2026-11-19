@@ -303,7 +303,10 @@ function useLoaderInternal<T>(
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("_rsc_loader", loaderId);
-      const applyHandles = startFetchedLoaderRead(loaderId, page);
+      const landRead = startFetchedLoaderRead(loaderId, page, {
+        bucketKey,
+        requestId,
+      });
       const response = fetch(url.toString(), {
         method: "GET",
         headers: { Accept: "text/x-component" },
@@ -314,7 +317,7 @@ function useLoaderInternal<T>(
         throw new Error(payload.loaderError.message);
       }
       loaders.finishData(bucketKey, requestId, payload.loaderResult);
-      applyHandles(payload.handles, payload.pushedBy);
+      landRead(payload.loaderResult, payload.handles, payload.pushedBy);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       loaders.finishError(bucketKey, requestId, err);
@@ -570,8 +573,16 @@ function useLoaderInternal<T>(
         // Only a refetch of the page's own read (the page's params, no body)
         // applies its handle values: a read with other params or a body is
         // data the page does not show, and its pushes would retitle the page.
-        const applyHandles = isPlainRefetch(loadOptions)
-          ? startFetchedLoaderRead(id, page)
+        // A read that keeps its data local keeps its values local too
+        // (fetched-loader-handles.ts).
+        const landRead = isPlainRefetch(loadOptions)
+          ? startFetchedLoaderRead(
+              id,
+              page,
+              shared
+                ? { bucketKey: bucket, requestId: sharedRequestId }
+                : undefined,
+            )
           : undefined;
         const response = fetch(url.toString(), fetchOptions);
 
@@ -591,7 +602,7 @@ function useLoaderInternal<T>(
             setLocalIsLoading(false);
           });
         }
-        applyHandles?.(payload.handles, payload.pushedBy);
+        landRead?.(result, payload.handles, payload.pushedBy);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));

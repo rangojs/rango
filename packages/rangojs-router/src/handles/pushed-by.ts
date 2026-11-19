@@ -1,4 +1,7 @@
-import { LOADER_SEGMENT_ID } from "../browser/react/filter-segment-order.js";
+import {
+  LOADER_SEGMENT_ID,
+  filterSegmentOrder,
+} from "../browser/react/filter-segment-order.js";
 import type { HandleData } from "../server/handle-store.js";
 
 /**
@@ -245,4 +248,55 @@ export function mergePartialHandleData(
     }
   }
   return out;
+}
+
+/**
+ * The handle data after a late handle yield of the document (`late`: the
+ * document render's full state so far, `matched` its segment ids) lands on
+ * `current`, the page's data. Swapped in whole, except the runs of the
+ * loaders in `refreshed`: a fetched read landed for each since the document
+ * rendered (NavigationStore.getPageReadLoaders), so the page's values of that
+ * run are newer than the yield's and stay. The yield's values of those runs
+ * are dropped and the rest goes in as a partial response in which every
+ * other run ran (mergePartialHandleData). `late` itself when no read landed.
+ */
+export function mergeLateHandleData(
+  current: HandleData,
+  late: HandleData,
+  matched: readonly string[],
+  refreshed: ReadonlySet<string>,
+): HandleData {
+  if (refreshed.size === 0) return late;
+  const incoming: HandleData = {};
+  for (const name in late) {
+    if (isPushedByKey(name)) continue;
+    const byName = pushedByKey(name);
+    for (const [segmentId, values] of Object.entries(late[name])) {
+      const by = late[byName]?.[segmentId] as PushedBy;
+      const keptValues: unknown[] = [];
+      const keptBy: (string | null)[] = [];
+      values.forEach((value, i) => {
+        const run = by?.[i] ?? null;
+        if (run !== null && refreshed.has(run)) return;
+        keptValues.push(value);
+        keptBy.push(run);
+      });
+      if (keptValues.length === 0) continue;
+      (incoming[name] ??= {})[segmentId] = keptValues;
+      if (keptBy.some((run) => run !== null)) {
+        (incoming[byName] ??= {})[segmentId] = keptBy;
+      }
+    }
+  }
+  const ran = matched.filter((id) => {
+    const marker = LOADER_SEGMENT_ID.exec(id);
+    return !marker || !refreshed.has(id.slice(marker.index + marker[0].length));
+  });
+  return mergePartialHandleData(
+    current,
+    incoming,
+    filterSegmentOrder([...matched]),
+    matched,
+    ran,
+  );
 }

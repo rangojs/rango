@@ -194,6 +194,7 @@ export const NamedRoutes = {
   loaderCtxItem: "/loader-ctx/:id",
   loaderParams: "/loader-params",
   loaderReadHandlesChat: "/loader-read-handles/chat",
+  loaderReadHandlesLate: "/loader-read-handles/late",
   loaderRemountA: "/loader-remount/a",
   loaderRemountB: "/loader-remount/b",
   loaderRemountNone: "/loader-remount/none",

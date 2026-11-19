@@ -495,6 +495,32 @@ export class LoaderStore {
   }
 
   /**
+   * True while a reader with route context subscribes to the bucket: a value
+   * committed to it shows on the page (browser/fetched-loader-handles.ts
+   * treats a read into it as the page's own).
+   */
+  hasRouteReaders(bucketKey: string): boolean {
+    return (this.entries.get(bucketKey)?.routeDataSources.size ?? 0) > 0;
+  }
+
+  /**
+   * True while `requestId`'s result is what the bucket holds: finishData
+   * committed it and no newer request or clear() (a route-data change) has
+   * moved the bucket on since. A fetched read's handle values and history
+   * write land exactly when this holds (browser/fetched-loader-handles.ts).
+   */
+  holdsRequest(bucketKey: string, requestId: number): boolean {
+    const e = this.entries.get(bucketKey);
+    return (
+      e !== undefined &&
+      e.latestRequestId === requestId &&
+      e.snapshot.requestId === requestId &&
+      e.snapshot.hasValue &&
+      e.snapshot.error === null
+    );
+  }
+
+  /**
    * Commit an error. Preserves the last good `value` so consumers can keep
    * showing previous data while displaying the error if they choose. No-op
    * if `requestId` is not the latest.

@@ -353,7 +353,22 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // useHandle and useSegments delivery and every client push compares with
 // it. By the owner's rule above: 55842B + 256B, rounded up to the next 128B
 // step.
-const ROUTER_CHUNK_GZIP_MAX = 54.875 * 1024;
+//
+// Raised 54.875KB -> 55.75KB on 2026-11-19 for Back showing a refreshed page
+// as it was left, measured on cloudflare-basic from main e69ab06 55848B ->
+// 56720B (+872B gzip; the branch's router with main's fixtures measures
+// 56721B, so all of it is router code). A fetched read lands its data and
+// its handle values together and writes both into the history entry
+// (browser/fetched-loader-handles.ts; NavigationStore.beginPageRead, the
+// page's read record carried over by every entry write; LoaderStore
+// holdsRequest and hasRouteReaders), and the document's late handle channel
+// merges around the loaders a read refreshed (applyLateHandles,
+// EventController.setLateHandleData, mergeLateHandleData in
+// handles/pushed-by.ts). None of it can load lazily: every load(), group
+// refresh and history-entry write runs it, and the late channel applies
+// right after hydration. By the owner's rule above: 56720B + 256B, rounded
+// up to the next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 55.75 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

@@ -616,6 +616,26 @@ export type UpdateSubscriber = (update: NavigationUpdate) => void;
 export type StateListener = () => void;
 
 /**
+ * A page read in flight (NavigationStore.beginPageRead): the history entry it
+ * was sent from and the loader data that entry held for the loader then.
+ */
+export interface PageRead {
+  /** The history key of the entry the read was sent from. */
+  readonly historyKey: string;
+  /** The entry still holds the loader data the read was requested for. */
+  current(): boolean;
+  /**
+   * Write `result` into the entry: each of its loader segments for the
+   * loader becomes a copy carrying it, in place, and the page's read record
+   * names it. False, and nothing written, when the entry no longer holds
+   * the data the read was requested for.
+   */
+  land(result: unknown): boolean;
+  /** The read landed and the entry still holds its result. */
+  holds(): boolean;
+}
+
+/**
  * Navigation store interface
  *
  * Owns segment state, history snapshots, and partial-update notifications.
@@ -653,12 +673,26 @@ export interface NavigationStore {
   /** Monotonic token of the most recently committed navigation. */
   getNavInstance(): number;
   /**
-   * Begin a fetched read of `loaderId` (`load()`, a group refresh) from the
-   * page on screen. The returned check is true while that page is still on
-   * screen (same history entry, no commit since) and no newer read of the
-   * loader began on this router (browser/fetched-loader-handles.ts).
+   * Begin a page read of `loaderId` (`load()`, a group refresh) from the
+   * entry on screen: it captures, by identity, the loader data that entry
+   * holds (browser/fetched-loader-handles.ts).
    */
-  beginLoaderRead(loaderId: string): () => boolean;
+  beginPageRead(loaderId: string): PageRead;
+  /**
+   * The loaders whose data a landed page read replaced on the page of
+   * `historyKey`'s entry, since the server last sent them: the run of each
+   * is newer on the page than the document's (a late handle push keeps it).
+   */
+  getPageReadLoaders(historyKey: string): ReadonlySet<string>;
+  /**
+   * Rewrite an entry's segments array in place (a `prefetch: false` fill):
+   * the array keeps its identity, and the page's read record is carried over
+   * as cacheSegmentsForHistory carries it.
+   */
+  replaceEntrySegments(
+    segments: ResolvedSegment[],
+    next: readonly ResolvedSegment[],
+  ): void;
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],

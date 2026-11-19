@@ -7,6 +7,7 @@ import type {
   UpdateSubscriber,
   ResolvedSegment,
   HandleData,
+  PageRead,
   ShownEntry,
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
@@ -47,6 +48,21 @@ const HISTORY_ENTRY_MEMORY_SIZE = 200;
 // to re-stream the handles — a diff-only revalidation omits unchanged segments'
 // handles, so the deferred Meta would never land. Cleared once the deferred Meta
 // resolves while the entry is still owned.
+/**
+ * A page read that landed (NavigationStore.beginPageRead): `base` is the
+ * loader data the server last sent for the page, `result` the read's data
+ * the page shows in its place, and `replaces` every value the result stands
+ * for: the base and the results of the reads that landed before it.
+ */
+interface PageReadRecord {
+  readonly base: unknown;
+  readonly result: unknown;
+  readonly replaces: ReadonlySet<unknown>;
+}
+
+/** beginPageRead's base when the read was sent from no cached entry. */
+const NO_ENTRY: unique symbol = Symbol("no-entry");
+
 type HistoryCacheEntry = [
   string,
   ResolvedSegment[],
@@ -84,8 +100,9 @@ export function cloneHandleData(handleData: HandleData): HandleData {
  * Handle data to write into the history cache for the page on screen. During
  * the hydration window getHandleState() is the document snapshot while late
  * pushes sit queued in the controller (they are already in the cache entry,
- * written by rsc-router), so writing the snapshot back would drop them; the
- * entry's own data is the live view then.
+ * written at arrival by fetched-loader-handles.ts applyLateHandles), so
+ * writing the snapshot back would drop them; the entry's own data is the
+ * live view then.
  */
 export function liveHandleDataForCache(
   eventController: Pick<
@@ -268,9 +285,83 @@ export function createNavigationStore(
   // never overwrite a newer same-URL visit's state.
   let navInstance = 0;
 
-  // beginLoaderRead: the newest fetched read of each loader on this router.
-  const latestLoaderRead = new Map<string, number>();
-  let loaderReadSeq = 0;
+  // The page reads that landed, by the page's segments array (the twin keys
+  // of a shallow navigation share it) and loader id (PageReadRecord). A
+  // write of the page's segments carries them over (carryPageReads).
+  const pageReads = new WeakMap<
+    ResolvedSegment[],
+    Map<string, PageReadRecord>
+  >();
+
+  function entryAt(historyKey: string): HistoryCacheEntry | undefined {
+    return historyCache.find(([key]) => key === historyKey);
+  }
+
+  /**
+   * What the page holds for `loaderId` as the server sent it: the record's
+   * base once a read landed, else the loader segment's own data.
+   */
+  function serverDataOf(
+    segments: ResolvedSegment[],
+    loaderId: string,
+  ): unknown {
+    const record = pageReads.get(segments)?.get(loaderId);
+    if (record) return record.base;
+    return segments.find((s) => s.type === "loader" && s.loaderId === loaderId)
+      ?.loaderData;
+  }
+
+  /**
+   * Swap, in place, every loader segment of `segments` for `loaderId` that
+   * holds a value `record` replaces for a copy carrying its result. False,
+   * and nothing swapped, when one holds other data: the server sent it anew
+   * (the loader re-ran). By data, not by segment object, so a write that
+   * copies a segment keeps the read.
+   */
+  function applyPageRead(
+    segments: ResolvedSegment[],
+    loaderId: string,
+    record: PageReadRecord,
+  ): boolean {
+    const indexes: number[] = [];
+    for (let i = 0; i < segments.length; i++) {
+      const s = segments[i];
+      if (s.type !== "loader" || s.loaderId !== loaderId) continue;
+      if (s.loaderData === record.result) continue;
+      if (!record.replaces.has(s.loaderData)) return false;
+      indexes.push(i);
+    }
+    for (const i of indexes) {
+      segments[i] = { ...segments[i], loaderData: record.result };
+    }
+    return true;
+  }
+
+  /** The records of `records` that still hold on `segments` (applyPageRead). */
+  function applyPageReads(
+    records: Map<string, PageReadRecord>,
+    segments: ResolvedSegment[],
+  ): Map<string, PageReadRecord> {
+    const kept = new Map<string, PageReadRecord>();
+    for (const [loaderId, record] of records) {
+      if (applyPageRead(segments, loaderId, record)) kept.set(loaderId, record);
+    }
+    return kept;
+  }
+
+  /** A write of `to` in place of `from` keeps the reads `from` showed. */
+  function carryPageReads(
+    from: ResolvedSegment[] | undefined,
+    to: ResolvedSegment[],
+  ): void {
+    if (!from || from === to) return;
+    const records = pageReads.get(from);
+    if (!records) return;
+    const kept = applyPageReads(records, to);
+    if (kept.size === 0) return;
+    const existing = pageReads.get(to);
+    pageReads.set(to, existing ? new Map([...kept, ...existing]) : kept);
+  }
 
   // Current history key (set on navigation, stored in history.state)
   let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
@@ -553,15 +644,68 @@ export function createNavigationStore(
       return navInstance;
     },
 
-    beginLoaderRead(loaderId: string): () => boolean {
-      const seq = ++loaderReadSeq;
-      latestLoaderRead.set(loaderId, seq);
-      const key = currentHistoryKey;
-      const instance = navInstance;
-      return () =>
-        latestLoaderRead.get(loaderId) === seq &&
-        currentHistoryKey === key &&
-        navInstance === instance;
+    /**
+     * The read is current while the entry it was sent from holds the same
+     * server data for the loader (by identity): a commit that kept the
+     * loader's segment, a shallow navigation and leaving the page keep it; a
+     * new visit or a commit that re-ran the loader does not. A read that
+     * landed before it leaves it current: reads of one loader under two
+     * buckets each land, the last one's result winning.
+     */
+    beginPageRead(loaderId: string): PageRead {
+      const historyKey = currentHistoryKey;
+      const sentFrom = entryAt(historyKey);
+      const base = sentFrom ? serverDataOf(sentFrom[1], loaderId) : NO_ENTRY;
+      let landed: PageReadRecord | undefined;
+      const current = (): boolean => {
+        const entry = entryAt(historyKey);
+        return entry !== undefined && serverDataOf(entry[1], loaderId) === base;
+      };
+      return {
+        historyKey,
+        current,
+        land(result: unknown): boolean {
+          if (!current()) return false;
+          const segments = entryAt(historyKey)![1];
+          let records = pageReads.get(segments);
+          if (!records) pageReads.set(segments, (records = new Map()));
+          // An earlier read's result gives way like the server's data: the
+          // last read to land is what the page shows. Only the last one is
+          // kept, so a page that polls holds no chain of old results.
+          const earlier = records.get(loaderId);
+          const record: PageReadRecord = {
+            base,
+            result,
+            replaces: new Set(earlier ? [base, earlier.result] : [base]),
+          };
+          applyPageRead(segments, loaderId, record);
+          records.set(loaderId, record);
+          landed = record;
+          return true;
+        },
+        holds(): boolean {
+          const entry = entryAt(historyKey);
+          return (
+            landed !== undefined &&
+            entry !== undefined &&
+            pageReads.get(entry[1])?.get(loaderId) === landed
+          );
+        },
+      };
+    },
+
+    getPageReadLoaders(historyKey: string): ReadonlySet<string> {
+      const entry = entryAt(historyKey);
+      return new Set(entry ? pageReads.get(entry[1])?.keys() : undefined);
+    },
+
+    replaceEntrySegments(
+      segments: ResolvedSegment[],
+      next: readonly ResolvedSegment[],
+    ): void {
+      segments.splice(0, segments.length, ...next);
+      const records = pageReads.get(segments);
+      if (records) pageReads.set(segments, applyPageReads(records, segments));
     },
 
     /**
@@ -592,6 +736,10 @@ export function createNavigationStore(
         ([key]) => key === historyKey,
       );
       if (existingIndex !== -1) {
+        // The write keeps the reads the entry showed (applyPageReads): a
+        // commit that reconciled from the entry before a read landed would
+        // otherwise write its older snapshot over the read's data.
+        carryPageReads(historyCache[existingIndex][1], segments);
         historyCache[existingIndex] = [
           historyKey,
           segments,

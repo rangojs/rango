@@ -16,3 +16,16 @@ export const LoaderReadHandlesChat = createLoader(
   },
   true,
 );
+
+// Registered on /loader-read-handles/late beside the chat loader: pushes its
+// crumb after an await (?lateDelay ms, default 3000), so the push misses the
+// handler barrier and reaches the browser on the document's late handle
+// channel, carrying the document's state of the chat loader with it.
+export const LoaderReadHandlesLate = createLoader(
+  async (ctx): Promise<{ late: true }> => {
+    const delay = Number(ctx.searchParams.get("lateDelay") ?? 3000);
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    ctx.use(Breadcrumbs)({ label: "Late", href: "/loader-read-handles/late" });
+    return { late: true };
+  },
+);

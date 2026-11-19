@@ -14,7 +14,14 @@ import { expect, test, type Page } from "@playwright/test";
  * that names the chat by its run (`Chat <n>`) and pushes the title
  * `LRH Chat <n>` and the crumb `Chat <n>`. A reader of the loader in a
  * refresh group shows its name (lrh-name), with a group refresh button
- * (lrh-refresh) and a load() button (lrh-load).
+ * (lrh-refresh), a load() button (lrh-load) and a link to the same route
+ * under `?id=2` (lrh-next). `${base}/late` is the same page with a second
+ * loader that pushes the crumb `Late` `?lateDelay` ms into the request, on
+ * the document's late handle channel.
+ *
+ * Back onto a refreshed page shows it as it was left, its data and the title
+ * and crumb the refresh pushed together, and a late push from the document
+ * never undoes a refresh's values.
  */
 
 export interface LoaderReadHandlesScenarioOptions {
@@ -81,4 +88,67 @@ export function runLoaderReadHandlesTests(
       await expectHandlesOf(page, third);
     });
   }
+
+  test("Back after a same-route navigation shows the refreshed chat with its title and crumb", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(url(`${base}/chat`));
+    await waitForHydration(page);
+    const first = await nameAfter(page, null);
+
+    await testId(page, "lrh-load").click();
+    const refreshed = await nameAfter(page, first);
+    await expectHandlesOf(page, refreshed);
+
+    // The same route under another query: the loader re-runs, the reader
+    // stays mounted.
+    await testId(page, "lrh-next").click();
+    await expect(page).toHaveURL(/[?&]id=2$/);
+    const next = await nameAfter(page, refreshed);
+    await expectHandlesOf(page, next);
+
+    // Back shows the page as it was left: the refreshed data and the title
+    // and crumb it pushed, together.
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`${escape(base)}/chat$`));
+    await expect(testId(page, "lrh-name")).toHaveText(refreshed);
+    await expectHandlesOf(page, refreshed);
+  });
+
+  test("a late push from the document keeps the title and crumb a load() refreshed", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    // Loads the fixture's modules once, so the timed load hydrates before
+    // its late push.
+    await page.goto(url(`${base}/chat`));
+    await waitForHydration(page);
+
+    // The late loader's crumb is pushed 4 s into the document's request and
+    // reaches the browser on the late handle channel with the document's
+    // own state of the chat loader.
+    // The document's stream stays open until the late push, so the page
+    // hydrates before DOMContentLoaded: wait for the marker itself.
+    await page.goto(url(`${base}/late?lateDelay=4000`), {
+      waitUntil: "commit",
+    });
+    await page.waitForFunction(
+      () => document.documentElement.hasAttribute("data-hydrated"),
+      undefined,
+      { timeout: 20000 },
+    );
+    const first = await nameAfter(page, null);
+    await testId(page, "lrh-load").click();
+    const refreshed = await nameAfter(page, first);
+    await expect(testId(page, "lrh-title")).toHaveText(`LRH ${refreshed}`);
+
+    await expect(testId(page, "lrh-crumb")).toHaveText(
+      ["Chats", refreshed, "Late"],
+      { timeout: 15000 },
+    );
+    await expect(testId(page, "lrh-title")).toHaveText(`LRH ${refreshed}`);
+    await expect(page).toHaveTitle(new RegExp(escape(`LRH ${refreshed}`)));
+    await expect(testId(page, "lrh-name")).toHaveText(refreshed);
+  });
 }
