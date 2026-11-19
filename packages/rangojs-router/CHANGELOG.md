@@ -104,6 +104,35 @@ response carries.
   navigation superseded by one that fails. A newer read of the same loader
   under another `key` also supersedes the older read's values, not its data.
 
+### Fixed: a route's `Cache-Control: no-store` survives scoped prefetches, `prefetch: false` responses and stale partials
+
+**Before.** Four partial responses that must not be reused were sent
+`Cache-Control: private, no-cache` whatever the route set: a prefetch scoped
+to its source page (a `revalidate()` that read `currentUrl`, an intercept
+target), a prefetch that defers `prefetch: false` work, the fill that follows
+it, and a stale partial (after an action, Back/Forward, `router.refresh()`).
+A signed-in app whose middleware sends `private, no-store` had those
+responses weakened to `no-cache`, which lets the browser keep the body on
+disk.
+
+**Now.** A route header that says `no-store` (any case, with any other
+directives) is kept unchanged on all four. A route that set nothing, or a
+weaker header, still gets `private, no-cache`, and a middleware that writes
+`Cache-Control` after `next()` still has the last word.
+
+```ts
+const signedIn: Middleware = async (ctx, next) => {
+  ctx.header("Cache-Control", "private, no-store");
+  await next();
+};
+```
+
+On those four responses Chromium now reports the route's streamed `no-store`
+body as canceled in DevTools, as it already did on its navigations, though
+every byte arrives. Playwright's `response.finished()` never settles on such
+a response: in e2e tests wait for the response's headers
+(`page.waitForResponse(...)`), then for what the page shows.
+
 ## 0.36.1 (2026-11-18)
 
 ### Fixed: a loader read on its own applies the handle values it pushes ([#1443](https://github.com/rangojs/rango/pull/1443))

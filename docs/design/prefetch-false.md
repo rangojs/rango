@@ -820,7 +820,8 @@ already removes every `_rsc*` param from the URL handlers see.
   below.
 - **HTTP caches**: such a response, and a fill response, are sent with
   `cache-control: private, no-cache` (`NOT_REUSED` in
-  `src/rsc/rsc-rendering.ts`), whatever `Cache-Control` the route set. The
+  `src/rsc/rsc-rendering.ts`), in place of any `Cache-Control` the route set,
+  except one that says `no-store`, which is kept as it is. The
   browser also sends the fill with `cache: "no-store"`. A response that
   defers adds `X-Rango-Prefetch` to `Vary`; every other response keeps the
   string main has, byte for byte. See "Where a deferring response may be
@@ -852,6 +853,20 @@ a flagged link read as canceled, and Playwright's `response.finished()` never
 settled on the second one. `private, no-cache` keeps both from being reused
 where it matters: a shared cache may not store it, and the browser has to
 revalidate and has no validator to do it with, so it asks again in full.
+
+The one exception is a route that set `no-store` itself, such as a signed-in
+app whose pages must never reach the disk. Replacing its header with
+`no-cache` would weaken it: the browser may keep a `no-cache` body (see the
+next section). So a response whose route header says `no-store` (any case,
+any other directives beside it) keeps that header unchanged on all four
+not-reused responses: a source-scoped prefetch, a deferring prefetch, a fill
+and a stale partial (`keepsRouteNoStore` in `src/rsc/rsc-rendering.ts`). The
+cost is the report above, for that route only: its prefetches and fills read
+as canceled in DevTools and `response.finished()` never settles in
+Playwright, as its navigations already did, though every byte arrives and the
+client reads the whole stream. An app's e2e tests wait for the response's
+headers (`waitForResponse`), then for what the page shows, never for
+`response.finished()`.
 
 #### Where a deferring response may be kept
 

@@ -245,7 +245,8 @@ body differs. The client marks stale the follow-up revalidation after an
 action, a Back/Forward entry's revalidation, and any request that holds no
 segments (`router.refresh()`, a cross-tab refresh): its data may predate a
 write and the cache cannot tell. Each renders at the origin, is never stored,
-and answers `private, no-cache`. An app that wants the shared entry refreshed
+and answers `private, no-cache`, or the route's own header when it says
+`no-store`. An app that wants the shared entry refreshed
 after a write tags it and calls `updateTag()`.
 
 Nor does it store a partial whose diff depends on the source page.
@@ -261,7 +262,9 @@ hero above the audio list, for every visitor until the entry expired. Such a
 response is exactly one the browser's prefetch cache scopes
 (`x-rsc-prefetch-scope`, `prefetchScopeOf` in `router/source-reads.ts`), so
 the RSC handler marks it `_payloadSourceScoped` and sends it
-`private, no-cache` over the route's own header, and `shouldCacheResponse`
+`private, no-cache` in place of the route's own header (a route header that
+says `no-store` is kept: it already forbids storing, and replacing it would
+let the browser keep a signed-in page on disk), and `shouldCacheResponse`
 refuses the mark, which covers a `Cache-Control` a middleware writes after
 `next()`. A partial whose rule re-rendered the segment carries no scope: it
 is right from every page, so it is stored and served as before. Keying the
@@ -292,8 +295,9 @@ without being the stored copy, and a segment wrongly counted as stored would
 bring back the cached failures #1170 removed. `finalizeRequestResponse`
 (`src/rsc/request-stages.ts`) writes the header, after every middleware, so
 this tier still reads the route's own `s-maxage` when it stores the answer,
-and only for a 200 Flight prefetch (either kind) that is not sent
-`private, no-cache` (scoped to its source page, or carrying deferred units).
+and only for a 200 Flight prefetch (either kind) that is not scoped to its
+source page and carries no deferred units (those are sent
+`private, no-cache`, or the route's `no-store`).
 A route's own `Cache-Control` on such a prefetch is replaced, as it was
 before #1170, unless it says `no-store`, `no-cache` or a zero `max-age`
 (`max-age=0`, with or without `must-revalidate`; the route asked for a fresh

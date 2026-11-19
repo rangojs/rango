@@ -697,12 +697,13 @@ export interface FinalizeRequestOptions<TEnv> {
  * reads the route's own header when it stores the response (s-maxage), the
  * browser gets this one, in place of any other the route set.
  *
- * Left as it is: a partial sent NOT_REUSED (scoped to its source page, or
- * carrying deferred units), a header that forbids storing it (`no-store`,
- * `no-cache`, a zero `max-age`), a redirect a middleware returned after the render (`redirect`,
- * converted to a Flight redirect above), and a response carrying one
- * client's state (a per-client signal header, location state), which a
- * stored copy would replay to later requests.
+ * Left as it is: a partial scoped to its source page or carrying deferred
+ * units (sent NOT_REUSED, or the route's own no-store), a header that
+ * forbids storing it (`no-store`, `no-cache`, a zero `max-age`), a redirect
+ * a middleware returned after the render (`redirect`, converted to a Flight
+ * redirect above), and a response carrying one client's state (a per-client
+ * signal header, location state), which a stored copy would replay to later
+ * requests.
  */
 function applyStoredPrefetchCacheControl(
   response: Response,

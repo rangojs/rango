@@ -480,8 +480,10 @@ already holds that layout; only a prefetch that defers the layout itself (it
 is new to the page) leaves the record unread and unwritten. A response that
 carries deferred work is never reused: the document cache refuses it, and it
 is sent `cache-control: private, no-cache` with `X-Rango-Prefetch` added to
-`Vary`, whatever `Cache-Control` the route set, so no CDN keeps it and it
-never answers a navigation. A browser may keep a copy and answer the same
+`Vary`, in place of any `Cache-Control` the route set unless that one says
+`no-store`, which it keeps, so no CDN keeps it and it never answers a
+navigation (`/document-cache` → "Cache-Control on a partial nothing may
+reuse"). A browser may keep a copy and answer the same
 prefetch from it while it reloads the page for back/forward; the click
 completes it like any other. A fill is never answered from a stored body.
 Every body the document cache does hold is complete, so one entry answers a
