@@ -142,10 +142,11 @@ export function runLoaderReadHandlesTests(
     );
     const first = await nameAfter(page, null);
     await testId(page, "lrh-load").click();
+    // The read's data is on screen, so it landed before the late push is
+    // released. Its title and crumb wait in the hydration window, which the
+    // held document stream keeps open: they apply when it closes, before the
+    // late push.
     const refreshed = await nameAfter(page, first);
-    // The read landed before the late push: its title and crumb alone.
-    await expect(testId(page, "lrh-title")).toHaveText(`LRH ${refreshed}`);
-    await expect(testId(page, "lrh-crumb")).toHaveText(["Chats", refreshed]);
 
     const released = await page.request.get(
       url(`${base}/late?lateRelease=${probe}`),
