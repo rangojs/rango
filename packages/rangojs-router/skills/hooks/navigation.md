@@ -175,8 +175,9 @@ skips the route's `transition()` for this navigation, see below), and `state`
 (location state: `[MyState(value)]` for typed entries, or plain
 structured-clone-safe data; see [`./state.md`](./state.md)).
 
-A navigation whose server answer redraws nothing (every segment held) does not
-scroll, whatever `scroll` says.
+A forward navigation (Link, push, replace, setSearchParams) whose server answer
+redraws nothing (every segment held) does not scroll, whatever `scroll` says.
+Back/Forward still restores its scroll.
 
 Target resolution: a path starting with `/` is app-absolute and gets the
 router `basename` prefixed. A relative path (`"cart"`, `"./cart"`) resolves
