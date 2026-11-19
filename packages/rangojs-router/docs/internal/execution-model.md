@@ -2516,7 +2516,8 @@ response would put the error back over the success. Pinned by
 The document cache never answers a stale request, so it never answers the
 follow-up either. Its key cannot see the write, so the cache neither stores nor
 serves a partial request carrying `_rsc_stale` (`cache/document-cache.ts`), and
-the server answers one with `private, no-cache` (`rsc/rsc-rendering.ts`).
+the server answers one with `private, no-cache` (`rsc/rsc-rendering.ts`), or
+with the route's own header when it says `no-store`.
 Without that, a route with `s-maxage` answers Back's revalidation after an
 action, and the follow-up, with a body cached before the write.
 

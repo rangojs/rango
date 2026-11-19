@@ -222,7 +222,8 @@ suffixes are still appended.
   `fromRouteName` kept a segment, or an intercept targets the route. The key
   names the segments the client holds, not its page, so `/c/tv` would get the
   answer `/c/audio` got for `/c/audio?sort=x` and keep its own hero. It is sent
-  `private, no-cache` over the route's `Cache-Control` and is not stored. One
+  `private, no-cache` in place of the route's `Cache-Control`, or keeps the
+  route's own when that says `no-store`, and is not stored. One
   whose rule re-rendered the segment is right from every page and is stored as
   usual.
 - Non-GET requests
@@ -254,6 +255,35 @@ suffixes are still appended.
 - A page rendered with a visitor's stored theme other than `defaultTheme`.
   That happens only when `Cache-Control` was set after the render (see
   "Theme" below).
+
+### Cache-Control on a partial nothing may reuse
+
+Four partial responses must never be reused by a shared cache or answer
+another request, so the router chooses their `Cache-Control`:
+
+| Response                                                                          | Route set nothing, or a weaker header | Route set `no-store` (any case) |
+| --------------------------------------------------------------------------------- | ------------------------------------- | ------------------------------- |
+| A prefetch scoped to its source page (`x-rsc-prefetch-scope`)                     | `private, no-cache`                   | the route's header, unchanged   |
+| A prefetch that defers `prefetch: false` work                                     | `private, no-cache`                   | the route's header, unchanged   |
+| The fill that follows it (`_rsc_fill`)                                            | `private, no-cache`                   | the route's header, unchanged   |
+| A stale partial (`_rsc_stale`: after an action, Back/Forward, `router.refresh()`) | `private, no-cache`                   | the route's header, unchanged   |
+
+"The route's header" is what a middleware set before `next()` or a handler
+set with `ctx.headers`. A handler's header reaches only a response that runs
+the handler, and a fill (or any partial that keeps the route's segment) does
+not, so a header every response needs, such as a signed-in app's `no-store`,
+belongs in middleware. A middleware that writes `Cache-Control` after
+`next()` still has the last word on all four. Any other partial keeps the
+route's header as it is.
+
+Why not always `no-store`: Chromium reports a `no-store` response whose body
+is read through a stream, as every Flight payload is, as canceled
+(`net::ERR_ABORTED` in DevTools) although every byte arrived, and
+Playwright's `response.finished()` never settles on it. A route that sends
+`no-store` (a signed-in app's pages) accepts that report on these four
+responses, as it already does on its navigations. In an app's e2e tests, wait
+for the response's headers (`page.waitForResponse(...)`) and then for what the
+page shows, never for `response.finished()`.
 
 ## Theme
 

@@ -87,6 +87,8 @@ export { runKeptLayoutSourceTests } from "./kept-layout-source-scenario.js";
 export type { KeptLayoutSourceScenarioOptions } from "./kept-layout-source-scenario.js";
 export { runDocCacheSourceTests } from "./doc-cache-source-scenario.js";
 export type { DocCacheSourceScenarioOptions } from "./doc-cache-source-scenario.js";
+export { runNotReusedNoStoreTests } from "./not-reused-no-store-scenario.js";
+export type { NotReusedNoStoreScenarioOptions } from "./not-reused-no-store-scenario.js";
 export { runPrefetchStoredTests } from "./prefetch-stored-scenario.js";
 export type { PrefetchStoredScenarioOptions } from "./prefetch-stored-scenario.js";
 export { runActionBoundaryTests } from "./action-boundary-scenario.js";

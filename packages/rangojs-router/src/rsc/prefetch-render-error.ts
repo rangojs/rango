@@ -17,7 +17,8 @@
  * a prefetch with nothing live in it carries `private, max-age`
  * (request-stages.ts applyStoredPrefetchCacheControl); a prefetch
  * scoped to its source page or carrying deferred units is sent
- * `private, no-cache` (rsc-rendering.ts NOT_REUSED).
+ * `private, no-cache` (rsc-rendering.ts NOT_REUSED), or the route's own
+ * `no-store`.
  *
  * The errors are the render's `_renderErrors`: a Flight error row, a streamed
  * handler recovered into its boundary, a loader that threw (redirect() and

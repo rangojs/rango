@@ -1141,19 +1141,20 @@ function renderPreparedRscResponse<TEnv>(
     reqCtx._payloadSourceScoped = true;
   }
   // Not reused by a shared cache or the document cache (which also refuses a
-  // payload marked `_payloadDeferred` or `_payloadSourceScoped`), whatever
-  // Cache-Control the route set: a partial scoped to its source page (above);
-  // a response that carries deferred units, which answers one page's prefetch,
-  // and a fill, the second half of one adoption (prefetch: false,
-  // docs/design/prefetch-false.md, R7); and a stale partial render, which a
-  // shared cache keyed by URL must not store or serve. Any other route keeps
-  // its headers.
+  // payload marked `_payloadDeferred` or `_payloadSourceScoped`): a partial
+  // scoped to its source page (above); a response that carries deferred
+  // units, which answers one page's prefetch, and a fill, the second half of
+  // one adoption (prefetch: false, docs/design/prefetch-false.md, R7); and a
+  // stale partial render, which a shared cache keyed by URL must not store or
+  // serve. A route's own `no-store` already forbids all of that and more, so
+  // it is kept. Any other route keeps its headers.
   if (
-    reqCtx._payloadSourceScoped ||
-    reqCtx._payloadDeferred ||
-    (isPartial &&
-      (reqCtx._requestKind === "fill" ||
-        url.searchParams.get(WIRE.stale) === "true"))
+    (reqCtx._payloadSourceScoped ||
+      reqCtx._payloadDeferred ||
+      (isPartial &&
+        (reqCtx._requestKind === "fill" ||
+          url.searchParams.get(WIRE.stale) === "true"))) &&
+    !keepsRouteNoStore(reqCtx.res.headers.get("cache-control"))
   ) {
     rscHeaders["cache-control"] = NOT_REUSED;
   }
@@ -1650,8 +1651,9 @@ function publishTailTiming(
 const PENDING = Symbol("pending");
 
 /**
- * Cache-Control of a response that is not to be reused: one that carries
- * deferred units (`prefetch: false`), and a fill. `private` keeps it out of
+ * Cache-Control of a response that is not to be reused: a partial scoped to
+ * its source page, one that carries deferred units (`prefetch: false`), a
+ * fill, and a stale partial render. `private` keeps it out of
  * shared caches; `no-cache` makes the browser ask again, and with no
  * validator on the response that is a full request. The browser may keep the
  * body all the same (Chromium does) and answers from it, without asking,
@@ -1661,8 +1663,24 @@ const PENDING = Symbol("pending");
  * Chromium reports a `no-store` fetch whose body is read through a stream
  * as canceled (net::ERR_ABORTED in DevTools, and Playwright's
  * response.finished() never settles), though every byte arrived.
+ * A route that set `no-store` itself keeps it (keepsRouteNoStore) and takes
+ * that report, as its navigations already do: replacing it with `no-cache`
+ * would let the browser keep a page the route said must never be stored.
  */
 const NOT_REUSED = "private, no-cache";
+
+const NO_STORE_DIRECTIVE = /(^|[\s,;])no-store(?=$|[\s,;=])/i;
+
+/**
+ * Whether the route's own Cache-Control (set by a middleware before next()
+ * or by a handler, read from the stub response) says `no-store`. Read at the
+ * NOT_REUSED decision: every handler and middleware-before-next() write has
+ * landed, and createResponseWithMergedHeaders copies the stub value onto the
+ * response because the render then sets none.
+ */
+function keepsRouteNoStore(cacheControl: string | null): boolean {
+  return cacheControl !== null && NO_STORE_DIRECTIVE.test(cacheControl);
+}
 
 /**
  * Whether `value` is not a promise, or a promise that has already settled:
