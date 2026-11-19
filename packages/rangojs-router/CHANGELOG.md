@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixed: a navigation that redraws nothing applies its scroll
+
+**Before.** When the server's answer to a navigation held every segment
+(nothing to redraw), the router committed the new history entry and dropped
+its scroll. A link to the page on screen after an action marked it stale, or
+a search-param change on a route whose segments all stay held (a route with
+`revalidate(() => false)`), stayed where the page was scrolled instead of
+going to the top or to the `#hash` target.
+
+**Now.** That navigation scrolls as one that redraws: to the top for a new
+entry, to the hash target when the URL has one, and not at all with
+`scroll: false` (`<Link scroll={false}>`, `router.push(url, { scroll: false })`,
+`setSearchParams(next, { scroll: false })`). An intercept's answer still does
+not scroll, and Back/Forward, actions and `router.refresh()` are unchanged. A
+search-param navigation that holds every segment now scrolls to the top, the
+documented default; pass `scroll: false` to keep the position, as a filter UI
+usually wants.
+
 ### Added: client components push handle values with `usePushHandle()`
 
 **Before.** Only the server wrote handles: a handler or a loader body with

@@ -27,6 +27,7 @@ import {
   wholeInterceptMatched,
 } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-transaction.js";
+import { handleNavigationEnd } from "./scroll-restoration.js";
 import { ServerRedirect } from "../errors.js";
 import {
   debugLog,
@@ -895,10 +896,27 @@ export function createPartialUpdater(
         debugLog(
           "[Browser] No changes - all revalidations returned false, keeping existing UI",
         );
-        tx.commit(matchedIds, existingSegments, {
-          metadata: payload.metadata,
-          treeless: true,
-        });
+        const { scroll: treelessScroll } = tx.commit(
+          matchedIds,
+          existingSegments,
+          {
+            metadata: payload.metadata,
+            treeless: true,
+            // An intercept answer does not scroll, as in the commit that
+            // redraws.
+            ...(hasActiveInterceptSlots(payload.metadata.slots) && {
+              scroll: false,
+            }),
+          },
+        );
+        // No React commit follows, so NavigationProvider's layout effect never
+        // sees this decision: apply it here, as the shallow navigation does
+        // (navigation-bridge.ts). Back/forward commits decide `enabled: false`
+        // and restore after their fetch; actions and cache-only commits decide
+        // nothing.
+        if (treelessScroll) {
+          handleNavigationEnd({ scroll: treelessScroll.enabled });
+        }
         debugLog("[Browser] Navigation complete (no re-render)");
         return;
       }

@@ -106,6 +106,7 @@ import { revalidationContractPatterns } from "./urls/revalidation-contract.js";
 import { ctxCleanPatterns } from "./urls/ctx-clean.js";
 import { actionRedirectRevalidationPatterns } from "./urls/action-redirect-revalidation.js";
 import { hashNavigationPatterns } from "./urls/hash-navigation.js";
+import { heldScrollPatterns } from "./urls/held-scroll.js";
 import { linkBehaviorPatterns } from "./urls/link-behavior.js";
 import { delayedBreadcrumbPatterns } from "./urls/delayed-breadcrumbs.js";
 import { handlesAfterAwaitPatterns } from "./urls/handles-after-await.js";
@@ -1653,6 +1654,10 @@ export const urlpatterns = urls(
       include("/hash-navigation", hashNavigationPatterns, {
         name: "hashNavigation",
       }),
+
+      // A navigation that redraws nothing still scrolls
+      // (e2e/held-navigation-scroll.test.ts).
+      include("/", heldScrollPatterns, { name: "" }),
 
       // Link behavior test patterns (interception, prefetch strategies)
       include("/link-behavior", linkBehaviorPatterns, {

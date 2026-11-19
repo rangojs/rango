@@ -115,6 +115,7 @@ export const routes = {
   hcStreamVt: "/handles-commit/stream-vt/:boundary/:id",
   "heldHandlesClient.index": "/held-handles-client",
   heldHandlesServer: "/held-handles-server",
+  heldScroll: "/held-scroll",
   heldUseCache: "/held-use-cache/:probe",
   heldUseCacheControl: "/held-use-cache/:probe/:op",
   historyHandlesA: "/history-handles/a",

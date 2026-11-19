@@ -365,6 +365,7 @@ import {
   actionFailurePatterns,
 } from "./pages/action-failure.js";
 import { heldBoundaryPatterns } from "./pages/held-boundary.js";
+import { heldScrollPatterns } from "./pages/held-scroll.js";
 import { parallelLoaderInheritPatterns } from "./pages/parallel-loader-inherit.js";
 import { peFormStatePatterns } from "./pages/pe-form-state.js";
 import { documentLocationStatePatterns } from "./pages/document-location-state.js";
@@ -3216,6 +3217,9 @@ export const urlpatterns = urls(
         // layout-hold contract (mirrors the router e2e app).
         include("/", prefetchTransitionPatterns, { name: "" }),
         include("/", heldBoundaryPatterns, { name: "" }),
+        // A navigation that redraws nothing still scrolls
+        // (e2e/held-navigation-scroll.test.ts).
+        include("/", heldScrollPatterns, { name: "" }),
         // A held route loader read from a child layout's parallel slot
         // (e2e/parallel-loader-inherit.test.ts).
         include("/", parallelLoaderInheritPatterns, { name: "" }),

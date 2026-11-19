@@ -266,6 +266,7 @@ export const NamedRoutes = {
   hcStreamVt: "/handles-commit/stream-vt/:boundary/:id",
   "heldHandlesClient.index": "/held-handles-client",
   heldHandlesServer: "/held-handles-server",
+  heldScroll: "/held-scroll",
   historyHandlesA: "/history-handles/a",
   historyHandlesB: "/history-handles/b",
   hoFullNovt: "/handles-overlap/full/novt/:id",
