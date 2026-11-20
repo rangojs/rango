@@ -1386,6 +1386,26 @@ export const pageMeta: PageMeta[] = [
         "depth": 2,
         "id": "cross-app-navigation-is-a-full-document-load",
         "text": "Cross-app navigation is a full document load"
+      },
+      {
+        "depth": 2,
+        "id": "making-a-cross-app-navigation-feel-soft",
+        "text": "Making a cross-app navigation feel soft"
+      },
+      {
+        "depth": 3,
+        "id": "link-to-another-app-with-a-plain-anchor",
+        "text": "Link to another app with a plain anchor"
+      },
+      {
+        "depth": 3,
+        "id": "cross-document-view-transitions",
+        "text": "Cross-document view transitions"
+      },
+      {
+        "depth": 3,
+        "id": "prerender-the-other-app-with-speculation-rules",
+        "text": "Prerender the other app with Speculation Rules"
       }
     ],
     "type": "guide",

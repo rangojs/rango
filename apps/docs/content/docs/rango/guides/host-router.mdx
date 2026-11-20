@@ -278,3 +278,121 @@ A client-side navigation that crosses an app boundary (a `<Link>` or intercepted
 Why: a soft swap can't faithfully re-establish the target app's document-level state — stylesheets shared across apps are dropped by React 19's by-`href` resource dedup, and theme, warmup, and prefetch-TTL are captured once at document load. A full document load re-establishes the target app's entire document (CSS, theme, meta) by construction, so you do **not** need to coordinate stylesheet `href`s, `precedence`, or theme config across independently-authored apps — each app owns its own document.
 
 Within-app navigation is unchanged: a normal soft SPA update. Only crossing an app boundary triggers the reload. See [Navigation](/docs/rango/features/navigation).
+
+## Making a cross-app navigation feel soft
+
+A document load doesn't have to look like one. Two browser features work on the document navigation as it stands: a cross-document view transition animates from the old page to the new one instead of flashing to a blank page, and Speculation Rules prerender the other app in the background so the switch shows at once. Neither needs anything from Rango, and a browser without them navigates as before.
+
+Both key on the browser's own navigation, so start with the link.
+
+### Link to another app with a plain anchor
+
+A plain `<Link to="/shop">` from another app on the same origin works: Rango sends a partial request, the shop app answers `X-RSC-Reload`, and the client sets `window.location.href`. That costs a round trip before the document request even starts, and the link's prefetch sends one more request that the client drops. Give cross-app links one component that makes them a document navigation at the click:
+
+```tsx
+// src/shared/app-link.tsx
+import { Link, type LinkProps } from "@rangojs/router/client";
+
+// A link into another app under the host router.
+export function AppLink(props: Omit<LinkProps, "reloadDocument" | "prefetch">) {
+  return <Link {...props} reloadDocument prefetch="none" data-app-link="" />;
+}
+```
+
+`data-app-link` is the marker the Speculation Rules below select on. The view transition and the prerender also work for a plain `<Link>` (the `X-RSC-Reload` path ends in the same kind of navigation), one round trip later.
+
+### Cross-document view transitions
+
+Opt both documents in with one CSS rule. Put it in the stylesheet every app's Document links, or in an inline `<style>` in each Document:
+
+```css
+/* src/shared/styles.css */
+@view-transition {
+  navigation: auto;
+}
+```
+
+A navigation from one app to the other now cross-fades. Chrome that both documents render, such as the site header, can morph in place instead of fading: give it the same `view-transition-name` on both sides.
+
+```css
+.site-header {
+  view-transition-name: site-header;
+}
+```
+
+What to know:
+
+- **Same origin only.** Path-mounted apps (`host(["example.com/shop"])`) qualify. Apps on different hosts are different origins, and the browser never animates between them.
+- **Both documents need the rule.** Back and Forward between the apps animate too; a reload does not.
+- **Browser support:** Chromium-based browsers (126+) and Safari (18.2+). Elsewhere the navigation happens without the animation.
+- **A `view-transition-name` set in CSS takes part in every view transition in the document**, including the ones [`transition()`](/docs/rango/guides/view-transitions) starts inside an app. Name only chrome that looks the same on both sides, and keep each name unique on the page.
+- **The animation starts once the new document can render**, so the old page stays on screen until then. A fast target document (a `ppr` shell or `Prerender` on each app's entry pages) and the prerender below shorten that wait.
+- This is the browser's transition across documents. React's `<ViewTransition>` and Rango's `transition()` animate inside one document and play no part in it.
+
+### Prerender the other app with Speculation Rules
+
+Speculation Rules tell the browser to load and render a page in the background before the click. When the user navigates there, the prerendered page is shown at once, already hydrated. Render the rules in each app's Document and match only the links into other apps:
+
+```tsx
+// src/shared/document.tsx
+"use client";
+
+import styles from "./styles.css?url";
+
+const speculationRules = JSON.stringify({
+  prerender: [
+    { where: { selector_matches: "a[data-app-link]" }, eagerness: "moderate" },
+  ],
+});
+
+export function Document({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <link rel="stylesheet" href={styles} precedence="default" />
+        <script
+          type="speculationrules"
+          dangerouslySetInnerHTML={{ __html: speculationRules }}
+        />
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+`moderate` starts the prerender when the pointer rests on a link (about 200 ms) or presses it; `conservative` waits for the press, while `eager` and `immediate` start earlier and spend more requests. A rule can match by URL instead of the marker: `{ where: { href_matches: ["/shop", "/shop/*"] } }`. The view transition still runs when a prerendered page is shown.
+
+What to know:
+
+- **Match only links into other apps.** A link inside the app is a soft navigation, which never shows the prerendered document, so a rule that matches it costs a full render on the server and in the browser for nothing.
+- **A prerender is a real request for the target document**, sent with `Sec-Purpose: prefetch;prerender`, and it runs the target app's middleware and handlers. Keep document GETs free of side effects, or skip them for a prerender, which the user may never open:
+
+  ```ts
+  import { headers, type Middleware } from "@rangojs/router";
+
+  export const recordVisits: Middleware = async (ctx, next) => {
+    if (!headers().get("sec-purpose")?.includes("prerender")) {
+      await recordVisit(ctx.request.url);
+    }
+    return next();
+  };
+  ```
+
+- **The page runs while hidden.** `document.prerendering` is `true` until the user navigates to it, and `prerenderingchange` fires on `document` when they do. Count client-side page views from there:
+
+  ```ts
+  export function onShown(callback: () => void) {
+    // TypeScript's DOM types do not declare document.prerendering yet.
+    if ((document as Document & { prerendering?: boolean }).prerendering) {
+      document.addEventListener("prerenderingchange", callback, { once: true });
+    } else {
+      callback();
+    }
+  }
+  ```
+
+- **Browser support:** Chromium-based browsers. Others ignore the script.
+- **Apps on other hosts of the same site** (`app.example.com` linked from `example.com`): Chromium prerenders them only when the target's document response carries `Supports-Loading-Mode: credentialed-prerender`. Set it in that app with `router.use()` middleware that calls `ctx.header("Supports-Loading-Mode", "credentialed-prerender")`. The view transition does not apply there, since the two are different origins.
+- **Test automation turns prerendering off.** A browser driven over the DevTools protocol, Playwright's included, reports each attempt as `PrerenderingDisabledByDevTools`, so an e2e test cannot show the prerender. Check it in an ordinary Chrome window, where DevTools lists each rule and attempt under Application, Speculative loads.

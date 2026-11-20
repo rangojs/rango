@@ -327,6 +327,7 @@ Unit-test a `when` with `runTransitionWhen(when, { kind, from, to, action })` fr
 - **Need a modal-only morph?** Per-slot `transition()` is a no-op at render time today — use an element-level React `<ViewTransition>` inside the modal component (or a CSS animation).
 - **Action revalidation inside a modal is safe.** Modal subtree identity is preserved across the round-trip, so `useActionState`, focus, and scroll all survive.
 - Element-level `<ViewTransition>` (imported directly from React, morphing named elements across pages) composes with Rango's segment-level wraps as usual; Rango doesn't intercept those.
+- **Animating between apps under a host router** is not a `transition()` job: a navigation between apps is a document load, which no React transition spans. The browser's cross-document view transition does it with one CSS rule; see [Making a cross-app navigation feel soft](/docs/rango/guides/host-router#making-a-cross-app-navigation-feel-soft).
 
 <Cards>
   <Card href="/docs/rango/guides/layouts" title="Layouts">
