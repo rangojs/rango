@@ -4,6 +4,7 @@ import {
   RULE_BROWSER_IMPORT,
   RULE_OBJECT_CREATE,
   RULE_RSC_LITERAL,
+  RULE_SLOT_ID,
   RULE_VI_MOCK,
   compareToBaseline,
   countHits,
@@ -441,6 +442,40 @@ test("browser-import: only non-test server, rsc, router and cache source is in s
   const nested = ['import { a } from "../navigation-client.js";'];
   assert.deepEqual(
     lines(`${SRC}browser/react/x.ts`, RULE_BROWSER_IMPORT, nested),
+    [],
+  );
+});
+
+// ---- rule 5: the parallel-slot segment id ---------------------------------
+
+test("slot-id: the ${x.shortCode}.${y} shape, however the member is wrapped", () => {
+  const src = [
+    "const a = `${entry.shortCode}.${slot}`;",
+    "const b = `${parentEntry.shortCode}.${intercept.slotName}`;",
+    "const c = `${(entry.shortCode)}.${slot}`;",
+    "const d = `${entry.shortCode}.${slot}.tail`;",
+  ];
+  assert.deepEqual(lines(`${SRC}router/x.ts`, RULE_SLOT_ID, src), [1, 2, 3, 4]);
+});
+
+test("slot-id: other segment ids, shortCode concatenations and the owner are not reported", () => {
+  const src = [
+    "const a = `${entry.shortCode}.notFound`;",
+    "const b = `${parent.shortCode}${includeScope}${prefix}${index}`;",
+    "const c = `${entry.shortCode}D${index}.${loaderId}`;",
+    "const d = `${shortCode}.${slot}`;",
+  ];
+  assert.deepEqual(lines(`${SRC}router/x.ts`, RULE_SLOT_ID, src), []);
+  assert.deepEqual(
+    lines(`${SRC}server/context.ts`, RULE_SLOT_ID, [
+      "const a = `${entry.shortCode}.${slot}`;",
+    ]),
+    [],
+  );
+  assert.deepEqual(
+    lines(`${SRC}router/__tests__/x.test.ts`, RULE_SLOT_ID, [
+      "const a = `${entry.shortCode}.${slot}`;",
+    ]),
     [],
   );
 });

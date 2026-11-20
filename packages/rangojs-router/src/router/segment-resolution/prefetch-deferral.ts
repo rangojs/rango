@@ -36,6 +36,7 @@ import {
   type InterceptEntry,
   type LoaderEntry,
   segmentPinOf,
+  slotSegmentId,
 } from "../../server/context.js";
 import { requestHeaders } from "../../server/request-headers.js";
 import type { HandlerContext, InternalHandlerContext } from "../../types.js";
@@ -288,12 +289,10 @@ function collectDeferrable(
       loaders.set(loaderEntry, own ? true : behind);
     }
     for (const parallelEntry of getParallelEntries(entry.parallel)) {
-      // A slot's segment id, as resolveParallelSegments
-      // (revalidation.ts) forms it.
       const slotIds = flagsLoading(parallelEntry)
         ? getParallelSlotEntries(entry.parallel)
             .filter((slot) => slot.entry === parallelEntry)
-            .map((slot) => `${entry.shortCode}.${slot.slot}`)
+            .map((slot) => slotSegmentId(entry, slot.slot))
         : [];
       if (slotIds.length > 0) units.set(parallelEntry, { index, ids: slotIds });
       collect(parallelEntry, [...behind, ...slotIds], index);
