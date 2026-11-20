@@ -21,6 +21,10 @@ import { expect, test, type Page } from "@playwright/test";
  *    alone (handles/pushed-by.ts: `matched` lists the loader segment). Userland
  *    pins: src/testing/__tests__/serve-shell-request-intercept-handle-owner.rsc-test.tsx,
  *    src/testing/__tests__/prefetch-false-intercept.rsc-test.tsx.
+ * 3. No response carries a `_`-prefixed segment key: an intercept's segments
+ *    travel in the payload's slots as well as its segment list, and
+ *    buildMatchResult (router/match-result.ts) drops those keys from both.
+ *    Unit pin: src/router/__tests__/match-result.test.ts.
  */
 
 export interface InterceptHeldScenarioOptions {
@@ -160,6 +164,42 @@ export function runInterceptHeldTests(
     await expect(
       page.getByTestId("ih-crumb").filter({ hasText: "modal-loader:1" }),
     ).toHaveCount(1);
+  });
+
+  test("no response carries an internal segment field: document, opened and moved intercept, and an action from the modal", async ({
+    page,
+  }) => {
+    const bodies: Promise<string>[] = [];
+    page.on("response", (response) => {
+      const type = response.headers()["content-type"] ?? "";
+      if (type.includes("text/x-component") || type.includes("text/html")) {
+        bodies.push(response.text().catch(() => ""));
+      }
+    });
+
+    await openModal(page, "ih-open-mixed", "ih-modal");
+    await page.getByTestId("ih-modal-to-loader").click();
+    await expect(page).toHaveURL(/\/intercept-held\/loader\/1$/);
+    await expect(page.getByTestId("ih-modal")).toBeVisible();
+    await callActionFromModal(page);
+
+    const texts = await Promise.all(bodies);
+    // The document, the two intercept navigations and the action.
+    expect(texts.filter((text) => text.length > 0).length).toBeGreaterThan(3);
+    // A server-side segment marker (`_handlerRan`) is a `_`-prefixed key; the
+    // document inlines its Flight rows JSON-escaped (\"_key\":). The scan reads
+    // whole bodies, so the intercept-held fixtures' own data (loader results,
+    // props, handle values) must hold no such key either. A `__` key is left
+    // out: React's `dangerouslySetInnerHTML` sends `__html`.
+    const internal = new Set<string>();
+    for (const text of texts) {
+      for (const match of text.matchAll(
+        /\\?"(_[A-Za-z$][A-Za-z0-9_$]*)\\?":/g,
+      )) {
+        internal.add(match[1]!);
+      }
+    }
+    expect([...internal]).toEqual([]);
   });
 
   test("a handle pushed by an intercept's handler reaches the page", async ({

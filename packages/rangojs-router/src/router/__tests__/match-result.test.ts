@@ -456,6 +456,96 @@ describe("match-result", () => {
       expect(result.segments.every((s) => !("_handlerRan" in s))).toBe(true);
     });
 
+    /** Own keys of `segment` that start with `_`. */
+    const internalKeys = (segment: ResolvedSegment): string[] =>
+      Object.keys(segment).filter((key) => key.startsWith("_"));
+
+    it.each([
+      ["full", true],
+      ["partial", false],
+    ])(
+      "%s match sends no _-prefixed key in segments or in any slot's segments",
+      (_label, isFullMatch) => {
+        // A marker no strip names: a new internal field must not need one.
+        const internal = {
+          _handlerRan: true,
+          _futureMarker: 1,
+        } as Partial<ResolvedSegment>;
+        const modal = createSegment("M0", { slot: "@modal", ...internal });
+        const page = createSegment("R0", internal);
+        const state = createPipelineState();
+        state.matchedIds = ["R0"];
+        state.interceptSegments = [modal];
+        state.slots = {
+          "@modal": { active: true, segments: [modal] },
+          "@side": {
+            active: true,
+            segments: [
+              createSegment("S0", { _x: 1 } as Partial<ResolvedSegment>),
+            ],
+          },
+        };
+
+        const result = buildMatchResult(
+          [page, modal],
+          createMockContext({ isFullMatch }),
+          state,
+        );
+
+        expect(result.segments.flatMap(internalKeys)).toEqual([]);
+        expect(
+          Object.values(result.slots!).flatMap((slot) =>
+            slot.segments!.flatMap(internalKeys),
+          ),
+        ).toEqual([]);
+        // Every public field is still sent.
+        expect(result.slots!["@modal"].segments![0]).toEqual(
+          createSegment("M0", { slot: "@modal" }),
+        );
+        expect(result.segments.map((s) => s.id)).toEqual(["R0", "M0"]);
+      },
+    );
+
+    it("leaves the pipeline's segments and slots as they were built", () => {
+      const modal = createSegment("M0", {
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      const state = createPipelineState();
+      const slots = { "@modal": { active: true, segments: [modal] } };
+      state.slots = slots;
+
+      const result = buildMatchResult(
+        [modal],
+        createMockContext({ isFullMatch: true }),
+        state,
+      );
+
+      expect(state.slots).toBe(slots);
+      expect(slots["@modal"].segments[0]).toBe(modal);
+      expect(modal._handlerRan).toBe(true);
+      expect(result.slots!["@modal"].segments![0]).not.toBe(modal);
+    });
+
+    it("sends a segment held by both segments and a slot as one object", () => {
+      const modal = createSegment("M0", {
+        _handlerRan: true,
+      } as Partial<ResolvedSegment>);
+      const clean = createSegment("M1");
+      const state = createPipelineState();
+      state.slots = { "@modal": { active: true, segments: [modal, clean] } };
+
+      const result = buildMatchResult(
+        [modal, clean],
+        createMockContext({ isFullMatch: true }),
+        state,
+      );
+
+      expect(result.slots!["@modal"].segments![0]).toBe(result.segments[0]);
+      // A segment with no internal key is sent as itself, uncopied.
+      expect(result.segments[1]).toBe(clean);
+      expect(result.slots!["@modal"].segments![1]).toBe(clean);
+    });
+
     // #1103: the browser replaces the handle pushes of a loader that ran and
     // keeps those of a loader the response skipped, so resolvedIds names the
     // loaders that ran. A skipped loader is in matched only.

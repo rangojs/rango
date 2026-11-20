@@ -205,8 +205,9 @@ export interface ResolvedSegment {
    * @internal Server-side marker: true when the segment's handler actually ran
    * this request (not skipped via the revalidate cache path). Used by
    * match-result.ts to populate `MatchResult.resolvedIds` for client-side
-   * handle-bucket cleanup. Stripped from the wire payload before serialization
-   * — never reaches the client.
+   * handle-bucket cleanup. Like every `_`-prefixed key, buildMatchResult drops
+   * it from `segments` and every slot's segments before serialization — never
+   * reaches the client.
    */
   _handlerRan?: boolean;
 }
