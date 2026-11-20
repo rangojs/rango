@@ -290,10 +290,23 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     expect(initialResponse).not.toBeNull();
     await expect(page.getByTestId("about-page")).toBeVisible();
     const staleBody = await initialResponse!.body();
-    const staleHeaders = { ...initialResponse!.headers() };
-    delete staleHeaders["content-encoding"];
-    delete staleHeaders["content-length"];
-    delete staleHeaders["transfer-encoding"];
+    // Rebuilt from headersArray(), not headers(): headers() joins a repeated
+    // header with "\n" (Vite's dev server sends `Vary: Origin` and
+    // `Vary: Sec-Fetch-Dest`), and Chromium never commits a fulfilled
+    // navigation whose header value holds a newline, so page.goto hangs.
+    const staleHeaders: Record<string, string> = {};
+    for (const { name, value } of await initialResponse!.headersArray()) {
+      const key = name.toLowerCase();
+      if (
+        key === "content-encoding" ||
+        key === "content-length" ||
+        key === "transfer-encoding"
+      ) {
+        continue;
+      }
+      staleHeaders[key] =
+        key in staleHeaders ? `${staleHeaders[key]}, ${value}` : value;
+    }
     // Remove the route the page is currently displaying. Editing a route
     // definition (urls.tsx has no HMR boundary, unlike the component-content
     // edits in hmr.test.ts that update in-page without a reload) triggers a
@@ -316,6 +329,12 @@ test.describe.serial("hmr-route-mutations (types + live serving)", () => {
     // boot one captured pre-swap document, then let subsequent navigations hit
     // the live worker. Its startup hot-channel query must notice that the
     // document is stale and request exactly one fresh document.
+    //
+    // A document from route.fulfill has no remote address, so Chromium's Local
+    // Network Access checks block its WebSocket to localhost, and with it the
+    // Vite hot channel that query runs on. Grant the permission so the
+    // captured document boots like one the dev server sent.
+    await page.context().grantPermissions(["local-network-access"]);
     let aboutDocumentRequests = 0;
     let staleDocumentServed = false;
     await page.route("**/*", async (route) => {
