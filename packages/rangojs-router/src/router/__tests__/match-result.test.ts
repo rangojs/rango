@@ -290,6 +290,7 @@ describe("match-result", () => {
       const state = createPipelineState();
       state.matchedIds = ["page"];
       state.interceptSegments = [createSegment("modal")];
+      state.interceptMatchedIds = ["modal"];
 
       const segments = [createSegment("page")];
       const result = buildMatchResult(segments, ctx, state);
@@ -300,7 +301,7 @@ describe("match-result", () => {
 
   describe("buildMatchResult() - intercept handling", () => {
     // An intercept's slot and its loader segments, ids as
-    // intercept-resolution.ts interceptSegmentIds forms them.
+    // intercept-resolution.ts resolveInterceptEntry returns them.
     const interceptResult = {
       entry: { shortCode: "L0" },
       intercept: {
@@ -309,16 +310,21 @@ describe("match-result", () => {
       },
     } as any;
     const SLOT = ["L0.@modal", "L0.@modalD0.a", "L0.@modalD1.b"];
-    const interceptMatched = (clientSegmentIds: string[]) =>
-      buildMatchResult(
+    const interceptMatched = (clientSegmentIds: string[]) => {
+      const state = createPipelineState();
+      // The walk lists the target chain's layout L0R1, not on the page.
+      state.matchedIds = ["L0", "L0R1"];
+      state.interceptMatchedIds = SLOT;
+      return buildMatchResult(
         [createSegment("L0R1")],
         createMockContext({
           isFullMatch: false,
           clientSegmentIds,
           interceptResult,
         }),
-        createPipelineState(),
+        state,
       ).matched;
+    };
 
     it("should use clientSegmentIds when intercepting with client segments, then the slot's ids", () => {
       expect(interceptMatched(["L0", "L0R0"])).toEqual(["L0", "L0R0", ...SLOT]);
@@ -345,20 +351,27 @@ describe("match-result", () => {
       ).toEqual(["L0", "L0R0", ...SLOT]);
     });
 
-    it("should use segment IDs when intercepting without client segments (HMR)", () => {
+    it("lists the walk's ids, then the slot's, when intercepting without client segments (HMR)", () => {
       const ctx = createMockContext({
         isFullMatch: false,
         clientSegmentIds: [],
-        interceptResult: { route: "modal", slot: "@modal" } as any,
+        interceptResult,
       });
       const state = createPipelineState();
-      state.interceptSegments = [createSegment("modal-content")];
+      state.matchedIds = ["L0", "L0R1"];
+      state.interceptSegments = [createSegment("L0.@modal")];
+      state.interceptMatchedIds = SLOT;
 
-      const segments = [createSegment("layout"), createSegment("page")];
+      const segments = [
+        createSegment("L0"),
+        createSegment("L0R1"),
+        createSegment("L0.@modal"),
+      ];
       const result = buildMatchResult(segments, ctx, state);
 
-      // Should use actual segment IDs when client sent empty
-      expect(result.matched).toEqual(["layout", "page"]);
+      // Nothing held: the page is what the walk rendered, and every loader
+      // segment of the slot is listed, as in a request that holds the page.
+      expect(result.matched).toEqual(["L0", "L0R1", ...SLOT]);
     });
   });
 
@@ -683,6 +696,7 @@ describe("match-result", () => {
         createSegment("modal2"),
         createSegment("modal3"),
       ];
+      state.interceptMatchedIds = ["modal1", "modal2", "modal3"];
 
       const segments = [createSegment("page")];
       const result = buildMatchResult(segments, ctx, state);

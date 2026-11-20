@@ -278,22 +278,6 @@ export function interceptRecordKey(
 }
 
 /**
- * Every segment id an intercept's slot owns, in order: the slot, then one
- * loader segment per loader in declaration order, run or not. A request that
- * resolves the intercept lists them in `matched` (match-result.ts).
- */
-export function interceptSegmentIds(
-  parentEntry: EntryData,
-  intercept: InterceptEntry,
-): string[] {
-  const slotId = interceptSlotId(parentEntry, intercept);
-  return [
-    slotId,
-    ...intercept.loader.map((l, i) => `${slotId}D${i}.${l.loader.$$id}`),
-  ];
-}
-
-/**
  * An intercept's loaders are loader segments of its slot, resolved through
  * the partial lane's funnel (revalidation.ts resolveOwnerLoaders): each one
  * revalidated on its own, kept in a fill, deferred by a prefetch when flagged.
@@ -303,7 +287,7 @@ function resolveInterceptLoaders<TEnv>(
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
   belongsToRoute: boolean,
-): Promise<{ segments: ResolvedSegment[] }> {
+): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   return resolveOwnerLoaders(
     pass,
     {
@@ -331,11 +315,14 @@ async function settleLoaderSegments(
 }
 
 /**
- * Resolve an intercept entry: its slot segment, then its loader segments. The
- * background re-render resolves with a pass that holds nothing
- * (heldNothingPassInput, resolution-pass.ts): every segment renders fresh, and
- * its loaders are skipped (skipLoaders), each registered for the handler's
- * read.
+ * Resolve an intercept entry: its slot segment, then its loader segments, and
+ * every segment id the slot owns (`matchedIds`): the slot, then one loader
+ * segment per loader in declaration order, run or not, as resolveOwnerLoaders
+ * lists a route's. A request that resolves the intercept lists them in
+ * `matched` (match-result.ts). The background re-render resolves with a pass
+ * that holds nothing (heldNothingPassInput, resolution-pass.ts): every segment
+ * renders fresh, and its loaders are skipped (skipLoaders), each registered
+ * for the handler's read.
  */
 export async function resolveInterceptEntry<TEnv>(
   pass: ResolutionPass<TEnv>,
@@ -352,17 +339,19 @@ export async function resolveInterceptEntry<TEnv>(
      */
     background?: boolean;
   },
-): Promise<ResolvedSegment[]> {
+): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
 
   const { context, params } = pass;
   const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
-  const { segments: loaderSegments } = await resolveInterceptLoaders(
-    pass,
-    interceptEntry,
-    parentEntry,
-    belongsToRoute,
-  );
+  const { segments: loaderSegments, matchedIds: loaderIds } =
+    await resolveInterceptLoaders(
+      pass,
+      interceptEntry,
+      parentEntry,
+      belongsToRoute,
+    );
+  const matchedIds = [slotSegmentId, ...loaderIds];
   // The slot's tag scope (#957, cache-tag.ts runInSegmentTagScope) and the
   // owner of its handler's handle pushes (a handler's ctx.use(Handle) reads
   // it when called).
@@ -390,7 +379,10 @@ export async function resolveInterceptEntry<TEnv>(
   // runs, only the loaders the client lacks (match-result.ts leaves the null
   // slot out of the response).
   if (fillSends(context, slotSegmentId, pass.client) === false) {
-    return [slotSegment(null, undefined), ...loaderSegments];
+    return {
+      segments: [slotSegment(null, undefined), ...loaderSegments],
+      matchedIds,
+    };
   }
 
   let handlerResult: ReactNode;
@@ -487,32 +479,36 @@ export async function resolveInterceptEntry<TEnv>(
   // started with ctx.use() by now are delivered from this response.
   deliverStartedLoaders(context, loaderSegments);
 
-  return [slotSegment(component, layoutElement), ...loaderSegments];
+  return {
+    segments: [slotSegment(component, layoutElement), ...loaderSegments],
+    matchedIds,
+  };
 }
 
 /**
  * The loader segments of a cached intercept slot, on a cache hit: the slot
- * keeps its cached component and layout, its loaders are never cached.
+ * keeps its cached component and layout, its loaders are never cached. Its
+ * `matchedIds` are the slot's, the cached slot's id first, as
+ * resolveInterceptEntry returns them.
  */
 export async function resolveInterceptLoadersOnly<TEnv>(
   pass: ResolutionPass<TEnv>,
   interceptEntry: InterceptEntry,
   parentEntry: EntryData,
   belongsToRoute: boolean,
-): Promise<ResolvedSegment[]> {
+): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   latchPprHeaderScopeForInterceptTarget(interceptEntry);
   const handleStore = _getRequestContext()?._handleStore;
-  const { segments } = await resolveInterceptLoaders(
+  const slotSegmentId = interceptSlotId(parentEntry, interceptEntry);
+  const { segments, matchedIds } = await resolveInterceptLoaders(
     pass,
     interceptEntry,
     parentEntry,
     belongsToRoute,
   );
   // Where resolveInterceptEntry runs the handler.
-  handleStore?.releaseRecordedValues(
-    interceptSlotId(parentEntry, interceptEntry),
-  );
+  handleStore?.releaseRecordedValues(slotSegmentId);
   if (!interceptEntry.loading) await settleLoaderSegments(segments);
   deliverStartedLoaders(pass.context, segments);
-  return segments;
+  return { segments, matchedIds: [slotSegmentId, ...matchedIds] };
 }

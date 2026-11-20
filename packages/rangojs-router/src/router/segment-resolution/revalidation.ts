@@ -1711,6 +1711,9 @@ export async function resolveAllSegments<TEnv>(
       cut = true;
       break;
     }
+    // Under an intercept the route's page is not rendered, so it is not
+    // listed either: `matched` is what the client keeps (match-result.ts
+    // buildMatchResult), and the slot takes the page's place.
     if (entry.type === "route" && interceptResult) {
       debugLog(
         "matchPartial.intercept",
@@ -1720,10 +1723,6 @@ export async function resolveAllSegments<TEnv>(
           segmentId: entry.shortCode,
         },
       );
-      if (!seenMatchIds.has(entry.shortCode)) {
-        seenMatchIds.add(entry.shortCode);
-        matchedIds.push(entry.shortCode);
-      }
       continue;
     }
     if (interceptFillSkips(fillMatch, entry.shortCode)) continue;

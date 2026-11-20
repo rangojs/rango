@@ -137,7 +137,7 @@ describe("resolveInterceptLoadersOnly loading: false parity", () => {
         true,
       );
       setTimeout(release, 5);
-      const segments = await done;
+      const { segments } = await done;
       expect(segments.map((s) => s.id)).toEqual(["L0R0.@modalD0.test-loader"]);
       expect(settled()).toBe(awaits);
       await expect(segments[0]!.loaderData).resolves.toMatchObject({
@@ -170,7 +170,7 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
   it("every loader held and skipped: no loader segment is sent, the client keeps its own", async () => {
     vi.mocked(evaluateRevalidation).mockResolvedValueOnce(false);
     const deps = makeDeps();
-    const segments = await resolveInterceptLoadersOnly(
+    const { segments, matchedIds } = await resolveInterceptLoadersOnly(
       pass(makeContext(), deps, ["L0R0.@modal", "L0R0.@modalD0.test-loader"]),
       makeInterceptEntry(false),
       makeParentEntry(),
@@ -178,12 +178,14 @@ describe("resolveInterceptLoadersOnly on a slot the client holds", () => {
     );
 
     expect(segments).toEqual([]);
+    // Still listed: the client keeps the slot and the loader it skipped.
+    expect(matchedIds).toEqual(["L0R0.@modal", "L0R0.@modalD0.test-loader"]);
     expect(deps.wrapLoaderPromise).not.toHaveBeenCalled();
   });
 
   it("a loader the client lacks runs although the slot is held", async () => {
     vi.mocked(evaluateRevalidation).mockClear();
-    const segments = await resolveInterceptLoadersOnly(
+    const { segments } = await resolveInterceptLoadersOnly(
       pass(makeContext(), makeDeps(), ["L0R0.@modal"]),
       makeInterceptEntry(false),
       makeParentEntry(),
@@ -257,12 +259,17 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
   });
 
   it("emits the slot with no aggregate, then one loader segment per loader in declaration order", async () => {
-    const segments = await resolveInterceptEntry(
+    const { segments, matchedIds } = await resolveInterceptEntry(
       pass(makeContext(), makeDeps()),
       twoLoaders(),
       makeParentEntry(),
       true,
     );
+    expect(matchedIds).toEqual([
+      "L0R0.@modal",
+      "L0R0.@modalD0.first",
+      "L0R0.@modalD1.second",
+    ]);
     expect(segments.map((s) => [s.id, s.type])).toEqual([
       ["L0R0.@modal", "parallel"],
       ["L0R0.@modalD0.first", "loader"],
@@ -277,7 +284,7 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
     const entry = twoLoaders();
     const context = makeContext();
     context._prefetchDeferral = { mode: "fill", held: new Set() };
-    const segments = await resolveInterceptEntry(
+    const { segments, matchedIds } = await resolveInterceptEntry(
       pass(context, makeDeps(), ["L0R0.@modal", "L0R0.@modalD0.first"]),
       entry,
       makeParentEntry(),
@@ -288,6 +295,12 @@ describe("resolveInterceptEntry: the slot and its loader segments", () => {
     expect(segments.map((s) => [s.id, s.component])).toEqual([
       ["L0R0.@modal", null],
       ["L0R0.@modalD1.second", null],
+    ]);
+    // The kept slot and the held loader are listed although not sent.
+    expect(matchedIds).toEqual([
+      "L0R0.@modal",
+      "L0R0.@modalD0.first",
+      "L0R0.@modalD1.second",
     ]);
   });
 });
