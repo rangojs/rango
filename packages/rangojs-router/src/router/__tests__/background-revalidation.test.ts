@@ -12,7 +12,10 @@ const mockRouterCtx = {
     segments: [] as ResolvedSegment[],
     matchedIds: [] as string[],
   })),
-  resolveInterceptEntry: vi.fn(async () => [] as ResolvedSegment[]),
+  resolveInterceptEntry: vi.fn(async () => ({
+    segments: [] as ResolvedSegment[],
+    matchedIds: [] as string[],
+  })),
 };
 
 vi.mock("../router-context.js", () => ({
@@ -100,6 +103,7 @@ function makeState(
     segments: [],
     matchedIds: [],
     interceptSegments: [],
+    interceptMatchedIds: [],
     slots: {},
     ...overrides,
   };

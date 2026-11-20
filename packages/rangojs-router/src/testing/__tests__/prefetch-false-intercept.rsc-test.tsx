@@ -1,7 +1,7 @@
 /**
  * `prefetch: false` and `revalidate()` on an intercept()'s loaders, through
  * the public serveShellRequest primitive and the browser's own reconcile and
- * fold steps (docs/design/prefetch-false.md, "Intercepts").
+ * tree-build steps (docs/design/prefetch-false.md, "Intercepts").
  *
  * An intercept's loaders are loader segments of its slot
  * (`${parent}.@modalD${i}.${$$id}`, router/intercept-resolution.ts), resolved
@@ -9,8 +9,8 @@
  * resolveOwnerLoaders). A prefetch from the source defers a flagged one; the
  * fill of the intercept, sent from the source with the intercept source
  * header as the browser sends it (browser/partial-update.ts), runs only what
- * the client lacks. The browser folds the loader segments back onto the slot
- * (segment-system.tsx foldInterceptLoaders).
+ * the client lacks. The browser's tree build hands the loader segments to the
+ * slot (segment-system.tsx segmentTreeWalk, slotLoaderFields).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
@@ -38,7 +38,7 @@ import {
 import { MemorySegmentCacheStore } from "../../cache/index.js";
 import { deserializeResult } from "../../cache/segment-codec.js";
 import { reconcileSegments } from "../../browser/segment-reconciler.js";
-import { foldInterceptLoaders } from "../../segment-system.js";
+import { renderedSlot } from "./helpers/rendered-slot.js";
 import { mergePartialHandleData } from "../../handles/pushed-by.js";
 import { filterSegmentOrder } from "../../browser/react/filter-segment-order.js";
 import type { ResolvedSegment } from "../../types.js";
@@ -191,17 +191,6 @@ async function listPage(): Promise<string[]> {
     .matched;
 }
 
-/** The modal slot `segments` render, its loader segments folded onto it. */
-async function foldedSlot(
-  segments: ResolvedSegment[],
-): Promise<ResolvedSegment> {
-  const folded = await foldInterceptLoaders(
-    segments.filter((s) => s.namespace?.startsWith("intercept:")),
-    true,
-  );
-  return folded.find((s) => s.slot === "@modal")!;
-}
-
 const loaderIdOf = (s: ResolvedSegment) => s.loaderId;
 
 /** The last handle state a response streamed, pushedBy records included. */
@@ -335,7 +324,7 @@ describe("a navigation inside the open modal", () => {
       sent: answered.segments
         .filter((s) => s.type === "loader" && s.id.includes(".@modalD"))
         .map(loaderIdOf),
-      slot: await foldedSlot(reconciled.interceptSegments),
+      slot: await renderedSlot(reconciled.interceptSegments, "@modal"),
     };
   }
 
