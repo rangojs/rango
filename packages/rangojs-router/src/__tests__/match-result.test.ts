@@ -55,6 +55,7 @@ function makeState(
     segments: [],
     matchedIds: [],
     interceptSegments: [],
+    interceptMatchedIds: [],
     slots: {},
     ...overrides,
   };
