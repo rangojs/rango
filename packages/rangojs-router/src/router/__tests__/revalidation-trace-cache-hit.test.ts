@@ -247,6 +247,55 @@ describe("cache-hit trace entries", () => {
     consoleSpy.mockRestore();
   });
 
+  it("sends the held segment the match forces (forceRender) without asking its rules", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    mockEvaluateRevalidation.mockClear();
+    const rules = new Map();
+    rules.set("L0", { revalidate: [() => false] });
+    rules.set("R0", { revalidate: [() => false] });
+    mockRevalidateRules.value = rules;
+
+    try {
+      const ctx = makeCtx(
+        ["L0", "R0"],
+        [makeSegment("L0", "layout"), makeSegment("R0", "route")],
+      );
+      ctx.forceRender = "R0";
+
+      const trace = await runWithRouterLogContext(
+        { request: ctx.request, transaction: "test" },
+        async () => {
+          startRevalidationTrace({
+            method: "GET",
+            prevUrl: "http://localhost/a",
+            nextUrl: "http://localhost/b",
+            routeKey: "test.route",
+            isAction: false,
+          });
+          await collect(withCacheLookup(ctx, makeState())(empty()));
+          return flushRevalidationTrace();
+        },
+      );
+
+      // The client set still lists it: only the decision treats it as new.
+      expect(ctx.clientSegmentSet.has("R0")).toBe(true);
+      const r0 = trace!.entries.find((e) => e.segmentId === "R0");
+      expect(r0).toMatchObject({
+        reason: "new-segment",
+        finalShouldRevalidate: true,
+      });
+      // L0's rules decide it; R0's are never asked.
+      expect(mockEvaluateRevalidation).toHaveBeenCalledTimes(1);
+      const [options] = mockEvaluateRevalidation.mock.calls[0] as unknown as [
+        { segment: ResolvedSegment },
+      ];
+      expect(options.segment.id).toBe("L0");
+    } finally {
+      mockRevalidateRules.value = null;
+      consoleSpy.mockRestore();
+    }
+  });
+
   it("a stale request skips the route-cache lookup, as an action does", async () => {
     const seg = makeSegment("L0", "layout");
     const ctx = makeCtx(["L0"], [seg]);

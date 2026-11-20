@@ -1046,16 +1046,18 @@ describe("the decisions", () => {
     expect(recordUse(undefined).refresh).toBe(true);
   });
 
-  // A fill's rule, whatever the site: send what the client lacks, keep what
-  // it holds; any other request leaves the decision to revalidation.
+  // A fill's rule, whatever the site: send what the client lacks or the
+  // match forces, keep what else it holds; any other request leaves the
+  // decision to revalidation.
   it("fillSends answers a fill from what the client holds, and nothing else", () => {
     const route = entry("route", flagged);
     const build = () => ({ chain: [route] });
-    const held = holding("held");
+    const held = { client: holding("held", "forced"), forceRender: "forced" };
 
     const fill = ctxWith(plan("fill", build));
     expect(fillSends(fill, "held", held)).toBe(false);
     expect(fillSends(fill, "new", held)).toBe(true);
+    expect(fillSends(fill, "forced", held)).toBe(true);
     for (const mode of ["prefetch", undefined] as const) {
       const ctx = ctxWith(plan(mode, build));
       expect(fillSends(ctx, "held", held)).toBeUndefined();

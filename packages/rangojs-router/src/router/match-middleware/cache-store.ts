@@ -106,6 +106,7 @@ import {
   type RequestContext,
 } from "../../server/request-context.js";
 import {
+  clientHeldOf,
   rendersLive,
   type MatchContext,
   type MatchPipelineState,
@@ -120,6 +121,7 @@ import { INTERNAL_RANGO_DEBUG } from "../../internal-debug.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { rerenderAndCacheRoute } from "./background-revalidation.js";
 import { recordUse } from "../segment-resolution/prefetch-deferral.js";
+import { rendersAsNew } from "../segment-resolution/resolution-pass.js";
 
 /**
  * Creates cache store middleware
@@ -194,11 +196,13 @@ export function withCacheStore<TEnv>(
 
     // Only the segments the entry stores count: a null layout above the
     // boundary (the client kept it) is never written, so it needs no re-render.
+    // A forced segment rendered, so its null is its own (rendersAsNew).
+    const held = clientHeldOf(ctx);
     const hasNullComponents = allSegmentsToCache.some(
       (s) =>
         s.component === null &&
         s.type !== "loader" &&
-        ctx.clientSegmentSet.has(s.id) &&
+        !rendersAsNew(held, s.id) &&
         cacheScope.covers(s.id, s.namespace),
     );
 

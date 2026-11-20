@@ -93,6 +93,7 @@ import {
   setRequestContextPrevRouteKey,
 } from "../../server/request-context.js";
 import type { MatchApiDeps } from "../types.js";
+import type { InternalHandlerContext } from "../../types.js";
 
 function routeKeyForPath(pathname: string): string {
   if (pathname === "/") return "index";
@@ -416,5 +417,57 @@ describe("createMatchContextForPartial revalidation _prevRouteKey with intercept
     // (/shop).
     const call = vi.mocked(setRequestContextPrevRouteKey).mock.calls[0];
     expect(call).toEqual(["shop.items"]);
+  });
+});
+
+describe("createMatchContextForPartial forced route render", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const navigate = (headers: Record<string, string>, query = "") =>
+    createMatchContextForPartial(
+      new Request(
+        `http://localhost:5173/product/product-a?_rsc_segments=L0,R0,R0.@modal${query}`,
+        { headers },
+      ),
+      {},
+      makeDeps(),
+      vi.fn(() => null),
+    );
+
+  // From an open intercept (its URL /shop/items, over the source
+  // /product/product-b) to the source's own route.
+  const fromIntercept = {
+    "X-RSC-Router-Client-Path": "http://localhost:5173/shop/items",
+    "X-RSC-Router-Intercept-Source": "http://localhost:5173/product/product-b",
+  };
+
+  it("names the held route segment forceRender and keeps it in the client set", async () => {
+    const ctx = (await navigate(fromIntercept))!;
+
+    expect(ctx.isSameRouteNavigation).toBe(true);
+    expect(ctx.forceRender).toBe("R0");
+    expect([...ctx.clientSegmentSet]).toEqual(["L0", "R0", "R0.@modal"]);
+  });
+
+  it("plans deferral over the same client set", async () => {
+    const ctx = (await navigate(fromIntercept, "&_rsc_fill=1"))!;
+
+    const plan = (ctx.handlerContext as InternalHandlerContext)
+      ._prefetchDeferral;
+    expect(plan?.mode).toBe("fill");
+    expect(plan?.held).toBe(ctx.clientSegmentSet);
+    expect(plan?.held.has("R0")).toBe(true);
+  });
+
+  it("forces nothing on a same-route navigation without an intercept source", async () => {
+    const ctx = (await navigate({
+      "X-RSC-Router-Client-Path": "http://localhost:5173/product/product-b",
+    }))!;
+
+    expect(ctx.isSameRouteNavigation).toBe(true);
+    expect(ctx.forceRender).toBeUndefined();
+    expect(ctx.clientSegmentSet.has("R0")).toBe(true);
   });
 });

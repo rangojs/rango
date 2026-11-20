@@ -48,8 +48,9 @@
  *   - env: Server environment (Cloudflare bindings, etc.)
  *
  * Client State (from RSC request headers):
- *   - clientSegmentIds: Segments the client currently has
- *   - clientSegmentSet: Set version for O(1) lookup
+ *   - clientSegmentIds: Segments the request lists as held
+ *   - clientSegmentSet: Every segment the client holds, for O(1) lookup
+ *   - forceRender: A held segment the match renders anyway
  *   - stale: Whether client considers its cache stale
  *
  * Navigation State:
@@ -134,8 +135,27 @@ export interface MatchContext<TEnv = any> {
   env: TEnv;
 
   // Client state
+  /** The segment ids the request listed (`_rsc_segments`). */
   clientSegmentIds: string[];
-  clientSegmentSet: Set<string>;
+  /**
+   * The segments the client holds: `clientSegmentIds`, plus each clientUrls()
+   * layout() loader copy the page holds under another route of the layout
+   * (client-urls/layout-loader-copies.ts). Resolution, the cache middleware
+   * and prefetch deferral (PrefetchDeferral.held) read this one set, so it
+   * never drops an id to force a render: see `forceRender`. The response
+   * filter (match-result.ts) reads `clientSegmentIds`: the same ids but the
+   * loader copies, and it sends every loader segment.
+   */
+  clientSegmentSet: ReadonlySet<string>;
+  /**
+   * The id of a segment the client holds that this match renders as if it
+   * were new, with no revalidate() rule consulted and in a fill too: the
+   * route's, on a navigation from an open intercept to its source's own route
+   * (match-api.ts). It is held for everything else: a prefetch never defers
+   * it, and the response leaves it out when it renders null, as any held
+   * segment. Decided through rendersAsNew (segment-resolution/resolution-pass.ts).
+   */
+  forceRender?: string;
   stale: boolean;
   /** NavigationSnapshot.heldBoundary: the walk stops above it. */
   heldBoundary?: string;
@@ -210,13 +230,23 @@ export function rendersLive(
   return ctx.isAction || ctx.stale;
 }
 
+/**
+ * What rendersAsNew (resolution-pass.ts) reads of this match: the walker's
+ * pass input carries it, and the cache middleware asks with it.
+ */
+export function clientHeldOf(
+  ctx: Pick<MatchContext, "clientSegmentSet" | "forceRender">,
+): Pick<ResolutionPassInput, "client" | "forceRender"> {
+  return { client: ctx.clientSegmentSet, forceRender: ctx.forceRender };
+}
+
 /** This match as the input of a revalidating resolution pass (resolution-pass.ts). */
 export function resolutionPassInput<TEnv>(
   ctx: MatchContext<TEnv>,
 ): ResolutionPassInput<TEnv> {
   return {
     context: ctx.handlerContext,
-    client: ctx.clientSegmentSet,
+    ...clientHeldOf(ctx),
     params: ctx.matched.params,
     prevParams: ctx.prevParams,
     request: ctx.request,
