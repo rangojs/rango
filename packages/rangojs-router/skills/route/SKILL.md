@@ -586,6 +586,34 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 `redirect(url, statusOrOptions?)` returns a `Response` (default status `302`).
 Return it from a handler or middleware, or throw it from a loader.
 
+A server component is not one of those places. It renders while the payload
+is serialized, after the handler returned, so a `redirect()` it throws is a
+render error: the nearest error boundary renders it, and with none declared
+`RootErrorBoundary` replaces the page. Decide before rendering instead:
+
+```tsx
+// Not a redirect: the visitor sees the error page.
+async function AccountGate() {
+  const session = await getSession();
+  if (!session) throw redirect("/login");
+  return <AccountSummary session={session} />;
+}
+
+// A redirect: the handler checks first, then renders.
+path(
+  "/account",
+  async () => {
+    const session = await getSession();
+    if (!session) return redirect("/login");
+    return <AccountPage session={session} />;
+  },
+  { name: "account" },
+);
+```
+
+On a route with `loading()`, check in middleware or a loader instead (see
+below).
+
 ### Basic redirect
 
 ```typescript
