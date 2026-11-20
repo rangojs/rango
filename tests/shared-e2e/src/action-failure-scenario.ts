@@ -10,7 +10,8 @@ import { expectConsole } from "./console-guard.js";
  * urls() twin, and the group mounted a second time under an
  * `errorBoundary()`, whose layout holds controls of its own. The throw page
  * reads the loader inside the app's own error boundary, next to a draft
- * input (a form's React state), an outcome line (what the action call
+ * input (a form's React state), a line that turns "yes" once the controls
+ * have hydrated, an outcome line (what the action call
  * resolved or rejected with, also on `<html data-af-outcome>`), the last
  * `revalidationError` useAction reported, buttons that call the action
  * directly or together with a slow one, and a `<form action>` that submits
@@ -45,9 +46,13 @@ async function open(
 ): Promise<void> {
   await page.goto(url(`${pathname}?run=${randomUUID()}${query}`));
   await expect(page.getByTestId("af-page")).toBeVisible();
-  await page.waitForFunction(() =>
-    document.documentElement.hasAttribute("data-hydrated"),
-  );
+  // Not the root's data-hydrated: it is set once the root hydrates, while a
+  // loading() boundary around the page can still be dehydrated (its client
+  // module is slow on a cold dev server), and React drops a click on a
+  // button that has not hydrated.
+  await expect(page.getByTestId("af-hydrated")).toHaveText("yes", {
+    timeout: 15_000,
+  });
 }
 
 /** Marks an element; a remount drops the mark. */

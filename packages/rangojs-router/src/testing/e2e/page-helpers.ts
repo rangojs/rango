@@ -19,6 +19,12 @@ export function testId(page: Page, id: string): Locator {
  * Wait for React hydration to complete and verify no hydration errors.
  * Rango sets `data-hydrated` on `<html>` after hydration via useEffect; this
  * is a stable readiness signal that does not rely on React internals.
+ *
+ * It marks the root's hydration only. Content under a Suspense boundary (a
+ * `loading()`, an inline `<Suspense>`) can still be dehydrated when it is set,
+ * for instance while its client module loads on a cold dev server, and React
+ * drops a click on an element that has not hydrated. Before interacting with
+ * such content, wait for a marker its own component sets from an effect.
  */
 export async function waitForHydration(page: Page): Promise<void> {
   const hydrationErrors: string[] = [];

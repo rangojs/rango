@@ -1652,7 +1652,9 @@ observation sees non-HttpOnly cookies only in v1. If a page renders a
 nondeterministic value, exclude that testid from `observe`.
 
 Other harness helpers: `waitForHydration` (asserts the `data-hydrated` signal and
-no hydration errors), `expectNoReload`, `expectNoPageError`, `testId`,
+no hydration errors; the signal marks the root's hydration, so content under a
+`loading()` or `<Suspense>` boundary can still be dehydrated, and a click on it
+dropped, until that boundary hydrates), `expectNoReload`, `expectNoPageError`, `testId`,
 `waitForNavigation`, `goBack`/`goForward`, `testNoJs` (a `test` variant with JS
 disabled), and `rangoMatchers.toHaveRangoPathname`.
 (`toHaveSegments`/`toHaveParams` are a documented future addition — they need a
