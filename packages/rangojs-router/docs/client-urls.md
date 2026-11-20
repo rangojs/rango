@@ -289,12 +289,12 @@ export const urlpatterns = urls(({ include, layout, middleware }) => [
 Middleware and layout handlers ride DIFFERENT schedules, and conflating them
 is the common misread:
 
-| Runs on…                   | Hard load | Within-group navigation                         | Nav with all loaders held              | Action                                      |
-| -------------------------- | --------- | ----------------------------------------------- | -------------------------------------- | ------------------------------------------- |
-| `AdminRscLayout` handler   | yes       | no — its segment HOLDS (partial rendering)      | no                                     | no by default (`action:parent-chain-skip`)  |
-| `requireAdmin` middleware  | yes       | **yes — every canonical request**               | **yes**                                | yes (wraps the revalidation render)         |
-| Group loaders              | yes       | per-loader `revalidate()`, run on the server    | skipped (their `revalidate()` said so) | per-loader `revalidate()` (`isAction(ref)`) |
-| Optimistic loading/pending | n/a       | renders BEFORE the response — presentation only | same                                   | n/a                                         |
+| Runs on…                   | Hard load | Within-group navigation                                   | Nav with all loaders held              | Action                                                                 |
+| -------------------------- | --------- | --------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| `AdminRscLayout` handler   | yes       | no — its segment HOLDS, unless its `revalidate()` says so | no, unless its `revalidate()` says so  | no by default (`action:parent-chain-skip`); its `revalidate()` decides |
+| `requireAdmin` middleware  | yes       | **yes — every canonical request**                         | **yes**                                | yes (wraps the revalidation render)                                    |
+| Group loaders              | yes       | per-loader `revalidate()`, run on the server              | skipped (their `revalidate()` said so) | per-loader `revalidate()` (`isAction(ref)`)                            |
+| Optimistic loading/pending | n/a       | renders BEFORE the response — presentation only           | same                                   | n/a                                                                    |
 
 Two consequences worth stating plainly:
 
@@ -307,12 +307,13 @@ Two consequences worth stating plainly:
   `ctx.set()` variables are fresh for the group's loaders on every pass. The
   instant feel comes from held data and optimistic presentation, not from
   skipping the server.
-- **The outer layout handler does not re-run on within-group navigations.**
-  Partial rendering diffs below the common ancestor, so the server layout's
-  rendered segment is preserved client-side; on actions the parent chain
-  skips by default. If the layout renders request-derived data that must
-  refresh with the group, use middleware `ctx.set()` (fresh every pass) or a
-  shared revalidation contract — not the layout handler's own body.
+- **The outer layout handler does not re-run on within-group navigations by
+  default.** Partial rendering diffs below the common ancestor, so the server
+  layout's rendered segment is preserved client-side; on actions the parent
+  chain skips by default. If the layout renders data that must refresh with
+  the group, give it `revalidate()` (next section). Middleware `ctx.set()` is
+  fresh on every pass, but it is an input, not a way onto the screen: its
+  value shows only through a handler or loader that re-runs.
 
 The one window that precedes middleware is the optimistic branch (the
 destination component with its suspended loader reads, its `loading()`, and
@@ -325,6 +326,81 @@ demo's `/client-shop` mount is wrapped in exactly this shape
 request, a layout run-count DOM stamp), and the suite asserts the header
 advances on a within-group navigation AND on a held-loader tab switch while
 the layout stamp holds.
+
+### Refreshing the outer layout with the group: `revalidate()`
+
+Holding is the default, not a limit. When chrome in the server layout must
+follow the group (a cart count, a signed-in badge), give that layout
+`revalidate()`, as on any standalone layout (`/layout` → "Layout
+Revalidation"). Nothing about the group changes how it runs: the handler
+re-runs on the requests its predicate names, and its new output arrives in
+the canonical commit, together with the URL, `useNavigation()` and
+`useOutlet().pending`. It reconciles in place. The layout's segment keeps its
+key (it does not belong to the route, so no params enter it:
+`src/segment-system.tsx`), and the group keeps `cg:<mount>`, so nothing below
+remounts, the group's client layouts and route instance included, and no
+fallback shows.
+
+Write the rule once, in a module without `"use client"`, and import it in
+both places: the server layout's `revalidate()` and the `revalidate()` of the
+group loader that feeds the same chrome. The group's `revalidate()` hoist
+(under "Supported surface") accepts an imported predicate and rejects one
+from a `"use client"` module. Chrome and content then re-run on the same
+requests and land in the same commit:
+
+```ts
+// src/urls/chrome-rules.ts: no "use client", both trees import it
+import type { Revalidate } from "@rangojs/router";
+import * as CartActions from "../actions/cart";
+
+export const cartChromeChanged: Revalidate = ({ isAction, toRouteName }) =>
+  isAction() ? isAction(CartActions) : toRouteName === "shop.cart";
+```
+
+```tsx
+// src/urls.tsx: the server layout around the group
+layout(<ShopChrome />, () => [
+  revalidate(cartChromeChanged),
+  include("/shop", shopUrls, { name: "shop" }),
+]);
+
+// src/shop/urls.tsx ("use client"): the group's own layout() loader
+layout(ShopLayout, () => [
+  loader(CartLoader, () => [revalidate(cartChromeChanged)]),
+  path("/cart", CartPage, { name: "cart" }),
+  // ...
+]);
+```
+
+What it costs:
+
+- **The handler's time adds to every response it re-runs on.** A layout's
+  handler runs to its end before the loaders below it start, so it is not
+  overlapped with the group's loaders. A 300 ms handler over 300 ms of group
+  loaders served an in-group navigation in about 605 ms, against 305 ms with
+  the layout held. Keep it fast, and let the predicate say no to the
+  navigations that do not need it.
+- **A re-run chrome read holds the whole canonical commit.** A loader the
+  chrome reads (a `loader()` on the outer layout, or the group `layout()`'s
+  own) sits in content already on screen, so React keeps the page as it is
+  instead of showing a fallback, and the commit waits for that loader. The
+  destination's own data, even when ready earlier, stays behind its
+  `loading()` until it lands, while the URL bar already shows the new path. A
+  slow chrome loader re-run on every navigation slows every navigation by the
+  difference. Never key a boundary per navigation to dodge the hold: that
+  re-shows its fallback.
+- **`revalidate(() => true)` re-runs it on every action too**, not only on
+  navigations: an action from any form in the group pays the handler's time.
+  Scope action-driven chrome with `isAction(ref)` (or `actionResult`), and
+  navigation-driven chrome with `currentParams` / `nextParams` /
+  `toRouteName`, as the rule above does.
+
+Pinned by
+`src/testing/__tests__/client-urls-outer-layout.rsc-test.tsx`: the layout
+holds with no rule; `() => true` re-runs it on navigations and on an
+unrelated action; the shared rule re-runs it with the group loader on the
+named route and action and holds both elsewhere; and the handler ends before
+the group's loader starts.
 
 ## Client hooks inside a group
 
