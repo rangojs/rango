@@ -722,6 +722,20 @@ export function createEventController(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
   const handleListeners = new Set<HandleListener>();
 
+  // SPIKE (part E, N5): live router subscriptions, read by the browser probe.
+  const spikeProbe = ksSpike();
+  if (spikeProbe) {
+    spikeProbe.subscriptions = () => ({
+      state: stateListeners.size,
+      handles: handleListeners.size,
+      clientHandles: clientHandleListeners.size,
+      actions: [...actionListeners.values()].reduce(
+        (sum, set) => sum + set.size,
+        0,
+      ),
+    });
+  }
+
   const notifyStateListeners = makeDebouncedNotifier(stateListeners);
 
   // Memoized derived snapshot. Every state mutation already funnels through

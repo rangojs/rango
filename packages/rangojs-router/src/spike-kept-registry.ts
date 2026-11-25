@@ -12,6 +12,12 @@ export interface KsSpike {
    */
   mode?: "transition" | "two-step" | "transition-all";
   log: unknown[];
+  /** SPIKE (part E, N3 control): no location hand-off on a nested show. */
+  noReturnLocation?: boolean;
+  /** SPIKE (part E, N5 baseline): every keeping outlet drawn plain. */
+  noKeep?: boolean;
+  /** SPIKE (part E, N5): live router subscription counts. */
+  subscriptions?: () => Record<string, number>;
 }
 
 export const SPIKE_KEPT_KEYS: Set<string> = new Set<string>();

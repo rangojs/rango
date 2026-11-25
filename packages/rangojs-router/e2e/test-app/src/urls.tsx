@@ -43,6 +43,12 @@ import {
   keepSpikeServerKeepPatterns,
   keepSpikeServerPlainPatterns,
 } from "./urls/keep-spike.js";
+// SPIKE (kept pages, part E): e2e/keep-nested-frames.test.ts.
+import keepNestedClientPatterns from "./urls/keep-nested-client.client-urls.js";
+import {
+  keepNestedMixedPatterns,
+  keepNestedServerPatterns,
+} from "./urls/keep-nested.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { hookFieldsPatterns } from "./urls/hook-fields.js";
 import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
@@ -1337,6 +1343,12 @@ export const urlpatterns = urls(
       }),
       include("/", keepSpikeServerKeepPatterns, { name: "" }),
       include("/", keepSpikeServerPlainPatterns, { name: "" }),
+      // SPIKE (kept pages, part E): nested keeping outlets.
+      include("/keep-nested/client", keepNestedClientPatterns, {
+        name: "knClient",
+      }),
+      include("/", keepNestedServerPatterns, { name: "" }),
+      include("/", keepNestedMixedPatterns, { name: "" }),
       // A cached back/forward animates under transition().
       include("/", vtBackPatterns, { name: "" }),
 

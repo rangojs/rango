@@ -5,7 +5,9 @@ import {
   createElement,
   isValidElement,
   useContext,
+  useEffect,
   useMemo,
+  useState,
   Suspense,
   type ComponentProps,
   type ReactNode,
@@ -33,6 +35,7 @@ import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
 // SPIKE: <Outlet keep />.
 import { KeptOutlet, type OutletKeepOptions } from "./outlet-keep.js";
+import { ksSpike } from "./spike-kept-registry.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -236,7 +239,14 @@ export function Outlet({
   const namedSegment = useSlotSegment(context, name);
 
   // SPIKE: a separate component, so the hooks it calls stay off plain outlets.
-  if (keep && !name) return createElement(KeptOutlet, { keep });
+  // SPIKE (part E, N5 baseline): `__ksSpike.noKeep` draws every keeping
+  // outlet as a plain one, from the first effect on (the server and
+  // hydration draw it keeping, so the document still hydrates).
+  const [plain, setPlain] = useState(false);
+  useEffect(() => {
+    if (keep && ksSpike()?.noKeep === true) setPlain(true);
+  }, [keep]);
+  if (keep && !name && !plain) return createElement(KeptOutlet, { keep });
 
   if (name) {
     const slot = renderSlotContent(namedSegment);

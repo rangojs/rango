@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
+import { OutletProvider } from "./outlet-provider.js";
 import {
   OptimisticLocationContext,
   type OptimisticLocation,
@@ -71,7 +72,45 @@ interface KeptEntry {
   readonly context: OutletContextValue | null;
   /** The location the entry was last drawn at. */
   readonly location: OptimisticLocation;
+  /**
+   * SPIKE (part E): the group page identity the entry was last drawn under.
+   * A kept entry holding a nested keeping outlet must keep it: the live one
+   * names the page on screen, and a hidden inner outlet reading it took that
+   * for a switch of its own and mounted the shown page again, hidden.
+   */
+  readonly identity: KeepEntryIdentity | null;
   readonly content: ReactNode;
+}
+
+/**
+ * SPIKE (part E): the location an outer keeping outlet hands the entry it
+ * shows again, so a nested keeping outlet can tell it from a frame.
+ */
+const ShowLocationContext: Context<OptimisticLocation | null> =
+  createContext<OptimisticLocation | null>(null);
+
+/**
+ * SPIKE (part E): set by a keeping outlet inside an entry of another one, so
+ * the outer knows its entries hold a nested keeping outlet and leaves the
+ * two-step reveal to it: staging the outer entry's kept element would draw
+ * the inner outlet's last page, not the one navigated to.
+ */
+const NestedKeepContext: Context<{ current: boolean } | null> = createContext<{
+  current: boolean;
+} | null>(null);
+
+/**
+ * SPIKE (part E): in a clientUrls() group, the key of the group layout this
+ * outlet renders, when its content is one (ClientUrlsRoot keys each layout
+ * level's OutletProvider by `route.layoutKeys[i]`); null at the leaf, whose
+ * content is the route component.
+ */
+function groupLayoutKey(content: ReactNode): string | null {
+  return isValidElement(content) &&
+    content.type === OutletProvider &&
+    content.key != null
+    ? content.key
+    : null;
 }
 
 function entryKey(
@@ -79,6 +118,11 @@ function entryKey(
   by: OutletKeepOptions["by"],
   content: ReactNode,
 ): string {
+  // SPIKE (part E): an outer outlet in a group keys by the layout under it,
+  // not by the page: KeepEntryContext names the page, so keying by it made
+  // every page switch inside a section a switch of the outer's entries.
+  const layoutKey = identity ? groupLayoutKey(content) : null;
+  if (layoutKey !== null) return `layout:${layoutKey}`;
   if (identity) {
     return by === "route"
       ? `route:${identity.route}`
@@ -109,6 +153,11 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   const context = useContext(OutletContext);
   const identity = useContext(KeepEntryContext);
   const optimistic = useContext(OptimisticLocationContext);
+  // SPIKE (part E): an outer keeping outlet hands its shown entry the
+  // current location on the render that shows it again (B6). That is no
+  // frame: only a clientUrls() optimistic destination is.
+  const outerShow = useContext(ShowLocationContext);
+  const frame = optimistic !== null && optimistic !== outerShow;
   const params = useParams();
   const pathname = usePathname();
   const [search] = useSearchParams();
@@ -124,13 +173,41 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   // The entry on screen as React last committed it (written in a layout
   // effect, so a render React discards never lands here).
   const committed = useRef<KeptEntry | null>(null);
+  // SPIKE (part E): false while an outer keeping outlet hides this one (its
+  // layout effects are torn down), so the render that shows it again knows
+  // its own entry on screen is coming back, though its key did not move.
+  const onScreen = useRef(true);
+  const nested = useRef(false);
+  const parentNested = useContext(NestedKeepContext);
+  useLayoutEffect(() => {
+    if (parentNested) parentNested.current = true;
+    onScreen.current = true;
+    return () => {
+      onScreen.current = false;
+    };
+  });
+  // Reads refs in render: SPIKE.
+  const returning =
+    keep.showLocation !== false &&
+    !onScreen.current &&
+    committed.current !== null &&
+    committed.current.key === key
+      ? committed.current
+      : null;
   // SPIKE (H3): the kept entry a committed navigation shows again, drawn with
   // its kept element and context in that commit; a transition then swaps in
   // the navigation's element.
   const [staged, setStaged] = useState<KeptEntry | null>(null);
 
   let entries = kept;
-  if (shownKey !== key) {
+  if (returning && frame && !kept.some((entry) => entry.key === key)) {
+    // SPIKE (part E): a frame shows this outlet again with the same entry on
+    // screen. The entry joins the kept list until the frame commits, so
+    // every render of the frame draws it with its last context (B3), not
+    // the frame's pending loaders.
+    entries = [...kept, returning];
+    setKept(entries);
+  } else if (shownKey !== key) {
     // SPIKE: adjusting state while rendering (the key moved): the entry
     // being left joins the kept list in this same render, so it never
     // unmounts between the two.
@@ -149,18 +226,37 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
     setShownKey(key);
     const back = entries.find((entry) => entry.key === key);
     setStaged(
-      ksSpike()?.mode === "two-step" && back && !optimistic ? back : null,
+      ksSpike()?.mode === "two-step" && back && !frame && !nested.current
+        ? back
+        : null,
     );
+  } else if (
+    returning &&
+    ksSpike()?.mode === "two-step" &&
+    !frame &&
+    !nested.current &&
+    staged?.key !== key
+  ) {
+    // SPIKE (part E): an outer outlet shows this one again with the same
+    // entry on screen; the response may bring that entry a new element.
+    setStaged(returning);
   }
   const stagedHere = staged?.key === key ? staged : null;
 
-  const resumed = entries.find((entry) => entry.key === key);
+  const resumed =
+    entries.find((entry) => entry.key === key) ?? returning ?? undefined;
   // B3: at an optimistic frame onto a kept entry, the entry shows the data
   // it was last drawn with, not the frame's pending route loaders. Once the
   // canonical commit brings its own context, the live one takes over.
+  // SPIKE (part E): not at a group layout level. Its kept context holds the
+  // layout element as last drawn, with the page that was on screen under it;
+  // the frame's destination page is in the live context, and the leaf
+  // outlet below swaps in that page's kept context.
   const shownContext =
-    isolate && resumed && optimistic ? resumed.context : context;
-  if (resumed && !optimistic) {
+    isolate && resumed && frame && groupLayoutKey(content) === null
+      ? resumed.context
+      : context;
+  if (resumed && !frame && entries.includes(resumed)) {
     // Shown committed: the live context is the entry's now.
     entries = entries.filter((entry) => entry !== resumed);
     setKept(entries);
@@ -177,9 +273,10 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
         key,
         context: stagedHere.context,
         location,
+        identity,
         content: stagedHere.content,
       }
-    : { key, context: shownContext, location, content };
+    : { key, context: shownContext, location, identity, content };
 
   // B6: the render that shows an entry again (the last commit had another
   // key on screen). Its hooks' own store reads are as old as its hide: their
@@ -190,7 +287,10 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   const showing =
     keep.showLocation !== false &&
     committed.current !== null &&
-    committed.current.key !== key;
+    (committed.current.key !== key ||
+      // SPIKE (part E control): `__ksSpike.noReturnLocation` leaves an
+      // outlet shown again by an outer one on its store hooks.
+      (returning !== null && ksSpike()?.noReturnLocation !== true));
 
   useLayoutEffect(() => {
     committed.current = shown;
@@ -215,6 +315,7 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
     startTransition(() => setStaged(null));
   }, [stagedHere, key]);
 
+  const shownLocation = optimistic ?? (showing ? location : null);
   const draw = (entry: KeptEntry, visible: boolean): ReactNode =>
     createElement(Activity, {
       key: entry.key,
@@ -224,10 +325,20 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
         children: createElement(OptimisticLocationContext.Provider, {
           // On screen and committed: null, so the hooks read the router
           // store as they do without keep.
-          value: visible
-            ? (optimistic ?? (showing ? location : null))
-            : entry.location,
-          children: entry.content,
+          value: visible ? shownLocation : entry.location,
+          children: createElement(ShowLocationContext.Provider, {
+            // Not a frame: a hidden entry's own location, or the location
+            // this outlet hands the entry it shows again.
+            value: visible
+              ? optimistic === null && showing
+                ? location
+                : outerShow
+              : entry.location,
+            children: createElement(KeepEntryContext.Provider, {
+              value: visible ? identity : entry.identity,
+              children: entry.content,
+            }),
+          }),
         }),
       }),
     });
@@ -238,10 +349,14 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
       .map((entry) => draw(entry, false)),
     draw(shown, true),
   ];
+  const tree = createElement(NestedKeepContext.Provider, {
+    value: nested,
+    children: nodes,
+  });
   return context?.loading ? (
-    <Suspense fallback={context.loading}>{nodes}</Suspense>
+    <Suspense fallback={context.loading}>{tree}</Suspense>
   ) : (
-    nodes
+    tree
   );
 }
 
