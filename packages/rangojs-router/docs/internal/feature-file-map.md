@@ -248,7 +248,16 @@ state connect through
 [`browser/navigation-bridge.ts`](../../src/browser/navigation-bridge.ts),
 [`outlet-context.ts`](../../src/outlet-context.ts),
 [`outlet-provider.tsx`](../../src/outlet-provider.tsx), and
-[`segment-system.tsx`](../../src/segment-system.tsx).
+[`segment-system.tsx`](../../src/segment-system.tsx). `<Outlet keep />` is
+owned by [`outlet-keep.tsx`](../../src/outlet-keep.tsx) (`KeptOutlet`, its
+own lazy client chunk, left out of the router group in
+[`vite/utils/shared-utils.ts`](../../src/vite/utils/shared-utils.ts)) and
+[`outlet-keep-context.ts`](../../src/outlet-keep-context.ts) (the options
+types, `KeptEntryContext`, `useKept`, `useKeptShow`, `useKeptOutlet`); tests
+in [`__tests__/outlet-keep.test.tsx`](../../src/__tests__/outlet-keep.test.tsx)
+(clientUrls groups) and
+[`testing/__tests__/render-route-outlet-keep.test.tsx`](../../src/testing/__tests__/render-route-outlet-keep.test.tsx)
+(server routes through `renderRoute`).
 
 Vite discovery and projection installation are owned by
 [`vite/discovery/client-urls-projection.ts`](../../src/vite/discovery/client-urls-projection.ts)

@@ -341,6 +341,8 @@ export const routes = {
   "keptLayoutSourceBaked.wishlist": "/kept-layout-source/baked/wishlist",
   "keptLayoutSourceI18n.home": "/kept-layout-source/i18n/:locale",
   "keptLayoutSourceI18n.products": "/kept-layout-source/i18n/:locale/products",
+  keptPagesDrift: "/kept-pages-drift/:id",
+  keptPagesPage: "/kept-pages/:id",
   keyRefreshDistinct: "/key-refresh-distinct",
   keyRefreshError: "/key-refresh-error",
   keyRefreshGroup: "/key-refresh-group",

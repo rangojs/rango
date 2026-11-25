@@ -933,7 +933,9 @@ function buildSegments(
       index: i,
       component: <Component />,
       params,
-      belongsToRoute: true,
+      // A layout spec above the leaf is a urls() layout() its routes share:
+      // keyed without params, so a param navigation keeps it mounted.
+      belongsToRoute: isLeaf,
     };
     if (mount) node.mountPath = mount;
     if (spec.transition) node.transition = spec.transition;

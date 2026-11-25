@@ -85,11 +85,11 @@ const PRODUCERS = {
   "segment-boundary-content.ts":
     "getBoundaryContent: what a route's content boundary is handed",
   "segment-loader-promise.ts": "getMemoizedLoaderPromise, buildLoaderPromise",
-  "client-urls/client-root.tsx":
-    "clientUrls() group: optimistic loader streams",
   "cache/segment-codec.ts": "decodes a cached segment's settled aggregate",
   "outlet-provider.tsx":
     "hands a boundary's per-loader streams to useLoader through the outlet context",
+  "outlet-keep.tsx":
+    "<Outlet keep />: answers a clientUrls() frame's waiting reads with the kept page's own streams, passed through as they are",
 };
 
 /** Files that may reference a dev-only Audited* boundary variant. */

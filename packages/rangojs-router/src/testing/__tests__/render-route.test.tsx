@@ -699,7 +699,7 @@ describe("renderRoute held navigation (transition() + pending loader seed)", () 
       );
     }
 
-    const { getByTestId, router } = await renderRoute(
+    const { getByTestId, getAllByTestId, router } = await renderRoute(
       [
         { path: "/products", Component: Shell },
         { path: "/products/:id", Component: ProductPrice },
@@ -713,7 +713,12 @@ describe("renderRoute held navigation (transition() + pending loader seed)", () 
     let resolve!: (value: { name: string }) => void;
     const next = new Promise<{ name: string }>((r) => (resolve = r));
     await router.navigate("/products/2", { loaders: [[ProductLoader, next]] });
-    expect(getByTestId("price").textContent).toBe("skeleton");
+    // The layout stays mounted, as a urls() layout() does: React hides the
+    // revealed content and shows the boundary's fallback beside it.
+    const shown = getAllByTestId("price").filter(
+      (element) => element.style.display !== "none",
+    );
+    expect(shown.map((element) => element.textContent)).toEqual(["skeleton"]);
 
     await act(async () => {
       resolve({ name: "Product 2" });

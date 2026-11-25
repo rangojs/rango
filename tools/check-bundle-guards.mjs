@@ -368,7 +368,23 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // refresh and history-entry write runs it, and the late channel applies
 // right after hydration. By the owner's rule above: 56720B + 256B, rounded
 // up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 55.75 * 1024;
+//
+// Raised 55.75KB -> 56.375KB on 2026-11-25 for `<Outlet keep />`, measured
+// on cloudflare-basic from main 7b70712 56979B -> 57376B (+397B gzip) with
+// its kept-pages fixture calling the keep hooks (57259B before the app used
+// them). The shipped shape measures 57518B (+539B). The keeping outlet
+// itself is a lazy chunk of its own (outlet-keep.tsx, 2.0KB gzip); what stays
+// here is Outlet's `lazy()` with Vite's preload glue for it (__vitePreload
+// and its __vite__mapDeps list, about 100B, no per-import opt-out), the entry
+// context and its three hooks (outlet-keep-context.ts), the location
+// override's navigation and segments reads in useNavigation and useSegments,
+// the outlet's `draws` and `awaitingCommit` fields (segment-system.tsx,
+// client-urls/client-root.tsx), and findLoaderRead (use-loader.tsx), the
+// walker useLoader and the keeping outlet share. None of it can load lazily:
+// Outlet and the hooks are the public entry points, and the rest is on every
+// render path. By the owner's rule above: 57376B + 256B, rounded up to the
+// next 128B step; 57518B still fits.
+const ROUTER_CHUNK_GZIP_MAX = 56.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [

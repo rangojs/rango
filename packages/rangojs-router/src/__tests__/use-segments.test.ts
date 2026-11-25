@@ -20,6 +20,7 @@ vi.mock("react", async () => {
   return {
     ...actual,
     useContext: vi.fn(),
+    useMemo: vi.fn((fn: () => unknown) => fn()),
     useState: vi.fn((init: Function | any) => {
       if (stateIndex < stateSlots.length) {
         return stateSlots[stateIndex++];

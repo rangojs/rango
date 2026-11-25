@@ -1,7 +1,8 @@
 "use client";
 
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 import { shallowEqual } from "./shallow-equal.js";
 import { useRouteState } from "./use-route-state.js";
 import type { PublicNavigationState } from "../types.js";
@@ -91,6 +92,8 @@ export function useNavigation<T>(
   // Between events there is nothing new to select from.
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
+  const select = (state: PublicNavigationState) =>
+    selectorRef.current ? selectorRef.current(state) : state;
 
   // Subscribe to event controller state changes (only runs on client).
   //
@@ -104,8 +107,6 @@ export function useNavigation<T>(
   useEffect(() => {
     let pageHeld = false;
     let location: PublicNavigationState["location"] | undefined;
-    const select = (state: PublicNavigationState) =>
-      selectorRef.current ? selectorRef.current(state) : state;
     const update = (signal?: RouteStateSignal) => {
       if (signal) pageHeld = signal === "anchor";
       const live = toPublicState(ctx.eventController.getState());
@@ -138,5 +139,13 @@ export function useNavigation<T>(
     };
   }, []);
 
-  return snapshot.value as T | PublicNavigationState;
+  // A location override that carries a navigation state (OptimisticLocation)
+  // is read instead of the hook's own: selected once per override, as the
+  // store's own state is selected once per change.
+  const override = useContext(OptimisticLocationContext)?.navigation;
+  const overridden = useMemo(
+    () => (override ? { value: select(override) } : null),
+    [override],
+  );
+  return (overridden ?? snapshot).value as T | PublicNavigationState;
 }

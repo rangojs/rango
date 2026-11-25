@@ -424,6 +424,7 @@ import {
   keptLayoutSourceOneShapePatterns,
   keptLayoutSourceTwoShapePatterns,
 } from "./pages/kept-layout-source.js";
+import { keptPagesPatterns } from "./pages/kept-pages.js";
 import { docCacheSourcePatterns } from "./pages/doc-cache-source.js";
 import { notReusedNoStorePatterns } from "./pages/not-reused-no-store.js";
 import { prefetchStoredPatterns } from "./pages/prefetch-stored.js";
@@ -1174,6 +1175,8 @@ export const urlpatterns = urls(
     }),
     // throw rewrite() from middleware (e2e/rewrite.test.ts)
     include("/rw", rewritePatterns, { name: "rw" }),
+    // <Outlet keep /> (e2e/kept-pages.test.ts).
+    include("/", keptPagesPatterns, { name: "" }),
     // Prefixed wildcard before the root catch-all: hitting bare "/files" must
     // resolve "/files/*" with an empty splat (C1), not fall to "/*".
     path("/files/*", FilesWildcardPage, { name: "filesWildcard" }),

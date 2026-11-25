@@ -1,7 +1,8 @@
 "use client";
 
-import { useContext, useEffect, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { OptimisticLocationContext } from "../../client-urls/optimistic-location.js";
 import { useCommitAnchoredState } from "./use-handle.js";
 import type { RouteStateSignal } from "../event-controller.js";
 
@@ -135,5 +136,13 @@ export function useSegments<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return state as T | SegmentsState;
+  // A location override that carries segments (OptimisticLocation) is read
+  // instead of the hook's own: selected once per override.
+  const override = useContext(OptimisticLocationContext)?.segments;
+  const overridden = useMemo(
+    () =>
+      override ? { value: selector ? selector(override) : override } : null,
+    [override],
+  );
+  return (overridden ? overridden.value : state) as T | SegmentsState;
 }

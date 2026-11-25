@@ -180,6 +180,58 @@ All of this applies to `<ParallelOutlet />` too. To reset the children on
 purpose, change a `key` on a stable wrapper rather than relying on a shape
 change.
 
+### Keeping the pages an outlet leaves: `keep`
+
+`<Outlet keep={{ max }} />` keeps up to `max` pages the outlet leaves mounted
+and hidden, each in a React `<Activity>`. Coming back shows the same instance:
+its state, typed input, sideways scroll and DOM nodes are as it left them.
+Use it for tabs, a list and its detail, anything a person switches between.
+
+```tsx
+"use client";
+import { Outlet } from "@rangojs/router/client";
+
+export function TabsLayout() {
+  return (
+    <main>
+      <TabBar />
+      <Outlet keep={{ max: 3 }} />
+    </main>
+  );
+}
+```
+
+- One entry per route and params for server routes, and per route in a
+  `clientUrls()` group (a param change there reconciles the page on screen,
+  as it does without keep). `keep.key(to)` (`to` is `{ route, params, search }`)
+  chooses otherwise; two URLs with one key are one entry. `key` is a
+  function, so pass it from a `"use client"` layout: a server layout cannot
+  hand a function to `Outlet`.
+- `max` counts hidden pages (`Infinity` keeps every one; a lower `max`
+  applies on the outlet's next render). Past it, the one left longest ago
+  unmounts; `useKeptOutlet().drop(key)` forgets one sooner (after deleting
+  what it showed, say).
+- While hidden, a page's `useParams`, `usePathname`, `useSearchParams`,
+  `useLocationState`, `useNavigation` and `useSegments` read its own URL,
+  and it navigates nowhere: its search-params setter, `useRouter().push` /
+  `replace` and `<Link>` do nothing (dev warns). `useKept().hidden` tells
+  it it is hidden.
+- A hidden page's effects are torn down and run again on each show, as React's
+  `<Activity>` does. An effect guarded by a "run once" ref does not run its
+  work again; `useKeptShow(callback)` runs on each show and never on a mount.
+  A show finishes the CSS transitions running in the page as it shows, so
+  `@starting-style` entrances do not play again; start a transition you want
+  to see on a show from `useKeptShow` after a frame.
+- Its parent layouts' loaders read live when it shows again. Data and timing
+  on a show are those of a navigation to that URL today.
+- The server and the first browser render draw the shown page alone, so the
+  document holds the same page markup as without keep (inside React's Activity
+  comment marker). `keep` must be the same on the server and in the browser: a
+  mismatch is a hydration error.
+- The default outlet only: a named outlet ignores `keep` (dev warns), and
+  `ParallelOutlet` has no `keep`. The keeping outlet loads as a small chunk of
+  its own the first time one renders.
+
 ## Named Outlets
 
 For parallel routes, use named outlets (`<Outlet name="@sidebar" />` is

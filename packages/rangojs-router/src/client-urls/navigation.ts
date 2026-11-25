@@ -6,6 +6,8 @@ import type { ClientUrlPatterns } from "./types.js";
 import type { TransitionWhenFn } from "../types/segments.js";
 
 export interface ClientUrlNavigationIntent {
+  /** ClientUrlsRoot presents it as an OptimisticLocation of this kind. */
+  readonly kind: "frame";
   readonly routeId: string;
   /**
    * The navigation began while an optimistic frame was on screen (a
@@ -187,6 +189,7 @@ export function beginClientUrlNavigation(
   }
 
   const intent: ClientUrlNavigationIntent = {
+    kind: "frame",
     routeId: match.routeKey,
     // From what React committed, not group.intent: a superseded intent is
     // cleared when its canonical commit is handed over, before React renders

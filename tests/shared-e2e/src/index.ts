@@ -148,6 +148,8 @@ export { runPeFormStateTests } from "./pe-form-state-scenario.js";
 export { runDocumentLocationStateTests } from "./document-location-state-scenario.js";
 export { runTxIdleViewTransitionTests } from "./tx-idle-view-transition-scenario.js";
 export { runNavIdleLocationTests } from "./nav-idle-location-scenario.js";
+export { runKeptPagesTests } from "./kept-pages-scenario.js";
+export type { KeptPagesScenarioOptions } from "./kept-pages-scenario.js";
 export { runActionLatestCallTests } from "./action-latest-call-scenario.js";
 export type { ActionLatestCallScenarioOptions } from "./action-latest-call-scenario.js";
 export { runActionPersistsTests } from "./action-persists-scenario.js";

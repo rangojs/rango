@@ -6,6 +6,7 @@ import {
   isValidElement,
 } from "react";
 import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
+import type { OutletDraws } from "./outlet-context.js";
 import { withOptimisticCommitNone } from "./browser/optimistic-commit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import type { ResolvedSegment, RootLayoutProps } from "./types.js";
@@ -510,6 +511,8 @@ export async function renderSegments(
   );
   // Render content segments as siblings
   let content: ReactNode = null;
+  // What `content` is, declared on the next layout's outlet context.
+  let drawn: OutletDraws | undefined;
   for (let i = 0; i < tree.length; i++) {
     const node = tree[i]!;
     invariant(
@@ -660,6 +663,7 @@ export async function renderSegments(
     // as-is and means "wrap"), so this gate needs no router-option threading.
     let outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
+    const outletDraws = node.segment.type === "layout" ? drawn : undefined;
 
     const transition = node.segment.transition;
 
@@ -748,6 +752,7 @@ export async function renderSegments(
           fallback: loading,
           outletKey: key,
           outletContent,
+          outletDraws,
           segment: node.segment,
           parallel: node.parallel,
           children: nodeContent,
@@ -761,6 +766,7 @@ export async function renderSegments(
         {
           key,
           content: outletContent,
+          draws: outletDraws,
           segment: node.segment,
           parallel: node.parallel,
           pending: outletPending,
@@ -888,6 +894,7 @@ export async function renderSegments(
         {
           key,
           content: outletContent,
+          draws: outletDraws,
           segment: node.segment,
           parallel: node.parallel,
           loaderStreams,
@@ -924,6 +931,8 @@ export async function renderSegments(
         [node.segment, ...node.parallel, ...node.loaders],
       );
     }
+
+    drawn = { route: id, key, kind: "page" };
 
     if (segDebug) {
       segDebugLog(`segment ${id} built`, {

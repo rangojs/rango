@@ -3,6 +3,7 @@ import type { ComponentProps, ReactElement, ReactNode } from "react";
 import { Component, Suspense, use, useMemo } from "react";
 import { AuditedOutletProvider, OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
+import type { OutletDraws } from "./outlet-context.js";
 import {
   decodeLoaderResults,
   LOADER_ERROR_FALLBACK,
@@ -217,6 +218,8 @@ export interface LoaderBoundaryProps {
   fallback?: ReactNode;
   outletKey: string;
   outletContent: ReactNode;
+  /** What `outletContent` is (OutletContextValue.draws). */
+  outletDraws?: OutletDraws;
   segment: ResolvedSegment;
   parallel?: ResolvedSegment[];
   children: ReactNode;
@@ -230,6 +233,7 @@ export function LoaderBoundary({
   fallback,
   outletKey,
   outletContent,
+  outletDraws,
   segment,
   parallel,
   children,
@@ -243,6 +247,7 @@ export function LoaderBoundary({
         awaitedLoaderIds={awaitedLoaderIds}
         outletKey={outletKey}
         outletContent={outletContent}
+        outletDraws={outletDraws}
         segment={segment}
         parallel={parallel}
       >
@@ -322,6 +327,7 @@ function LoaderResolver({
   awaitedLoaderIds,
   outletKey,
   outletContent,
+  outletDraws,
   segment,
   parallel,
   children,
@@ -331,6 +337,7 @@ function LoaderResolver({
       <OutletProvider
         key={outletKey}
         content={outletContent}
+        draws={outletDraws}
         segment={segment}
         parallel={parallel}
         loaderStreams={loaderStreams}
@@ -359,6 +366,7 @@ function LoaderResolver({
     <OutletProvider
       key={outletKey}
       content={outletContent}
+      draws={outletDraws}
       segment={segment}
       parallel={parallel}
       loaderData={Object.keys(loaderData).length > 0 ? loaderData : undefined}
