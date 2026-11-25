@@ -28,6 +28,11 @@ import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
 import { getMemoizedLoaderPromise } from "./segment-loader-promise.js";
 import { loaderParentId } from "./browser/react/filter-segment-order.js";
+// SPIKE: a kept modal stands in for loading() (foldInterceptLoaders).
+import {
+  slotEntryKey,
+  SPIKE_TWO_STEP_KEPT_KEYS,
+} from "./spike-kept-registry.js";
 import {
   auditSegmentElement,
   finishTreeAudit,
@@ -144,7 +149,11 @@ export function foldInterceptLoaders(
       loaderIds: loaders.map((l) => l.loaderId!),
       loaderDataPromise: settlesLoaders(
         loaders,
-        settleLoaders || !isRenderableLoading(slot.loading),
+        settleLoaders ||
+          (!isRenderableLoading(slot.loading) &&
+            // SPIKE: a kept copy of this modal (same slot and params) under a
+            // two-step outlet shows while the loaders run, as loading() would.
+            !SPIKE_TWO_STEP_KEPT_KEYS.has(slotEntryKey(slot))),
       )
         ? await aggregate
         : aggregate,

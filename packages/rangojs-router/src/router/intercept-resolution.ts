@@ -33,6 +33,9 @@ import {
   latchPprHeaderScopeForEntries,
   runAsSegment,
 } from "../server/context.js";
+// SPIKE: kept modals (keptByClient).
+import { slotEntryKey } from "../spike-kept-registry.js";
+import { WIRE } from "../wire-params.js";
 import { _getRequestContext } from "../server/request-context.js";
 
 /**
@@ -319,6 +322,18 @@ function resolveInterceptLoaders<TEnv>(
 }
 
 /**
+ * SPIKE: the browser holds a kept two-step copy of this modal (same slot and
+ * params, WIRE.kept): it shows that copy while the loaders run, so the slot
+ * streams as it would with loading().
+ */
+function keptByClient(slotId: string, params: Record<string, string>): boolean {
+  const raw = _getRequestContext()?.originalUrl?.searchParams.get(WIRE.kept);
+  if (!raw) return false;
+  const key = slotEntryKey({ id: slotId, params }).slice("slot:".length);
+  return raw.split(",").some((part) => decodeURIComponent(part) === key);
+}
+
+/**
  * An intercept slot with no loading() waits for its loaders that are not
  * deferred; the browser's side is foldInterceptLoaders (segment-system.tsx).
  */
@@ -467,7 +482,9 @@ export async function resolveInterceptEntry<TEnv>(
   } else if (interceptEntry.loading && handlerResult instanceof Promise) {
     component = streamedComponent(handlerResult);
   } else {
-    if (!interceptEntry.loading) await settleLoaderSegments(loaderSegments);
+    if (!interceptEntry.loading && !keptByClient(slotSegmentId, params)) {
+      await settleLoaderSegments(loaderSegments);
+    }
     component = handlerResult;
     if (handlerResult instanceof Promise) {
       try {
@@ -512,7 +529,12 @@ export async function resolveInterceptLoadersOnly<TEnv>(
   handleStore?.releaseRecordedValues(
     interceptSlotId(parentEntry, interceptEntry),
   );
-  if (!interceptEntry.loading) await settleLoaderSegments(segments);
+  if (
+    !interceptEntry.loading &&
+    !keptByClient(interceptSlotId(parentEntry, interceptEntry), pass.params)
+  ) {
+    await settleLoaderSegments(segments);
+  }
   deliverStartedLoaders(pass.context, segments);
   return segments;
 }

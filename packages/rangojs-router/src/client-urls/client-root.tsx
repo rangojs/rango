@@ -18,6 +18,9 @@ import {
   type ClientUrlNavigationIntent,
 } from "./navigation.js";
 import { OptimisticLocationContext } from "./optimistic-location.js";
+// SPIKE: <Outlet keep /> entry identity.
+import { KeepEntryContext } from "../outlet-keep.js";
+import { useParams } from "../browser/react/use-params.js";
 import type {
   ClientUrlInterceptRecord,
   ClientUrlPatterns,
@@ -109,9 +112,13 @@ export function ClientUrlsRoot({
   routeId,
   namePrefix = "",
   foreign,
+  params: committedParams,
 }: {
   definition: ClientUrlPatterns;
   routeId: string;
+  /** SPIKE: the committed route's params, from the server's handler, so an
+   *  <Outlet keep /> entry key comes with the tree (falls back to useParams). */
+  params?: Readonly<Record<string, string>>;
   /** include() route-name prefix, injected at materialization for canonical
    *  name composition (intercept-target coordination). */
   namePrefix?: string;
@@ -146,6 +153,20 @@ export function ClientUrlsRoot({
       ? findRoute(definition, presented.routeId)
       : null;
   const route = optimisticRoute ?? findRoute(definition, routeId);
+  // SPIKE: the identity of the page the group's layouts render.
+  const storeParams = useParams();
+  const shownParams = optimisticRoute
+    ? presented!.params
+    : (committedParams ?? storeParams);
+  const keepParams = JSON.stringify(
+    Object.fromEntries(
+      Object.entries(shownParams).sort(([a], [b]) => a.localeCompare(b)),
+    ),
+  );
+  const keepIdentity = useMemo(
+    () => ({ route: route.id, params: keepParams }),
+    [route.id, keepParams],
+  );
 
   // At commit, so a navigation reads what is on screen (no routeId while a
   // frame is): React renders transition lanes one at a time, so the render
@@ -220,7 +241,10 @@ export function ClientUrlsRoot({
     children: createElement(OptimisticLocationContext.Provider, {
       // The intent carries every OptimisticLocation field.
       value: optimisticRoute ? presented : null,
-      children: content,
+      children: createElement(KeepEntryContext.Provider, {
+        value: keepIdentity,
+        children: content,
+      }),
     }),
   });
 }

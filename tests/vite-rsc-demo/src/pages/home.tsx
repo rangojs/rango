@@ -39,6 +39,10 @@ export function HomePage() {
             Navigate to <a href="/middleware">Middleware</a> to test global,
             pattern-based, route-level, and loader middleware
           </li>
+          <li>
+            Navigate to <a href="/keep-lab">Keep lab</a> to compare kept pages
+            (an Outlet that keeps left pages hidden) with today&apos;s router
+          </li>
         </ul>
       </div>
     </DebugSegmentWrapper>

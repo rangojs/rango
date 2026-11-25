@@ -36,6 +36,13 @@ import { asyncHandlesPatterns } from "./urls/async-handles.js";
 import { loaderReadHandlesPatterns } from "./urls/loader-read-handles.js";
 import { pushHandlePatterns } from "./urls/push-handle.js";
 import pushHandleGroupPatterns from "./urls/push-handle.client-urls.js";
+// SPIKE (kept pages, part C): e2e/keep-pages-frames.test.ts.
+import keepSpikeClientKeepPatterns from "./urls/keep-spike-keep.client-urls.js";
+import keepSpikeClientPlainPatterns from "./urls/keep-spike-plain.client-urls.js";
+import {
+  keepSpikeServerKeepPatterns,
+  keepSpikeServerPlainPatterns,
+} from "./urls/keep-spike.js";
 import { handlesCommitPatterns } from "./urls/handles-commit.js";
 import { hookFieldsPatterns } from "./urls/hook-fields.js";
 import { handlesOverlapPatterns } from "./urls/handles-overlap.js";
@@ -1320,6 +1327,16 @@ export const urlpatterns = urls(
       include("/push-handle-group", pushHandleGroupPatterns, {
         name: "pushHandleGroup",
       }),
+      // SPIKE (kept pages, part C): an Outlet that keeps left pages, and the
+      // same pages without it, in clientUrls() groups and as server routes.
+      include("/keep-spike/client-keep", keepSpikeClientKeepPatterns, {
+        name: "ksClientKeep",
+      }),
+      include("/keep-spike/client-plain", keepSpikeClientPlainPatterns, {
+        name: "ksClientPlain",
+      }),
+      include("/", keepSpikeServerKeepPatterns, { name: "" }),
+      include("/", keepSpikeServerPlainPatterns, { name: "" }),
       // A cached back/forward animates under transition().
       include("/", vtBackPatterns, { name: "" }),
 

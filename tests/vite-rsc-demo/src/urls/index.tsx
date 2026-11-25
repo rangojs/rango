@@ -32,6 +32,9 @@ import { refreshDemoPatterns } from "./refresh-demo.js";
 import { gtmDemoPatterns } from "./gtm.js";
 import { hydrationPatterns } from "./hydration.js";
 import { staleClickPatterns } from "./stale-click.js";
+// SPIKE (keep lab): kept pages side by side.
+import { keepLabPatterns } from "./keep-lab.js";
+import keepLabGroupUrls from "./keep-lab-group.client.js";
 
 /**
  * Consumer-app CategoryTemplate mirror: a server layout between the chrome
@@ -112,6 +115,8 @@ export const urlpatterns = urls(
     include("/refresh", refreshDemoPatterns, { name: "refresh" }),
     include("/hydration", hydrationPatterns, { name: "hydration" }),
     include("/stale-click", staleClickPatterns, { name: "staleClick" }),
+    include("/keep-lab/group", keepLabGroupUrls, { name: "keepLabGroup" }),
+    include("/keep-lab", keepLabPatterns, { name: "keepLab" }),
     include("/middleware", middlewarePatterns, { name: "middleware" }),
     include("/shop", shopPatterns, { name: "shop" }),
     // clientUrls() shop mirror: the /shop product experience with all data
