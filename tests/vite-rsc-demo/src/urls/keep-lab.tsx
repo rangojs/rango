@@ -2,7 +2,6 @@ import { urls, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { KeepLabLayout, KeepLabPage } from "./keep-lab.client.js";
 import {
-  KeepLabModalSkeleton,
   KeepLabItemModal,
   KeepLabItemPage,
   KeepLabPanel,
@@ -51,7 +50,7 @@ function KeepLabIndex() {
 // Route names and paths stay literal: the route-type generator reads them
 // from source.
 export const keepLabPatterns = urls(
-  ({ path, layout, loader, loading, transition, parallel, intercept }) => [
+  ({ path, layout, loader, transition, parallel, intercept }) => [
     path(
       "/",
       (ctx) => {
@@ -68,13 +67,13 @@ export const keepLabPatterns = urls(
           "@modal",
           ".plain.item",
           <KeepLabItemModal mode="plain" />,
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/plain/item/:id",
           () => <KeepLabItemPage mode="plain" />,
           { name: "plain.item" },
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/plain/a",
@@ -141,13 +140,13 @@ export const keepLabPatterns = urls(
           "@modal",
           ".keep.item",
           <KeepLabItemModal mode="keep" />,
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/keep/item/:id",
           () => <KeepLabItemPage mode="keep" />,
           { name: "keep.item" },
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/keep/a",
@@ -189,13 +188,13 @@ export const keepLabPatterns = urls(
           "@modal",
           ".keepTwoStep.item",
           <KeepLabItemModal mode="keep-two-step" />,
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/keep-two-step/item/:id",
           () => <KeepLabItemPage mode="keep-two-step" />,
           { name: "keepTwoStep.item" },
-          () => [loader(KeepLabItemLoader), loading(<KeepLabModalSkeleton />)],
+          () => [loader(KeepLabItemLoader)],
         ),
         path(
           "/keep-two-step/a",

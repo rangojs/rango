@@ -27,7 +27,11 @@ import { stampLocationState } from "./browser/react/location-state-shared.js";
 import { useParams } from "./browser/react/use-params.js";
 import { usePathname } from "./browser/react/use-pathname.js";
 import { useSearchParams } from "./browser/react/use-search-params.js";
-import { ksSpike, SPIKE_KEPT_KEYS } from "./spike-kept-registry.js";
+import {
+  ksSpike,
+  SPIKE_KEPT_KEYS,
+  SPIKE_TWO_STEP_KEPT_KEYS,
+} from "./spike-kept-registry.js";
 
 /** SPIKE: options of `<Outlet keep={...} />`. */
 export interface OutletKeepOptions {
@@ -122,19 +126,7 @@ export interface KeptSlotEntry {
   readonly content: ReactNode;
 }
 
-/** SPIKE: a slot entry's key: its segment and its params. */
-export function slotEntryKey(
-  segment: { id: string; params?: Record<string, string> } | null,
-): string {
-  if (!segment) return "slot:empty";
-  const params = segment.params
-    ? Object.keys(segment.params)
-        .sort()
-        .map((name) => `${name}=${segment.params![name]}`)
-        .join("&")
-    : "";
-  return `slot:${segment.id}|${params}`;
-}
+export { slotEntryKey } from "./spike-kept-registry.js";
 
 export function KeptOutlet({
   keep,
@@ -241,9 +233,16 @@ export function KeptOutlet({
     const hidden = entries
       .filter((entry) => entry.key !== key)
       .map((entry) => entry.key);
-    for (const k of hidden) SPIKE_KEPT_KEYS.add(k);
+    const twoStep = keep.reveal === "two-step";
+    for (const k of hidden) {
+      SPIKE_KEPT_KEYS.add(k);
+      if (twoStep) SPIKE_TWO_STEP_KEPT_KEYS.add(k);
+    }
     return () => {
-      for (const k of hidden) SPIKE_KEPT_KEYS.delete(k);
+      for (const k of hidden) {
+        SPIKE_KEPT_KEYS.delete(k);
+        SPIKE_TWO_STEP_KEPT_KEYS.delete(k);
+      }
     };
   });
   useLayoutEffect(() => {

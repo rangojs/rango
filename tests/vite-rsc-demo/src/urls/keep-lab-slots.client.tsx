@@ -100,17 +100,6 @@ export function KeepLabItemModal({ mode }: { mode: KeepLabMode }) {
   );
 }
 
-/** The intercept's loading(): the modal opens at the click with this. */
-export function KeepLabModalSkeleton() {
-  return (
-    <div data-kl-modal-skeleton style={overlayStyle}>
-      <div style={modalStyle}>
-        <ReadSkeleton label="item" />
-      </div>
-    </div>
-  );
-}
-
 export function KeepLabItemPage({ mode }: { mode: KeepLabMode }) {
   const { id } = useParams<{ id: string }>();
   return (

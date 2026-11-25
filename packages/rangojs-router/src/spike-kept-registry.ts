@@ -16,6 +16,27 @@ export interface KsSpike {
 
 export const SPIKE_KEPT_KEYS: Set<string> = new Set<string>();
 
+/**
+ * The hidden keys of outlets with reveal: "two-step". A slot whose kept entry
+ * is here can show that entry while its loaders run, so foldInterceptLoaders
+ * does not hold the commit for them (segment-system.tsx).
+ */
+export const SPIKE_TWO_STEP_KEPT_KEYS: Set<string> = new Set<string>();
+
+/** A slot entry's key: its segment and its params (outlet-keep.tsx). */
+export function slotEntryKey(
+  segment: { id: string; params?: Record<string, string> } | null,
+): string {
+  if (!segment) return "slot:empty";
+  const params = segment.params
+    ? Object.keys(segment.params)
+        .sort()
+        .map((name) => `${name}=${segment.params![name]}`)
+        .join("&")
+    : "";
+  return `slot:${segment.id}|${params}`;
+}
+
 export function ksSpike(): KsSpike | undefined {
   return (globalThis as { __ksSpike?: KsSpike }).__ksSpike;
 }
