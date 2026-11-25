@@ -47,7 +47,7 @@ await p.evaluate(() => {
     const s = [
       `url=${location.pathname.split("/").slice(3).join("/")}`,
       `panel=${panel ? panel.dataset.klPanelSlot + slot(panel) : "none"}`,
-      `modal=${modal ? "item" + modal.dataset.klModal + slot(modal) : "none"}`,
+      `modal=${modal ? "item" + modal.dataset.klModal + slot(modal) : document.querySelector("[data-kl-modal-skeleton]") ? "SKELETON" : "none"}`,
     ].join(" ");
     if (s !== last) {
       last = s;
