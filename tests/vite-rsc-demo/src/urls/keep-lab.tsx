@@ -5,6 +5,7 @@ import {
   KeepLabALoader,
   KeepLabBLoader,
   KeepLabCLoader,
+  KeepLabLayoutLoader,
 } from "./keep-lab.loaders.js";
 import { KEEP_LAB_MODES } from "./keep-lab.modes.js";
 
@@ -53,6 +54,7 @@ export const keepLabPatterns = urls(({ path, layout, loader, transition }) => [
   layout(
     () => <KeepLabLayout mode="plain" />,
     () => [
+      loader(KeepLabLayoutLoader),
       path(
         "/plain/a",
         () => <KeepLabPage mode="plain" page="a" />,
@@ -77,6 +79,7 @@ export const keepLabPatterns = urls(({ path, layout, loader, transition }) => [
     () => <KeepLabLayout mode="transition" />,
     () => [
       transition(),
+      loader(KeepLabLayoutLoader),
       path(
         "/transition/a",
         () => <KeepLabPage mode="transition" page="a" />,
@@ -100,6 +103,7 @@ export const keepLabPatterns = urls(({ path, layout, loader, transition }) => [
   layout(
     () => <KeepLabLayout mode="keep" />,
     () => [
+      loader(KeepLabLayoutLoader),
       path(
         "/keep/a",
         () => <KeepLabPage mode="keep" page="a" />,
@@ -123,6 +127,7 @@ export const keepLabPatterns = urls(({ path, layout, loader, transition }) => [
   layout(
     () => <KeepLabLayout mode="keep-two-step" />,
     () => [
+      loader(KeepLabLayoutLoader),
       path(
         "/keep-two-step/a",
         () => <KeepLabPage mode="keep-two-step" page="a" />,

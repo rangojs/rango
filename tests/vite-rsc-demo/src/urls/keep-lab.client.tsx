@@ -17,6 +17,7 @@ import {
   KeepLabALoader,
   KeepLabBLoader,
   KeepLabCLoader,
+  KeepLabLayoutLoader,
 } from "./keep-lab.loaders.js";
 import {
   KEEP_LAB_PAGES,
@@ -39,10 +40,49 @@ const LOADERS = {
 const instances = new Map<string, number>();
 
 function PageData({ page }: { page: KeepLabPageName }) {
-  const { data } = useLoader(LOADERS[page]);
+  const { data, isLoading, load } = useLoader(LOADERS[page]);
   return (
-    <p data-kl-data={`${data.page}:${data.read}`} style={dataStyle}>
-      Read <strong>#{data.read}</strong> at {data.at}
+    <p
+      data-kl-data={`${data.page}:${data.read}`}
+      data-kl-loading={isLoading ? "true" : "false"}
+      style={{ ...dataStyle, opacity: isLoading ? 0.5 : 1 }}
+    >
+      Read <strong>#{data.read}</strong> at {data.at} ·{" "}
+      <code>isLoading={String(isLoading)}</code>{" "}
+      <button data-kl-refresh={page} onClick={() => void load()}>
+        Refresh
+      </button>
+    </p>
+  );
+}
+
+/** The layout loader's read, as the layout or a page sees it. */
+function LayoutData({ reader }: { reader: string }) {
+  const { data, isLoading, load } = useLoader(KeepLabLayoutLoader);
+  return (
+    <p
+      data-kl-layout-data={`${reader}:${data.read}`}
+      data-kl-layout-loading={isLoading ? "true" : "false"}
+      style={{ ...layoutDataStyle, opacity: isLoading ? 0.5 : 1 }}
+    >
+      Layout loader, read by the {reader}: <strong>#{data.read}</strong> at{" "}
+      {data.at} · <code>isLoading={String(isLoading)}</code>
+      {reader === "layout" && (
+        <>
+          {" "}
+          <button data-kl-refresh="layout" onClick={() => void load()}>
+            Refresh layout loader
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
+function LayoutDataSkeleton({ reader }: { reader: string }) {
+  return (
+    <p style={{ ...layoutDataStyle, ...skeletonStyle }}>
+      Layout loader, read by the {reader}: loading...
     </p>
   );
 }
@@ -98,6 +138,9 @@ export function KeepLabPage({
       </h2>
       <Suspense fallback={<PageSkeleton page={page} />}>
         <PageData page={page} />
+      </Suspense>
+      <Suspense fallback={<LayoutDataSkeleton reader={`page ${name}`} />}>
+        <LayoutData reader={`page ${name}`} />
       </Suspense>
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <label style={boxStyle}>
@@ -208,6 +251,9 @@ export function KeepLabLayout({ mode }: { mode: KeepLabMode }) {
           <code data-kl-title>{title}</code>
         </div>
       </div>
+      <Suspense fallback={<LayoutDataSkeleton reader="layout" />}>
+        <LayoutData reader="layout" />
+      </Suspense>
       {mode === "keep" ? (
         <Outlet keep={{ max: 2 }} />
       ) : mode === "keep-two-step" ? (
@@ -231,6 +277,12 @@ const dataStyle = {
   margin: "0 0 0.75rem",
   padding: "0.5rem",
   background: "#eef6ee",
+  borderRadius: 4,
+} as const;
+const layoutDataStyle = {
+  margin: "0 0 0.75rem",
+  padding: "0.25rem 0.5rem",
+  background: "#eef2fb",
   borderRadius: 4,
 } as const;
 const skeletonStyle = { background: "#eee", color: "#999" } as const;

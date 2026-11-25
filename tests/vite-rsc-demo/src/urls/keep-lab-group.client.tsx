@@ -6,6 +6,7 @@ import {
   KeepLabALoader,
   KeepLabBLoader,
   KeepLabCLoader,
+  KeepLabLayoutLoader,
 } from "./keep-lab.loaders.js";
 
 // SPIKE (keep lab, mode 5): the lab's pages as a clientUrls() group whose
@@ -29,6 +30,7 @@ function C() {
 
 export default clientUrls(({ layout, path, loader }) => [
   layout(Layout, () => [
+    loader(KeepLabLayoutLoader),
     path("/a", A, { name: "a" }, () => [loader(KeepLabALoader)]),
     path("/b", B, { name: "b" }, () => [loader(KeepLabBLoader)]),
     path("/c", C, { name: "c" }, () => [loader(KeepLabCLoader)]),

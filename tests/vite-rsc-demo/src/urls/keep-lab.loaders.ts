@@ -22,6 +22,12 @@ async function answer(page: string, ctx: LoaderContext): Promise<KeepLabData> {
   return { page, read, at: new Date().toISOString().slice(11, 23) };
 }
 
-export const KeepLabALoader = createLoader((ctx) => answer("a", ctx));
-export const KeepLabBLoader = createLoader((ctx) => answer("b", ctx));
-export const KeepLabCLoader = createLoader((ctx) => answer("c", ctx));
+// Fetchable (the `true`), so a page's Refresh button can call load().
+export const KeepLabALoader = createLoader((ctx) => answer("a", ctx), true);
+export const KeepLabBLoader = createLoader((ctx) => answer("b", ctx), true);
+export const KeepLabCLoader = createLoader((ctx) => answer("c", ctx), true);
+/** On every mode's layout; the layout and each page read it. */
+export const KeepLabLayoutLoader = createLoader(
+  (ctx) => answer("layout", ctx),
+  true,
+);
