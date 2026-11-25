@@ -893,12 +893,16 @@ function materializeRouteItems(
       (route, routeIndex) =>
         path(
           route.pattern,
-          () =>
+          (ctx) =>
             React.createElement(ClientUrlsRoot, {
               definition: reference as ClientUrlPatterns,
               routeId: route.id,
               namePrefix,
               ...foreignProp(),
+              // SPIKE: <Outlet keep /> keys a group page by its params.
+              ...(ctx?.params && {
+                params: ctx.params as Record<string, string>,
+              }),
             }),
           materializedPathOptions(route, clientGroup),
           recordingCopies(routeIndex, () => [

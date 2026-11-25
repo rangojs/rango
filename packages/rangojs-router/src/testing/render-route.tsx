@@ -246,6 +246,12 @@ export interface RenderRouteSpec {
    */
   transition?: TransitionConfig;
   /**
+   * SPIKE (kept pages): a layout spec that is a urls() layout() shared by
+   * the routes under it rather than owned by the leaf route, so its key
+   * carries no params and a param navigation keeps it mounted.
+   */
+  sharedLayout?: boolean;
+  /**
    * Parallel slots this node declares (`parallel({ "@side": Side })`), each
    * rendered where the node's component places `<ParallelOutlet name>`. A
    * slot given as `{ Component, intercept: true }` is an intercept's: it
@@ -933,7 +939,9 @@ function buildSegments(
       index: i,
       component: <Component />,
       params,
-      belongsToRoute: true,
+      // SPIKE (kept pages): a shared layout is keyed without params, as a
+      // urls() layout() above its routes is.
+      belongsToRoute: !(spec.sharedLayout && !isLeaf),
     };
     if (mount) node.mountPath = mount;
     if (spec.transition) node.transition = spec.transition;
