@@ -43,7 +43,7 @@ export const KEEP_LAB_MODES: readonly KeepLabModeInfo[] = [
     setup:
       "Server routes; the layout renders <Outlet keep={{ max: 2 }} />, so the two pages you left stay mounted and hidden.",
     watch:
-      "Coming back keeps the same instance, the typed text and the open panel; the list's scroll goes back to the top. When the route re-runs (the search link), the kept page shows its skeleton until the new read lands.",
+      "Coming back keeps the same instance, the typed text and the open panel; the list's scroll goes back to the top. When the route re-runs (the search link), the kept page shows its skeleton until the new read lands. The page's @panel slot keeps with its page; the item modal keeps through ParallelOutlet keep.",
   },
   {
     mode: "keep-two-step",
@@ -51,7 +51,7 @@ export const KEEP_LAB_MODES: readonly KeepLabModeInfo[] = [
     setup:
       'As 3, with reveal: "two-step": the kept page shows with its last data in the navigation\'s commit, then the new element swaps in a transition.',
     watch:
-      "Coming back keeps the instance and its state (not the list's scroll). On the search link the page shows at once with its old read number and time, and they change once when the new read lands: no skeleton.",
+      "Coming back keeps the instance and its state (not the list's scroll). On the search link the page shows at once with its old read number and time, and they change once when the new read lands: no skeleton. The page's @panel slot keeps with its page; the item modal keeps the same way (ParallelOutlet keep).",
   },
   {
     mode: "group",

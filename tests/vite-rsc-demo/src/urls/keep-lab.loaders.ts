@@ -31,3 +31,14 @@ export const KeepLabLayoutLoader = createLoader(
   (ctx) => answer("layout", ctx),
   true,
 );
+
+/** The side panel's loader: a parallel slot on pages A and B. */
+export const KeepLabPanelLoader = createLoader(
+  (ctx) => answer("panel", ctx),
+  true,
+);
+/** An item's loader, for the intercepted modal and the full item page. */
+export const KeepLabItemLoader = createLoader(
+  (ctx) => answer(`item ${ctx.params.id ?? "?"}`, ctx),
+  true,
+);

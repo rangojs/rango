@@ -5,6 +5,7 @@ import {
   Link,
   Meta,
   Outlet,
+  ParallelOutlet,
   useHandle,
   useLoader,
   useNavigation,
@@ -142,6 +143,9 @@ export function KeepLabPage({
       <Suspense fallback={<LayoutDataSkeleton reader={`page ${name}`} />}>
         <LayoutData reader={`page ${name}`} />
       </Suspense>
+      {/* The page's own @panel slot (pages A and B): it lives inside the
+          page, so the page's keep keeps it. */}
+      <ParallelOutlet name="@panel" />
       <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <label style={boxStyle}>
           Type here: <input data-kl-input placeholder="survives a keep?" />
@@ -246,6 +250,20 @@ export function KeepLabLayout({ mode }: { mode: KeepLabMode }) {
             </Link>
           ))}
         </div>
+        <div>
+          Items (open as a modal from any page):{" "}
+          {["1", "2"].map((id) => (
+            <Link
+              key={id}
+              to={`${base}/item/${id}`}
+              prefetch="none"
+              style={linkStyle}
+              data-kl-link={`item-${id}`}
+            >
+              Item {id}
+            </Link>
+          ))}
+        </div>
         <div style={{ color: "#555" }}>
           navigation: <code data-kl-nav>{nav}</code> · title:{" "}
           <code data-kl-title>{title}</code>
@@ -254,6 +272,7 @@ export function KeepLabLayout({ mode }: { mode: KeepLabMode }) {
       <Suspense fallback={<LayoutDataSkeleton reader="layout" />}>
         <LayoutData reader="layout" />
       </Suspense>
+      <ParallelOutlet name="@modal" keep={slotKeep(mode)} />
       {mode === "keep" ? (
         <Outlet keep={{ max: 2 }} />
       ) : mode === "keep-two-step" ? (
@@ -265,6 +284,15 @@ export function KeepLabLayout({ mode }: { mode: KeepLabMode }) {
       )}
     </div>
   );
+}
+
+/** The slots keep as the mode's Outlet does; modes 1, 2 and 5 keep nothing. */
+function slotKeep(
+  mode: KeepLabMode,
+): { max: number; reveal?: "two-step" } | undefined {
+  if (mode === "keep") return { max: 2 };
+  if (mode === "keep-two-step") return { max: 2, reveal: "two-step" };
+  return undefined;
 }
 
 const pageStyle = {

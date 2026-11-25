@@ -111,7 +111,38 @@ function entryKey(
     : "el:";
 }
 
-export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
+/**
+ * SPIKE: a named slot's entry (ParallelOutlet / Outlet name="@x", intercepts
+ * included). client.tsx renders the slot's content; a slot with no segment on
+ * this page has the key "slot:empty" and draws nothing, while the entries it
+ * left stay kept.
+ */
+export interface KeptSlotEntry {
+  readonly key: string;
+  readonly content: ReactNode;
+}
+
+/** SPIKE: a slot entry's key: its segment and its params. */
+export function slotEntryKey(
+  segment: { id: string; params?: Record<string, string> } | null,
+): string {
+  if (!segment) return "slot:empty";
+  const params = segment.params
+    ? Object.keys(segment.params)
+        .sort()
+        .map((name) => `${name}=${segment.params![name]}`)
+        .join("&")
+    : "";
+  return `slot:${segment.id}|${params}`;
+}
+
+export function KeptOutlet({
+  keep,
+  slot,
+}: {
+  keep: OutletKeepOptions;
+  slot?: KeptSlotEntry;
+}): ReactNode {
   const context = useContext(OutletContext);
   const identity = useContext(KeepEntryContext);
   const optimistic = useContext(OptimisticLocationContext);
@@ -119,8 +150,8 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   const pathname = usePathname();
   const [search] = useSearchParams();
   const locationState = useContext(LocationStateContext);
-  const content = context?.content ?? null;
-  const key = entryKey(identity, keep.by, content);
+  const content = slot ? slot.content : (context?.content ?? null);
+  const key = slot ? slot.key : entryKey(identity, keep.by, content);
   const isolate = keep.isolate !== false;
 
   // The left pages, last left last. Each is what the outlet drew for it in
@@ -248,7 +279,7 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
       .map((entry) => draw(entry, false)),
     draw(shown, true),
   ];
-  return context?.loading ? (
+  return !slot && context?.loading ? (
     <Suspense fallback={context.loading}>{nodes}</Suspense>
   ) : (
     nodes

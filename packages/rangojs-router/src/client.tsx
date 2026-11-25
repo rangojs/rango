@@ -32,7 +32,11 @@ import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
 // SPIKE: <Outlet keep />.
-import { KeptOutlet, type OutletKeepOptions } from "./outlet-keep.js";
+import {
+  KeptOutlet,
+  slotEntryKey,
+  type OutletKeepOptions,
+} from "./outlet-keep.js";
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -237,6 +241,15 @@ export function Outlet({
 
   // SPIKE: a separate component, so the hooks it calls stay off plain outlets.
   if (keep && !name) return createElement(KeptOutlet, { keep });
+  if (keep && name) {
+    return createElement(KeptOutlet, {
+      keep,
+      slot: {
+        key: slotEntryKey(namedSegment),
+        content: renderSlotContent(namedSegment),
+      },
+    });
+  }
 
   if (name) {
     const slot = renderSlotContent(namedSegment);
@@ -300,10 +313,23 @@ export function Outlet({
  * }
  * ```
  */
-export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
+export function ParallelOutlet({
+  name,
+  keep,
+}: {
+  name: `@${string}`;
+  /** SPIKE: keep the slot content it left mounted and hidden (outlet-keep.tsx). */
+  keep?: OutletKeepOptions;
+}): ReactNode {
   const context = useContext(OutletContext);
   const segment = useSlotSegment(context, name);
 
+  if (keep) {
+    return createElement(KeptOutlet, {
+      keep,
+      slot: { key: slotEntryKey(segment), content: renderSlotContent(segment) },
+    });
+  }
   return renderSlotContent(segment);
 }
 
