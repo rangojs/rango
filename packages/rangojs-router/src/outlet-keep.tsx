@@ -26,7 +26,6 @@ import { stampLocationState } from "./browser/react/location-state-shared.js";
 import { useParams } from "./browser/react/use-params.js";
 import { usePathname } from "./browser/react/use-pathname.js";
 import { useSearchParams } from "./browser/react/use-search-params.js";
-import { MountContextProvider } from "./browser/react/mount-context.js";
 
 /** SPIKE: options of `<Outlet keep={...} />`. */
 export interface OutletKeepOptions {
@@ -84,16 +83,18 @@ function entryKey(
       : `route:${identity.route}|${identity.params}`;
   }
   // A server route's element carries its segment key (segment-system.tsx):
-  // `id-params` outside a transition scope, `id` inside one. A route under
-  // include() comes wrapped in an unkeyed MountContextProvider
-  // (segment-system.tsx, `node.segment.mountPath`): the key is its child's.
+  // `id-params` outside a transition scope, `id` inside one. It can come
+  // wrapped in unkeyed elements: a MountContextProvider for a route under
+  // include() (`node.segment.mountPath`), a view-transition boundary under
+  // transition() (wrapDefaultOutletContent). The key is the first keyed
+  // element down the children.
   // SPIKE: found by the browser probe (part C); without it every route under
   // include() had the key "el:" and nothing was kept.
   let element = content;
   while (
     isValidElement<{ children?: ReactNode }>(element) &&
     element.key == null &&
-    element.type === MountContextProvider
+    isValidElement(element.props.children)
   ) {
     element = element.props.children;
   }
