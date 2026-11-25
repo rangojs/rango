@@ -305,6 +305,111 @@ function keepPagesFrames(f: ReturnType<typeof useFixture>, mode: string) {
   }
 }
 
+/**
+ * SPIKE (part D): why a kept server-route page shows its fallback on a link
+ * back. `window.__ksSpike` (src/spike-kept-registry.ts) turns on the commit
+ * probe in partial-update.ts (which branch commits, what `_rsc_segments`
+ * listed, what the server re-rendered), the handle probe in
+ * event-controller.ts, and the spike commit modes: "transition" (H2) and
+ * "two-step" (H3).
+ */
+type SpikeMode = "today" | "transition" | "two-step" | "transition-all";
+
+async function withSpike(page: Page, mode: SpikeMode): Promise<void> {
+  await page.addInitScript((m) => {
+    (window as any).__ksSpike = {
+      mode: m === "today" ? undefined : m,
+      log: [],
+    };
+  }, mode);
+}
+
+async function recordSpiked(
+  page: Page,
+  label: string,
+  act: () => Promise<unknown>,
+  until: () => Promise<void>,
+): Promise<string[]> {
+  const t0 = await page.evaluate(() => {
+    (window as any).__ksSpike.log.length = 0;
+    return performance.now();
+  });
+  const frames = await recordSwitch(page, label, act, until);
+  const log = (await page.evaluate(
+    () => (window as any).__ksSpike.log,
+  )) as Array<Record<string, unknown> & { t: number }>;
+  const lines = log.map(
+    ({ t, ...rest }) =>
+      `  probe +${String(Math.round(t - t0)).padStart(4)}ms ${JSON.stringify(rest)}`,
+  );
+  console.log(lines.join("\n"));
+  return [...frames, ...lines];
+}
+
+function partD(f: ReturnType<typeof useFixture>, mode: string) {
+  test.describe.configure({ mode: "serial" });
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(installRecorder);
+  });
+
+  for (const variant of ["server-keep", "server-plain"] as const) {
+    for (const spike of ["today", "transition", "two-step"] as const) {
+      if (variant === "server-plain" && spike !== "today") continue;
+      const tag = `[${mode} ${variant} ${spike}]`;
+      const base = () => f.url(`/keep-spike/${variant}`);
+
+      test(`part D ${variant} ${spike}: back to a left page`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        await withSpike(page, spike);
+        await open(page, base(), "a");
+        await go(page, "b");
+        await recordSpiked(
+          page,
+          `${tag} back to left page b?from=a -> a (link)`,
+          () => testId(page, "ks-to-a").click(),
+          () => settled(page, "a"),
+        );
+      });
+
+      test(`part D ${variant} ${spike}: back from a bare b`, async ({
+        page,
+      }) => {
+        using _ = expectNoPageError(page);
+        await withSpike(page, spike);
+        await open(page, base(), "a");
+        await testId(page, "ks-to-b-bare").click();
+        await settled(page, "b");
+        await recordSpiked(
+          page,
+          `${tag} back to left page b -> a (link, no search on either)`,
+          () => testId(page, "ks-to-a").click(),
+          () => settled(page, "a"),
+        );
+      });
+    }
+
+    for (const spike of ["today", "transition-all"] as const) {
+      test(`part D ${variant} ${spike}: first visit`, async ({ page }) => {
+        using _ = expectNoPageError(page);
+        await withSpike(page, spike);
+        await open(page, base0(f, variant), "a");
+        await recordSpiked(
+          page,
+          `[${mode} ${variant} ${spike}] first visit a -> b?from=a`,
+          () => testId(page, "ks-to-b").click(),
+          () => settled(page, "b"),
+        );
+      });
+    }
+  }
+}
+
+function base0(f: ReturnType<typeof useFixture>, variant: string): string {
+  return f.url(`/keep-spike/${variant}`);
+}
+
 test.describe("keep pages frames", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
   keepPagesFrames(f, "dev");
@@ -313,4 +418,14 @@ test.describe("keep pages frames", () => {
 test.describe("keep pages frames (production)", () => {
   const f = useFixture({ root: "./e2e/test-app", mode: "build" });
   keepPagesFrames(f, "production");
+});
+
+test.describe("keep pages part D", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
+  partD(f, "dev");
+});
+
+test.describe("keep pages part D (production)", () => {
+  const f = useFixture({ root: "./e2e/test-app", mode: "build" });
+  partD(f, "production");
 });

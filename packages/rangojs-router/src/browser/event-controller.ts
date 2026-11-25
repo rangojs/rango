@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ksSpike } from "../spike-kept-registry.js";
 import type {
   NavigationLocation,
   NavigateOptionsInternal,
@@ -1340,6 +1341,20 @@ export function createEventController(
     handleSegmentOrder = newSegmentOrder;
     handleMatched = rawMatched;
     routeSegmentIds = newRouteSegmentIds;
+    // SPIKE (part D, H5): when the handle segment order moves.
+    ksSpike()?.log.push({
+      t: Math.round(performance.now()),
+      setHandleData: newSegmentOrder.join(","),
+      isPartial: !!isPartial,
+      serverHandles: Object.entries(
+        data as Record<string, Record<string, unknown>>,
+      )
+        .map(
+          ([h, bySeg]) =>
+            `${h.split("#").pop()}:${Object.keys(bySeg).join("|")}`,
+        )
+        .join(" "),
+    });
 
     notifyHandles.schedule();
   }
@@ -1482,6 +1497,13 @@ export function createEventController(
     owner: ClientPushOwner,
     values: unknown[] | undefined,
   ): void {
+    // SPIKE (part D, H5): a client push and whether its segment is listed.
+    ksSpike()?.log.push({
+      t: Math.round(performance.now()),
+      clientPush: `${handleId.split("#").pop()}@${segmentId}`,
+      values: values?.length ?? 0,
+      segmentListed: handleSegmentOrder.includes(segmentId),
+    });
     let bySegment = clientPushes.get(handleId);
     let owners = bySegment?.get(segmentId);
     const waiting = owners && resyncing.get(owners);

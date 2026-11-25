@@ -53,6 +53,11 @@ import { addLocationState } from "./react/location-state-shared.js";
 import { isPlaceholder, type TransitionWhenKind } from "../types/segments.js";
 import { auditTreeCause, type TreeUpdateCause } from "../suspense-audit.js";
 import { revalidationErrorOf } from "../decode-loader-results.js";
+import {
+  keptKeyFor,
+  ksSpike,
+  SPIKE_KEPT_KEYS,
+} from "../spike-kept-registry.js";
 
 /**
  * Hold/animate decision for a commit: a non-intercept segment carries a
@@ -823,6 +828,17 @@ export function createPartialUpdater(
           });
           if (signal?.aborted) return;
 
+          // SPIKE (part D): the no-diff commit from the history cache.
+          ksSpike()?.log.push({
+            t: Math.round(performance.now()),
+            url: new URL(url, location.href).pathname,
+            mode: mode.type,
+            branch: shouldStartViewTransition(existingSegments, cachedGatedOff)
+              ? "no diff, from history cache, transition() scope"
+              : "no diff, from history cache, URGENT onUpdate",
+            rscSegments: segments,
+            rerendered: sent,
+          });
           const cachedHandleData = readCachedHandleData?.();
           const { scroll: commitScroll } = tx.commit(
             matchedIds,
@@ -1240,6 +1256,53 @@ export function createPartialUpdater(
       if (process.env.NODE_ENV !== "production") {
         auditTreeCause(treeCause(mode, tx.traversal));
       }
+      // SPIKE (kept server pages, part D): which branch commits, and the
+      // H2 switch (a navigation onto a kept entry commits in a transition).
+      const spike = ksSpike();
+      const spikeKeptKey = spike
+        ? reconciled.mainSegments
+            .filter((s) => s.type === "route")
+            .map((s) => keptKeyFor(s.id))
+            .find(Boolean)
+        : undefined;
+      const spikeHold =
+        ((spike?.mode === "transition" && spikeKeptKey !== undefined) ||
+          spike?.mode === "transition-all") &&
+        mode.type === "navigate" &&
+        !gatedOff;
+      if (spike) {
+        const contentHold =
+          !gatedOff &&
+          ((fullyPrefetched && !holes) ||
+            isSameStructureNav ||
+            optimisticPresented);
+        spike.log.push({
+          t: Math.round(performance.now()),
+          url: new URL(url, location.href).pathname,
+          mode: mode.type,
+          branch:
+            !gatedOff &&
+            (mode.type === "action" || mode.type === "stale-revalidation")
+              ? "action/stale transition"
+              : hasTransition
+                ? "transition() scope"
+                : contentHold
+                  ? "content-hold transition"
+                  : spikeHold
+                    ? `SPIKE ${spike?.mode} commit`
+                    : "URGENT onUpdate",
+          keptKey: spikeKeptKey ?? null,
+          keptKeys: [...SPIKE_KEPT_KEYS],
+          rscSegments: segments,
+          cachedSegsSource,
+          rerendered: sent,
+          fullyPrefetched,
+          holes: !!holes,
+          isSameStructureNav,
+          optimisticPresented,
+          gatedOff,
+        });
+      }
       if (
         !gatedOff &&
         (mode.type === "action" || mode.type === "stale-revalidation")
@@ -1304,6 +1367,16 @@ export function createPartialUpdater(
           update,
           whenKind,
           optimisticPresented ? [OPTIMISTIC_COMMIT_TRANSITION_TYPE] : [],
+        );
+      } else if (spikeHold) {
+        // SPIKE (H2): spike-only commit mode, not a proposal.
+        commitInTransition(
+          store.loaders,
+          onUpdate,
+          reconciled.mainSegments,
+          update,
+          whenKind,
+          [],
         );
       } else {
         // Cold/partially-prefetched nav that mounts NEW segments, or any

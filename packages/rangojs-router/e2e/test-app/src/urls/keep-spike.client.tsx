@@ -129,6 +129,11 @@ export function KeepSpikeLayout({
         <Link to={`${base}/b?from=a`} prefetch="none" data-testid="ks-to-b">
           B
         </Link>
+        {/* SPIKE (part D, H4): B with no search, so a link back to A
+            changes neither params nor search. */}
+        <Link to={`${base}/b`} prefetch="none" data-testid="ks-to-b-bare">
+          B bare
+        </Link>
         <Link to={`${base}/c?from=b`} prefetch="none" data-testid="ks-to-c">
           C
         </Link>

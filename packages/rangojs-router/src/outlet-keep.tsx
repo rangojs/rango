@@ -8,6 +8,7 @@ import {
   createContext,
   createElement,
   isValidElement,
+  startTransition,
   Suspense,
   useContext,
   useLayoutEffect,
@@ -26,6 +27,7 @@ import { stampLocationState } from "./browser/react/location-state-shared.js";
 import { useParams } from "./browser/react/use-params.js";
 import { usePathname } from "./browser/react/use-pathname.js";
 import { useSearchParams } from "./browser/react/use-search-params.js";
+import { ksSpike, SPIKE_KEPT_KEYS } from "./spike-kept-registry.js";
 
 /** SPIKE: options of `<Outlet keep={...} />`. */
 export interface OutletKeepOptions {
@@ -122,6 +124,10 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   // The entry on screen as React last committed it (written in a layout
   // effect, so a render React discards never lands here).
   const committed = useRef<KeptEntry | null>(null);
+  // SPIKE (H3): the kept entry a committed navigation shows again, drawn with
+  // its kept element and context in that commit; a transition then swaps in
+  // the navigation's element.
+  const [staged, setStaged] = useState<KeptEntry | null>(null);
 
   let entries = kept;
   if (shownKey !== key) {
@@ -141,7 +147,12 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
     }
     setKept(entries);
     setShownKey(key);
+    const back = entries.find((entry) => entry.key === key);
+    setStaged(
+      ksSpike()?.mode === "two-step" && back && !optimistic ? back : null,
+    );
   }
+  const stagedHere = staged?.key === key ? staged : null;
 
   const resumed = entries.find((entry) => entry.key === key);
   // B3: at an optimistic frame onto a kept entry, the entry shows the data
@@ -161,12 +172,14 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
     search: search.size ? `?${search.toString()}` : "",
     state: stampedState(locationState),
   };
-  const shown: KeptEntry = {
-    key,
-    context: shownContext,
-    location,
-    content,
-  };
+  const shown: KeptEntry = stagedHere
+    ? {
+        key,
+        context: stagedHere.context,
+        location,
+        content: stagedHere.content,
+      }
+    : { key, context: shownContext, location, content };
 
   // B6: the render that shows an entry again (the last commit had another
   // key on screen). Its hooks' own store reads are as old as its hide: their
@@ -182,13 +195,32 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
   useLayoutEffect(() => {
     committed.current = shown;
   });
+  // SPIKE (part D): the hidden keys, for the commit probe in partial-update.
+  useLayoutEffect(() => {
+    const hidden = entries
+      .filter((entry) => entry.key !== key)
+      .map((entry) => entry.key);
+    for (const k of hidden) SPIKE_KEPT_KEYS.add(k);
+    return () => {
+      for (const k of hidden) SPIKE_KEPT_KEYS.delete(k);
+    };
+  });
+  useLayoutEffect(() => {
+    if (!stagedHere) return;
+    ksSpike()?.log.push({
+      t: Math.round(performance.now()),
+      outlet: "two-step: kept element committed, swap queued in a transition",
+      key,
+    });
+    startTransition(() => setStaged(null));
+  }, [stagedHere, key]);
 
   const draw = (entry: KeptEntry, visible: boolean): ReactNode =>
     createElement(Activity, {
       key: entry.key,
       mode: visible ? "visible" : "hidden",
       children: createElement(OutletContext.Provider, {
-        value: visible ? shownContext : isolate ? entry.context : context,
+        value: visible ? entry.context : isolate ? entry.context : context,
         children: createElement(OptimisticLocationContext.Provider, {
           // On screen and committed: null, so the hooks read the router
           // store as they do without keep.
