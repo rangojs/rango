@@ -397,7 +397,8 @@ describe("SPIKE B1: a kept group page keeps its loader data", () => {
     console.log(
       `[B1 control same loader] visible: ${pages(true)} | hidden: ${pages(false)}`,
     );
-    expect(pages(false)).toBe("Item#1(item:8) ? + List#2(list:1)");
+    // Entries draw in key order (outlet-keep.tsx), not shown-last.
+    expect(pages(false)).toBe("List#2(list:1) + Item#1(item:8) ?");
   });
 });
 

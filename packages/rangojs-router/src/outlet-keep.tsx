@@ -272,12 +272,16 @@ export function KeptOutlet({
       }),
     });
 
+  // A stable order (by key): moving an entry's DOM node on a switch resets
+  // the scroll of every element in it.
   const nodes = [
     ...entries
       .filter((entry) => entry.key !== key)
-      .map((entry) => draw(entry, false)),
-    draw(shown, true),
-  ];
+      .map((entry) => ({ key: entry.key, node: draw(entry, false) })),
+    { key, node: draw(shown, true) },
+  ]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((item) => item.node);
   return !slot && context?.loading ? (
     <Suspense fallback={context.loading}>{nodes}</Suspense>
   ) : (
