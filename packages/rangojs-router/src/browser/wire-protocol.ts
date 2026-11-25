@@ -1,4 +1,5 @@
 import { WIRE } from "../wire-params.js";
+import { SPIKE_TWO_STEP_KEPT_KEYS } from "../spike-kept-registry.js";
 
 /** The parameters of a partial request: a navigation, a prefetch or a JS server action. */
 export interface PartialRequestInit {
@@ -39,5 +40,12 @@ export function writePartialParams(url: URL, init: PartialRequestInit): URL {
   if (init.routerId) params.set(WIRE.routerId, init.routerId);
   if (init.rewriteTarget) params.set(WIRE.rewriteTarget, init.rewriteTarget);
   if (init.fill) params.set(WIRE.fill, "1");
+  // SPIKE: kept modals the server may stream for (intercept-resolution.ts).
+  if (init.action === undefined) {
+    const kept = [...SPIKE_TWO_STEP_KEPT_KEYS]
+      .filter((key) => key.startsWith("slot:"))
+      .map((key) => encodeURIComponent(key.slice("slot:".length)));
+    if (kept.length > 0) params.set(WIRE.kept, kept.join(","));
+  }
   return url;
 }

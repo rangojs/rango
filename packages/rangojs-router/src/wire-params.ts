@@ -34,6 +34,13 @@ export const WIRE = {
   shellMiss: "_rsc_shell",
   /** A connection warmup HEAD request (browser/connection-warmup.ts). */
   warmup: "_rsc_warmup",
+  /**
+   * SPIKE: the kept two-step slot entries the browser holds, as
+   * slotEntryKey without its "slot:" prefix, URI-encoded and comma-joined
+   * (spike-kept-registry.ts). An intercept with no loading() streams for one
+   * of them instead of waiting (router/intercept-resolution.ts).
+   */
+  kept: "_rsc_kept",
 } as const;
 
 /** The prefix every name in WIRE starts with. */
