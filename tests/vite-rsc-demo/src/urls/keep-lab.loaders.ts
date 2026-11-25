@@ -1,10 +1,10 @@
 import { createLoader, type LoaderContext } from "@rangojs/router";
 
 // SPIKE (keep lab): one loader per page, answering after a 400 ms server
-// delay. Each read counts up per mode and page and carries the server time,
+// delay (KEEP_LAB_DELAY_MS overrides it, e.g. 2000 to watch by hand). Each read counts up per mode and page and carries the server time,
 // so a screen shows how old the data it draws is.
 
-const SERVER_DELAY_MS = 400;
+const SERVER_DELAY_MS = Number(process.env.KEEP_LAB_DELAY_MS ?? 400);
 const reads = new Map<string, number>();
 
 export interface KeepLabData {

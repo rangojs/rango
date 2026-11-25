@@ -16,8 +16,8 @@ function KeepLabIndex() {
     <main>
       <h1>Keep lab</h1>
       <p>
-        The same three pages, each with a 400 ms loader whose read number and
-        time change on every read, a pushed title and crumb, a text input, an
+        The same three pages, each with a slow loader whose read number and time
+        change on every read, a pushed title and crumb, a text input, an
         expandable panel and a scrolled list. Try the same clicks in each mode:
         open page A, go to B, come back to A with the plain link, come back with
         the search link, then press Back.
