@@ -280,10 +280,19 @@ export function getManualChunks(id: string): string | undefined {
   }
   const packageName = getPublishedPackageName();
   if (
-    normalized.includes(`node_modules/${packageName}/`) ||
-    /\/packages\/(rsc-router|rangojs-router)\/(src|dist)\//.test(normalized)
+    !normalized.includes(`node_modules/${packageName}/`) &&
+    !/\/packages\/(rsc-router|rangojs-router)\/(src|dist)\//.test(normalized)
   ) {
-    return "router";
+    return undefined;
   }
-  return undefined;
+  // <Outlet keep /> (outlet-keep.tsx) loads in its own chunk, the first time
+  // an outlet with `keep` renders: an app without one never fetches it. No
+  // group name: a named group takes in its static imports, the router runtime
+  // and React with them; left out, the dynamic import splits it alone.
+  if (
+    /\/(src|dist)\/outlet-keep\.(tsx|js)$/.test(normalized.split(/[?#]/)[0]!)
+  ) {
+    return undefined;
+  }
+  return "router";
 }

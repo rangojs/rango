@@ -51,7 +51,7 @@ function isPlainRefetch(options: LoadOptions | undefined): boolean {
 
 let privateGroupBucketSeq = 0;
 
-const NOT_FOUND = Symbol("not-found");
+const NOT_FOUND: unique symbol = Symbol("not-found");
 
 /**
  * SPIKE (streaming useLoader): lookup results distinguish a synchronously
@@ -125,6 +125,46 @@ function extractContentLoaderData(
   return NOT_FOUND;
 }
 
+/** A clientUrls() frame's read of a destination loader: it waits for the canonical commit. */
+const AWAITING_COMMIT: Promise<never> = new Promise<never>(() => {});
+
+/** A loader read found on an outlet chain (LoaderLookup without the miss). */
+export type LoaderRead = Exclude<LoaderLookup, typeof NOT_FOUND>;
+
+/**
+ * The read of `loaderId` walking up from `context`: at each level its
+ * decoded `loaderData`, its `loaderStreams` entry, a clientUrls() frame's
+ * wait for the canonical commit (`awaitingCommit`), then the loader data its
+ * content element carries. `awaited` collects the { ssr: "await" } ids
+ * passed on the way, for the SSR suspension warning.
+ */
+export function findLoaderRead(
+  context: OutletContextValue | null | undefined,
+  loaderId: string,
+  awaited?: string[],
+): LoaderRead | null {
+  for (let current = context; current; current = current.parent) {
+    if (awaited && current.awaitedLoaderIds) {
+      awaited.push(...current.awaitedLoaderIds);
+    }
+    if (current.loaderData && loaderId in current.loaderData) {
+      return { value: current.loaderData[loaderId] };
+    }
+    const streamed = lookupLoaderStreams(current.loaderStreams, loaderId);
+    if (streamed !== NOT_FOUND) return streamed;
+    if (current.awaitingCommit?.includes(loaderId)) {
+      return { stream: AWAITING_COMMIT };
+    }
+    const contentData = extractContentLoaderData(
+      current.content,
+      loaderId,
+      awaited,
+    );
+    if (contentData !== NOT_FOUND) return contentData;
+  }
+  return null;
+}
+
 interface LoaderRscPayload<T = unknown> {
   loaderResult: T;
   loaderError?: { message: string; name: string };
@@ -182,46 +222,17 @@ function useLoaderInternal<T>(
     awaitedLoaderIds?: string[];
   } => {
     const awaited: string[] = [];
-    let current: OutletContextValue | null | undefined = context;
-    while (current) {
-      if (current.awaitedLoaderIds) awaited.push(...current.awaitedLoaderIds);
-      if (current.loaderData && loader.$$id in current.loaderData) {
-        return {
-          contextData: current.loaderData[loader.$$id] as T,
-          hasContextData: true,
-        };
-      }
-      const streamed = lookupLoaderStreams(current.loaderStreams, loader.$$id);
-      if (streamed !== NOT_FOUND) {
-        if ("stream" in streamed) {
-          return {
-            contextData: undefined,
-            hasContextData: true,
-            pendingStream: streamed.stream,
-            awaitedLoaderIds: awaited,
-          };
-        }
-        return { contextData: streamed.value as T, hasContextData: true };
-      }
-      const contentData = extractContentLoaderData(
-        current.content,
-        loader.$$id,
-        awaited,
-      );
-      if (contentData !== NOT_FOUND) {
-        if ("stream" in contentData) {
-          return {
-            contextData: undefined,
-            hasContextData: true,
-            pendingStream: contentData.stream,
-            awaitedLoaderIds: awaited,
-          };
-        }
-        return { contextData: contentData.value as T, hasContextData: true };
-      }
-      current = current.parent;
+    const read = findLoaderRead(context, loader.$$id, awaited);
+    if (!read) return { contextData: undefined, hasContextData: false };
+    if ("stream" in read) {
+      return {
+        contextData: undefined,
+        hasContextData: true,
+        pendingStream: read.stream,
+        awaitedLoaderIds: awaited,
+      };
     }
-    return { contextData: undefined, hasContextData: false };
+    return { contextData: read.value as T, hasContextData: true };
   }, [context, loader.$$id]);
   // SPIKE (streaming useLoader): a pending per-loader stream suspends HERE —
   // the implicit-suspense read. On replay after resolution use() returns

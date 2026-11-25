@@ -71,3 +71,25 @@ is `false` during SSR and does not describe ordinary server-route navigation,
 prefetch, generic Suspense, unrelated actions, or a params/search change that
 keeps the same client route record. Use `useNavigation()`, `useLinkStatus()`, or
 loader state for those scopes.
+
+### Kept pages: `useKept`, `useKeptShow`, `useKeptOutlet`
+
+Inside a page an `<Outlet keep />` draws (see `/layout`, "Keeping the pages
+an outlet leaves"):
+
+```tsx
+"use client";
+import { useKept, useKeptOutlet, useKeptShow } from "@rangojs/router/client";
+
+function Feed({ id }: { id: string }) {
+  const { hidden } = useKept(); // true while the outlet keeps it hidden
+  useKeptShow(() => trackView(id)); // each show; never on a mount
+  const { drop } = useKeptOutlet(); // drop(key) forgets a hidden entry
+  return <List paused={hidden} />;
+}
+```
+
+`drop` takes the key `keep.key` returned for the entry (pass a `key` function
+to drop by a key of your own); the entry on screen is never dropped. Outside a
+keeping outlet, `useKept().hidden` is `false`, `useKeptShow` never runs and
+`drop` does nothing.

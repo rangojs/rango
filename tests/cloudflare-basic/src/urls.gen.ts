@@ -178,6 +178,8 @@ export const routes = {
   "keptLayoutSourceBaked.wishlist": "/kept-layout-source/baked/wishlist",
   "keptLayoutSourceI18n.home": "/kept-layout-source/i18n/:locale",
   "keptLayoutSourceI18n.products": "/kept-layout-source/i18n/:locale/products",
+  keptPagesDrift: "/kept-pages-drift/:id",
+  keptPagesPage: "/kept-pages/:id",
   lateHistoryOther: "/late-history/other",
   lateHistoryPage: "/late-history/page",
   loaderCacheDep: "/loader-cache-dep",

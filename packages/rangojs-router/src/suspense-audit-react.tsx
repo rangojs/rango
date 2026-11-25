@@ -1,4 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type Context,
+  type ReactNode,
+} from "react";
 import {
   auditCommit,
   auditFallback,
@@ -14,7 +23,34 @@ import {
 // Hooks of the suspense audit (docs/internal/suspense-contract.md), called by
 // dev-only components: React Compiler skips a component with a gated hook.
 
-function useRecord(boundary: string, segmentId: string): BoundaryAudit {
+const AuditScopeContext: Context<string | undefined> =
+  /* @__PURE__ */ createContext<string | undefined>(undefined);
+
+/**
+ * Names the copy of the tree a boundary sits in, after the scopes around it.
+ * One segment can be on the page twice under one React key (an
+ * `<Outlet keep />` entry hidden beside the one shown), and each copy's
+ * boundary is its own I4 slot. Rendered in an audited dev build only.
+ */
+export function AuditScope({
+  scope,
+  children,
+}: {
+  scope: string;
+  children: ReactNode;
+}): ReactNode {
+  const outer = useContext(AuditScopeContext);
+  // createElement, not JSX: a jsx-runtime import keeps this dev-only module
+  // in production client bundles (tools/check-bundle-guards.mjs).
+  return createElement(AuditScopeContext.Provider, {
+    value: outer === undefined ? scope : `${outer} > ${scope}`,
+    children,
+  });
+}
+
+function useRecord(base: string, segmentId: string): BoundaryAudit {
+  const scope = useContext(AuditScopeContext);
+  const boundary = scope === undefined ? base : `${base} [${scope}]`;
   const ref = useRef<BoundaryAudit | null>(null);
   // One position can hold another segment's boundary: its Suspense is keyed.
   if (ref.current === null || ref.current.boundary !== boundary) {

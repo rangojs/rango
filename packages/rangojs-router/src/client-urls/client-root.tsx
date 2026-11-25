@@ -12,6 +12,7 @@ import {
 } from "react";
 import { Outlet } from "../client.js";
 import { OutletProvider } from "../outlet-provider.js";
+import type { OutletDraws } from "../outlet-context.js";
 import { useMount } from "../browser/react/use-mount.js";
 import {
   registerClientUrlGroup,
@@ -23,8 +24,6 @@ import type {
   ClientUrlPatterns,
   ClientUrlRouteRecord,
 } from "./types.js";
-
-const PENDING_FOREVER: Promise<never> = new Promise<never>(() => {});
 
 function findRoute(
   definition: ClientUrlPatterns,
@@ -164,26 +163,22 @@ export function ClientUrlsRoot({
     [definition, mount, namePrefix, routeId, optimisticRoute, foreign],
   );
 
-  // Pending entries for the destination's loaders: useLoader use()s a Promise
-  // found in `loaderStreams`, so a read suspends instead of throwing "not
-  // found in context"; the canonical commit brings the real data. Skips the
-  // committed route's layout() records: flattenLayout creates them once per
-  // layout, so one the destination holds too is a layout both keep mounted
-  // (#1124), reading committed data. Route-own loaders always wait, also on
-  // a return to the committed route (fromFrame).
-  const loaderStreams = useMemo(
+  // The destination's loaders wait for the canonical commit: a read of one
+  // suspends instead of throwing "not found in context" (findLoaderRead,
+  // use-loader.tsx). Skips the committed route's layout() records:
+  // flattenLayout creates them once per layout, so one the destination holds
+  // too is a layout both keep mounted (#1124), reading committed data.
+  // Route-own loaders always wait, also on a return to the committed route
+  // (fromFrame).
+  const awaitingCommit = useMemo(
     () =>
       optimisticRoute
-        ? Object.fromEntries(
-            optimisticRoute.loaders
-              .filter(
-                (record) =>
-                  !findRoute(definition, routeId).layoutLoaders.includes(
-                    record,
-                  ),
-              )
-              .map((record) => [record.loader.$$id, PENDING_FOREVER]),
-          )
+        ? optimisticRoute.loaders
+            .filter(
+              (record) =>
+                !findRoute(definition, routeId).layoutLoaders.includes(record),
+            )
+            .map((record) => record.loader.$$id)
         : undefined,
     [optimisticRoute, definition, routeId],
   );
@@ -193,6 +188,7 @@ export function ClientUrlsRoot({
   // (segment-system.tsx, ResolvedSegment.clientGroup) that is what lets the
   // destination instance survive the canonical commit.
   let content: ReactNode = createElement(route.component, { key: route.id });
+  let draws: OutletDraws = { route: route.id, key: route.id, kind: "page" };
   if (route.loading !== undefined) {
     // loading() is the route-level boundary for group routes (segment-system
     // places no LoaderBoundary around them); presence mirrors the
@@ -205,17 +201,20 @@ export function ClientUrlsRoot({
 
   // Keyed per layout() item, not per route (#1124).
   for (let index = route.layouts.length - 1; index >= 0; index--) {
+    const key = String(route.layoutKeys[index]);
     content = createElement(OutletProvider, {
-      key: route.layoutKeys[index],
+      key,
       content,
+      draws,
       pending,
       children: createElement(route.layouts[index]),
     });
+    draws = { route: key, key, kind: "group-layout" };
   }
 
   return createElement(OutletProvider, {
     content: null,
-    loaderStreams,
+    awaitingCommit,
     pending,
     children: createElement(OptimisticLocationContext.Provider, {
       // The intent carries every OptimisticLocation field.

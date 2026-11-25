@@ -1,5 +1,61 @@
 # Changelog
 
+## Unreleased
+
+### Added: `<Outlet keep />` keeps the pages an outlet leaves mounted and hidden
+
+**Before.** Leaving a page unmounted it. Coming back mounted a new instance:
+typed input, sideways scroll, open details, a video's position and every
+piece of component state were gone, and entrances played again. An app that
+wanted tabs to keep their state had to lift it out of the pages or keep a
+store of its own.
+
+**Now.** A layout passes `keep` to its outlet:
+
+```tsx
+"use client";
+import { Outlet } from "@rangojs/router/client";
+
+export function TabsLayout() {
+  return (
+    <main>
+      <TabBar />
+      <Outlet keep={{ max: 3 }} />
+    </main>
+  );
+}
+```
+
+A page the outlet leaves stays mounted inside a hidden `<Activity>`, and
+coming back shows the same instance with its state, scroll, inputs and DOM
+nodes. `max` is how many left pages stay hidden; past it, the one left
+longest ago unmounts. A page is one entry per route and params for server
+routes, and per route in a `clientUrls()` group (a param change there
+reconciles the page on screen, as it does without keep); `keep.key(to)`
+chooses otherwise. While a page is hidden, `useParams`, `usePathname`,
+`useSearchParams`, `useLocationState`, `useNavigation` and `useSegments`
+read its own URL, it navigates nowhere (its search-params setter,
+`useRouter().push`/`replace` and `<Link>` do nothing; dev warns), and its
+parent layouts' loaders still read live when it shows again. `useKept()`
+tells a page it is hidden, `useKeptShow(callback)` runs on each show (never
+on a mount), and `useKeptOutlet().drop(key)` forgets a hidden page. The
+server and the first browser render draw the shown page alone, so the
+document holds the same page markup as without keep, inside React's Activity
+comment marker. The keeping outlet loads as a chunk of its own the first
+time one renders; an app without `keep` never fetches it. Named outlets and
+intercepts do not keep yet.
+
+### Fixed: `renderRoute` keeps a layout mounted across a param navigation
+
+**Before.** In `renderRoute`, every spec above the leaf was keyed with the
+route's params, so `router.navigate("/items/2")` from `/items/1` unmounted and
+mounted the layout spec again. The router keeps a `layout()` its routes share
+mounted across that navigation.
+
+**Now.** Only the leaf spec is keyed with the params, as in the router: a
+layout spec keeps its instance and state across a param navigation. A test
+that expected the layout to mount again sees it kept.
+
 ## 0.37.0 (2026-11-19)
 
 ### Added: client components push handle values with `usePushHandle()` ([#1447](https://github.com/rangojs/rango/pull/1447))

@@ -4,6 +4,7 @@ import {
   Component,
   createElement,
   isValidElement,
+  lazy,
   useContext,
   useMemo,
   Suspense,
@@ -31,6 +32,15 @@ import { INTERNAL_RANGO_SUSPENSE_AUDIT } from "./internal-suspense-audit.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
 import { getBoundaryContent } from "./segment-boundary-content.js";
 import { asStream } from "./browser/defer.js";
+import type { OutletKeepOptions } from "./outlet-keep-context.js";
+
+// Its own chunk (vite/utils/shared-utils.ts getManualChunks), loaded the
+// first time an outlet with `keep` renders.
+const KeptOutlet = lazy(() =>
+  import("./outlet-keep.js").then((module) => ({
+    default: module.KeptOutlet,
+  })),
+);
 
 /**
  * Render the content for a named parallel/intercept slot segment.
@@ -223,11 +233,25 @@ function useSlotSegment(
 export function Outlet({
   name,
   fallback,
-}: { name?: `@${string}`; fallback?: ReactNode } = {}): ReactNode {
+  keep,
+}: {
+  name?: `@${string}`;
+  fallback?: ReactNode;
+  /**
+   * Keep the pages this outlet leaves mounted and hidden in `<Activity>`, so
+   * coming back shows the same instance with its state, scroll and inputs.
+   */
+  keep?: OutletKeepOptions;
+} = {}): ReactNode {
   const context = useContext(OutletContext);
   const namedSegment = useSlotSegment(context, name);
 
   if (name) {
+    if (keep && process.env.NODE_ENV !== "production") {
+      console.warn(
+        `[rango] <Outlet name="${name}" keep />: keep applies to the default outlet only; this named outlet renders as without it.`,
+      );
+    }
     const slot = renderSlotContent(namedSegment);
     // EXPERIMENT (Outlet fallback): layout-declared pending UI for a named
     // slot — an outer Suspense catching whatever the slot's content leaves
@@ -239,8 +263,11 @@ export function Outlet({
     );
   }
 
-  // Default: render child content
-  const content = context?.content ?? null;
+  // Default: render child content. With `keep`, the keeping outlet draws
+  // it, inside the same boundaries.
+  const content = keep
+    ? createElement(KeptOutlet, { keep })
+    : (context?.content ?? null);
 
   // EXPERIMENT (Outlet fallback): the layout owns the outlet position, so it
   // may declare the placeholder for pending child content right where it
@@ -461,6 +488,13 @@ export class ErrorBoundary extends Component<
 }
 
 export { useNavigation } from "./browser/react/use-navigation.js";
+export {
+  useKept,
+  useKeptShow,
+  useKeptOutlet,
+  type KeptTo,
+  type OutletKeepOptions,
+} from "./outlet-keep-context.js";
 export { useRouter } from "./browser/react/use-router.js";
 export { usePathname } from "./browser/react/use-pathname.js";
 export { useSearchParams } from "./browser/react/use-search-params.js";

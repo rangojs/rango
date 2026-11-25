@@ -30,28 +30,29 @@ the one for your case.
 
 ## Decision table
 
-| I need...                                          | Hook                        | File                                                 |
-| -------------------------------------------------- | --------------------------- | ---------------------------------------------------- |
-| Reactive navigation state                          | `useNavigation()`           | [`./navigation.md`](./navigation.md)                 |
-| Stable router actions (push/replace/refresh/…)     | `useRouter()`               | [`./navigation.md`](./navigation.md)                 |
-| Current URL path & matched segments                | `useSegments()`             | [`./navigation.md`](./navigation.md)                 |
-| Pending state inside a `<Link>`                    | `useLinkStatus()`           | [`./navigation.md`](./navigation.md)                 |
-| Loader data (streams; suspends until it lands)     | `useLoader()`               | [`./data.md`](./data.md)                             |
-| Loader data with on-demand fetch                   | `useFetchLoader()`          | [`./data.md`](./data.md)                             |
-| Refresh multiple loaders across groups             | `useRefreshLoaders()`       | [`./data.md`](./data.md)                             |
-| Accumulated handle data from route segments        | `useHandle()`               | [`./handle-and-actions.md`](./handle-and-actions.md) |
-| Push a handle value from a client component        | `usePushHandle()`           | [`./handle-and-actions.md`](./handle-and-actions.md) |
-| Server action invocation state                     | `useAction()`               | [`./handle-and-actions.md`](./handle-and-actions.md) |
-| Type-safe history state (persistent or flash)      | `useLocationState()`        | [`./state.md`](./state.md)                           |
-| Force the client's caches to miss after a mutation | `invalidateClientCache()`   | [`./state.md`](./state.md)                           |
-| Render child content in a layout                   | `Outlet` / `ParallelOutlet` | [`./outlets.md`](./outlets.md)                       |
-| Access outlet content programmatically             | `useOutlet()`               | [`./outlets.md`](./outlets.md)                       |
-| Route params from the current URL                  | `useParams()`               | [`./urls.md`](./urls.md)                             |
-| Current URL pathname                               | `usePathname()`             | [`./urls.md`](./urls.md)                             |
-| Current URL search params                          | `useSearchParams()`         | [`./urls.md`](./urls.md)                             |
-| Mount-aware href inside an `include()` scope       | `useHref()`                 | [`./urls.md`](./urls.md)                             |
-| Current `include()` mount path                     | `useMount()`                | [`./urls.md`](./urls.md)                             |
-| Local reverse for an imported `urls()` routes map  | `useReverse(routes)`        | [`./urls.md`](./urls.md)                             |
+| I need...                                          | Hook                                              | File                                                 |
+| -------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
+| Reactive navigation state                          | `useNavigation()`                                 | [`./navigation.md`](./navigation.md)                 |
+| Stable router actions (push/replace/refresh/…)     | `useRouter()`                                     | [`./navigation.md`](./navigation.md)                 |
+| Current URL path & matched segments                | `useSegments()`                                   | [`./navigation.md`](./navigation.md)                 |
+| Pending state inside a `<Link>`                    | `useLinkStatus()`                                 | [`./navigation.md`](./navigation.md)                 |
+| Loader data (streams; suspends until it lands)     | `useLoader()`                                     | [`./data.md`](./data.md)                             |
+| Loader data with on-demand fetch                   | `useFetchLoader()`                                | [`./data.md`](./data.md)                             |
+| Refresh multiple loaders across groups             | `useRefreshLoaders()`                             | [`./data.md`](./data.md)                             |
+| Accumulated handle data from route segments        | `useHandle()`                                     | [`./handle-and-actions.md`](./handle-and-actions.md) |
+| Push a handle value from a client component        | `usePushHandle()`                                 | [`./handle-and-actions.md`](./handle-and-actions.md) |
+| Server action invocation state                     | `useAction()`                                     | [`./handle-and-actions.md`](./handle-and-actions.md) |
+| Type-safe history state (persistent or flash)      | `useLocationState()`                              | [`./state.md`](./state.md)                           |
+| Force the client's caches to miss after a mutation | `invalidateClientCache()`                         | [`./state.md`](./state.md)                           |
+| Render child content in a layout                   | `Outlet` / `ParallelOutlet`                       | [`./outlets.md`](./outlets.md)                       |
+| Access outlet content programmatically             | `useOutlet()`                                     | [`./outlets.md`](./outlets.md)                       |
+| A kept page: hidden, shown again, dropped          | `useKept()` / `useKeptShow()` / `useKeptOutlet()` | [`./outlets.md`](./outlets.md)                       |
+| Route params from the current URL                  | `useParams()`                                     | [`./urls.md`](./urls.md)                             |
+| Current URL pathname                               | `usePathname()`                                   | [`./urls.md`](./urls.md)                             |
+| Current URL search params                          | `useSearchParams()`                               | [`./urls.md`](./urls.md)                             |
+| Mount-aware href inside an `include()` scope       | `useHref()`                                       | [`./urls.md`](./urls.md)                             |
+| Current `include()` mount path                     | `useMount()`                                      | [`./urls.md`](./urls.md)                             |
+| Local reverse for an imported `urls()` routes map  | `useReverse(routes)`                              | [`./urls.md`](./urls.md)                             |
 
 ## Companion files
 
@@ -74,7 +75,8 @@ the one for your case.
   `createLocationState` options (`flash`; `clearOnReload` for state that must
   not come back after a refresh, such as a "load more" list),
   `invalidateClientCache()`.
-- [`./outlets.md`](./outlets.md) — `Outlet`, `ParallelOutlet`, `useOutlet`.
+- [`./outlets.md`](./outlets.md) — `Outlet` (with `keep`), `ParallelOutlet`,
+  `useOutlet`, `useKept`, `useKeptShow`, `useKeptOutlet`.
 - [`./urls.md`](./urls.md) — `useParams`, `usePathname`, `useSearchParams`,
   `useHref`, `useMount`, `useReverse`.
 

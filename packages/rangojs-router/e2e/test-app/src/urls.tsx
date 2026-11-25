@@ -30,6 +30,7 @@ import {
 import { hooksPatterns } from "./urls/hooks.js";
 import { renderStabilityPatterns } from "./urls/render-stability.js";
 import { navIdleLocationPatterns } from "./urls/nav-idle-location.js";
+import { keptPagesPatterns } from "./urls/kept-pages.js";
 import { actionLatestCallPatterns } from "./urls/action-latest-call.js";
 import { actionPersistsPatterns } from "./urls/action-persists.js";
 import { asyncHandlesPatterns } from "./urls/async-handles.js";
@@ -1300,6 +1301,8 @@ export const urlpatterns = urls(
       // Hook render-stability fixture (render/commit tracking)
       include("/", renderStabilityPatterns, { name: "" }),
       include("/", navIdleLocationPatterns, { name: "" }),
+      // <Outlet keep /> (kept-pages.test.ts).
+      include("/", keptPagesPatterns, { name: "" }),
       // useAction() reports the latest call of an action called twice.
       include("/", actionLatestCallPatterns, { name: "" }),
       // useAction() keeps a settled call until the action's next call.

@@ -224,13 +224,13 @@ The `clientUrls()` row is where main does not meet the target. A cross-route nav
 (`beginClientUrlNavigation`, `src/client-urls/navigation.ts`; the intent lives in
 `ClientUrlsRoot`, `src/client-urls/client-root.tsx:126`), the router's tree update
 commits it again when the server answers, and clearing the intent commits it a third
-time. Its reader is handed a promise that never settles (`PENDING_FOREVER`,
-`client-root.tsx:30`) and then the real stream. Measured in both apps and both modes:
-3 commits of the destination and 2 of its reader behind an inline boundary, 2 behind
-`loading()`, 4 and 4 for a same-route navigation; 2 promises handed to the reader in
-each. Entering a group from outside is already one commit and one promise. The three
-cases that miss are expected failures that name #1079, so they flip when the feature
-moves onto the one-commit model.
+time. Its reader is handed a promise that never settles (`AWAITING_COMMIT` in
+`use-loader.tsx`, for an id the frame lists in `awaitingCommit`) and then the real
+stream. Measured in both apps and both modes: 3 commits of the destination and 2 of
+its reader behind an inline boundary, 2 behind `loading()`, 4 and 4 for a same-route
+navigation; 2 promises handed to the reader in each. Entering a group from outside is
+already one commit and one promise. The three cases that miss are expected failures
+that name #1079, so they flip when the feature moves onto the one-commit model.
 
 ### 6. Nothing a render reads changes while React renders
 
@@ -331,6 +331,17 @@ when the next tree starts, every handed segment still alive (the history cache k
 them after the tree on screen drops them) is compared with its snapshot, and again as
 the tree reuses one, where `renderSegments`' own rewrites happen. The boundary maps are
 keyed by names that carry params, so they keep the newest 500.
+
+Inside an `<Outlet keep />` a boundary's name also carries the copy of the tree it sits
+in (`[kept <key>]`, outer keeps first): `KeptEntryView` in `outlet-keep.tsx` renders an
+`AuditScope`, whose scopes compose, and `useRecord` in `suspense-audit-react.tsx`
+reads it. The scope is there in an audited dev build only, and the audit module keeps
+to its own imports. A `keep.key` that splits one layout into several entries puts one
+segment, under one React key, on the page twice, one copy hidden in its `<Activity>`.
+Without the scope, hiding one copy and mounting the other read as an I4 remount of a
+single boundary. Hiding and showing one entry is the same instance: Activity runs its
+effects' cleanup and setup again with the same record, which `auditMount` does not
+count as a remount.
 
 The audit is dev only, and a build does not change: `RouteContentWrapper`,
 `LoaderBoundary` and `OutletProvider` are the product components, untouched. Their

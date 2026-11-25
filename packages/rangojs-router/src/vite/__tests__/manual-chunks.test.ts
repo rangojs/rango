@@ -28,4 +28,19 @@ describe("getManualChunks", () => {
   ])("keeps installed prefetch paths in the router chunk", (id) => {
     expect(getManualChunks(id)).toBe("router");
   });
+
+  it.each([
+    "/repo/packages/rangojs-router/src/outlet-keep.tsx",
+    "/repo/node_modules/.pnpm/@rangojs+router@0.1.0/node_modules/@rangojs/router/src/outlet-keep.tsx?v=1",
+  ])("leaves the keeping outlet out of the router chunk: %s", (id) => {
+    expect(getManualChunks(id)).toBeUndefined();
+  });
+
+  it("keeps the eager keep hooks in the router chunk", () => {
+    expect(
+      getManualChunks(
+        "/repo/packages/rangojs-router/src/outlet-keep-context.ts",
+      ),
+    ).toBe("router");
+  });
 });

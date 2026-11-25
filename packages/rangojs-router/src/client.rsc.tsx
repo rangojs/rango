@@ -25,6 +25,8 @@ export {
   type ErrorBoundaryProps,
 } from "./client.js";
 
+export type { KeptTo, OutletKeepOptions } from "./outlet-keep-context.js";
+
 export {
   useFetchLoader,
   useRefreshLoaders,
