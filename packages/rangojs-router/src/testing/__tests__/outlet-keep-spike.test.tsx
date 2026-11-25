@@ -667,6 +667,10 @@ const Note = withLocationStateKey(
   createLocationState<{ text: string }>(),
   "KeepSpikeNote",
 );
+const Flash = withLocationStateKey(
+  createLocationState<{ text: string }>({ flash: true }),
+  "KeepSpikeFlash",
+);
 let navState: string[];
 
 function ServerLayout(): ReactNode {
@@ -684,6 +688,7 @@ function ServerPage(): ReactNode {
   const pathname = usePathname();
   const [search] = useSearchParams();
   const note = useLocationState(Note);
+  useLocationState(Flash);
   const state = useNavigation((n) =>
     n.isStreaming ? `${n.state}+streaming` : n.state,
   );
@@ -853,6 +858,36 @@ describe("SPIKE B6: a hidden server-route page's location", () => {
       expect(visible).toBe("Page#2(two) 2 /items/2?tab=b note=on two nav=idle");
     },
   );
+});
+
+describe("SPIKE B6: a flash location state read in a kept page", () => {
+  it("is cleared from history after a first visit and after a show, as without keep", async () => {
+    keepOptions = { max: 2 };
+    const { router } = await mountServer();
+    const flashIn = () =>
+      Object.hasOwn(window.history.state ?? {}, Flash.__rsc_ls_key);
+    await act(async () =>
+      router.navigate("/items/2", {
+        loaders: [[ItemLoader, "two"]],
+        state: [Flash({ text: "saved" })],
+      }),
+    );
+    const afterFirstVisit = flashIn();
+    await act(async () =>
+      router.navigate("/items/1", {
+        loaders: [[ItemLoader, "one"]],
+        state: [Flash({ text: "saved again" })],
+      }),
+    );
+    const afterShow = flashIn();
+    console.log(
+      `[B6 flash] flash slot still in history.state: after a first visit ${afterFirstVisit}, after a show ${afterShow}`,
+    );
+    expect({ afterFirstVisit, afterShow }).toEqual({
+      afterFirstVisit: false,
+      afterShow: false,
+    });
+  });
 });
 
 describe("SPIKE B6: useNavigation in a page hidden while its navigation streams", () => {
