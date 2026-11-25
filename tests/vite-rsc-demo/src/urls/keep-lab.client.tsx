@@ -250,20 +250,24 @@ export function KeepLabLayout({ mode }: { mode: KeepLabMode }) {
             </Link>
           ))}
         </div>
-        <div>
-          Items (open as a modal from any page):{" "}
-          {["1", "2"].map((id) => (
-            <Link
-              key={id}
-              to={`${base}/item/${id}`}
-              prefetch="none"
-              style={linkStyle}
-              data-kl-link={`item-${id}`}
-            >
-              Item {id}
-            </Link>
-          ))}
-        </div>
+        {/* Modes 1, 3 and 4 only: they declare the item route and its
+            intercept. */}
+        {(mode === "plain" || mode === "keep" || mode === "keep-two-step") && (
+          <div>
+            Items (open as a modal from any page):{" "}
+            {["1", "2"].map((id) => (
+              <Link
+                key={id}
+                to={`${base}/item/${id}`}
+                prefetch="none"
+                style={linkStyle}
+                data-kl-link={`item-${id}`}
+              >
+                Item {id}
+              </Link>
+            ))}
+          </div>
+        )}
         <div style={{ color: "#555" }}>
           navigation: <code data-kl-nav>{nav}</code> · title:{" "}
           <code data-kl-title>{title}</code>
