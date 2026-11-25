@@ -123,6 +123,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           <Link to={href("/stale-click")} prefetch="hover">
             Stale click
           </Link>
+          <Link to="/keep-lab" prefetch="hover">
+            Keep lab
+          </Link>
         </nav>
         <BreadcrumbNav />
         <DebugSegmentWrapper type="layout" name="Root">

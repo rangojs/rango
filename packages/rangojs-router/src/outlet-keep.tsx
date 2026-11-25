@@ -50,6 +50,12 @@ export interface OutletKeepOptions {
    * store subscriptions on its first render, as they were when it was hidden.
    */
   showLocation?: boolean;
+  /**
+   * SPIKE (demo): "two-step" shows a kept server-route entry with its kept
+   * element first and swaps in the navigation's element in a transition, as
+   * `__ksSpike.mode = "two-step"` does for every outlet (part D, H3).
+   */
+  reveal?: "two-step";
 }
 
 /**
@@ -149,7 +155,11 @@ export function KeptOutlet({ keep }: { keep: OutletKeepOptions }): ReactNode {
     setShownKey(key);
     const back = entries.find((entry) => entry.key === key);
     setStaged(
-      ksSpike()?.mode === "two-step" && back && !optimistic ? back : null,
+      (keep.reveal === "two-step" || ksSpike()?.mode === "two-step") &&
+        back &&
+        !optimistic
+        ? back
+        : null,
     );
   }
   const stagedHere = staged?.key === key ? staged : null;
