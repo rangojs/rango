@@ -1830,7 +1830,31 @@ Bucket reset has two boundaries:
 
 - **Sticky buckets** (any route-registered reader subscribed) reset on
   route-context change via `clearFamily(loaderId)` — navigation / action
-  revalidation re-seeds them from fresh `loaderData`.
+  revalidation re-seeds them from fresh `loaderData`. A route-context change
+  is loader data the server sent anew. A landed page read's result is not:
+  an update that kept the loader (an action that did not re-run it) builds
+  its tree from the page's history entry, so it can hand a reader a read's
+  result as the loader's data, and that changes nothing for the reader. Its
+  newest read, a read in flight, `isLoading` and a failed read's `error`
+  stay (how, below the bucket list).
+
+  Limitation: a result that is a string, a number, a boolean or `null` has
+  no identity to record, so a commit that hands it back still resets.
+  Limitation: a commit resets a reader only when it hands the reader other
+  data. A navigation onto another page usually does, Back and Forward
+  included, and always when the entry it shows holds a result the previous
+  page also held (that makes the result shared), so it resets as before,
+  even when it kept the loader. When both pages' entries hold the held
+  layout's data as one object, the reader's data does not change and nothing
+  resets, as before: a read sent on one page can still show on the other
+  after Back. This is a known limit the read-result mechanism does not
+  touch. A navigation to the URL on screen rewrites that page's own history
+  entry, so it counts as an update of the page: its newest read and a read
+  in flight stay.
+  Limitation: two readers of one loader on different buckets (a plain reader
+  beside a `key` reader) each keep their own refresh across such an update,
+  as each bucket does; the tree hands both the newest read that landed.
+
 - **Ephemeral buckets** (only ever read by hooks with no route context — keyed
   `useFetchLoader` of an unregistered loader) have no route-context trigger, so
   they are reference-counted: dropped once the last subscriber unsubscribes
@@ -1843,6 +1867,34 @@ Bucket reset has two boundaries:
   (`subscribe(..., { owned: true })`). No other reader names the bucket and a
   remount takes a new one, so without the drop every mount left one behind
   for the rest of the session.
+
+How does a reader tell, during render, that handed-back data is its own
+page's refresh? By one invariant: a result that only one page's entries have
+ever held can reach a reader only through that page's trees.
+`LoaderStore.landed` records the page a result landed on (the one it was sent
+from, `beginPageRead`). `LoaderStore.heldBy` marks it shared the moment an
+entry of another page holds it (`cacheSegmentsForHistory`), and a shared
+result is no page's own. A commit that shows another page writes its entry
+before it emits its tree, so the mark is made before any tree of that page can
+hand the result to a reader. A `prefetch: false` fill emits its tree first and
+rewrites the entry after (`partial-update.ts`), but it stays on its page and
+carries only data the server sent. Each bucket snapshot carries the page its
+latest request was sent from (`page`), and `LoaderStore.readPage` answers the
+page a result is exclusive to.
+
+One rule, `LoaderStore.owns`, says whether a bucket's value or its latest
+request is a reader's: its data is in that one's owner set (`valueFor`,
+`requestFor`), or it is a result exclusive to the page the value is a read of,
+or the request was sent from. `use-loader.tsx` applies it during render. When
+the data changed, the reader's local state resets as before, then
+`LoaderStore.adopt` applies the same rule to each sticky bucket of the family
+and keeps exactly what is the data's: a value or a request that is the data's
+keeps its state, owned by the readers' current data; one that is not is
+dropped as `clear()` drops it (a dropped request's reply can no longer
+commit), and a bucket that keeps neither is cleared. Why judge them apart?
+Page a's read can sit in the bucket as its value while page b's read is in
+flight, or the reverse; keeping both for either one would show one page's read
+on the other. Only when no bucket keeps anything does `clearFamily` run.
 
 **Cross-loader refresh groups.** `key` partitions readers of one loader; the
 `refreshGroup` option + `useRefreshLoaders()` refresh **different** loaders

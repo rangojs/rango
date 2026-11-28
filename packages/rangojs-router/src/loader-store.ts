@@ -70,9 +70,24 @@ export interface LoaderEntry<T = unknown> {
   readonly valueFor: ReadonlySet<unknown>;
   /** The same for the latest request: `isLoading` and `error`. */
   readonly requestFor: ReadonlySet<unknown>;
+  /**
+   * The page the latest request was sent from, by identity (LoaderStore's
+   * `currentPage`): the one its result lands on. Undefined when the store
+   * was given no page.
+   */
+  readonly page: unknown;
 }
 
 const NO_ROUTE_DATA: ReadonlySet<unknown> = new Set();
+
+/** A landed read's result that the entries of more than one page have held. */
+const SHARED = Symbol("shared");
+
+const isObject = (value: unknown): value is object =>
+  typeof value === "object" && value !== null;
+
+const sameSet = (a: ReadonlySet<unknown>, b: ReadonlySet<unknown>): boolean =>
+  a.size === b.size && [...a].every((value) => b.has(value));
 
 const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   value: undefined,
@@ -82,6 +97,7 @@ const EMPTY_SNAPSHOT: LoaderEntry = Object.freeze({
   requestId: 0,
   valueFor: NO_ROUTE_DATA,
   requestFor: NO_ROUTE_DATA,
+  page: undefined,
 });
 
 /**
@@ -199,6 +215,23 @@ export class LoaderStore {
    * lands) keep the family pending until the LAST stream settles.
    */
   private readonly pendingStreams = new Map<string, Set<Promise<unknown>>>();
+  /**
+   * The page each landed read's result landed on, or SHARED once an entry of
+   * another page holds it (heldBy). Objects only: a result that is a string,
+   * a number or null cannot be told from the server's data. Weak, so a page
+   * that polls keeps no chain of old results.
+   */
+  private readonly readResults = new WeakMap<object, unknown>();
+
+  /**
+   * @param currentPage The page a refresh sent now belongs to, by identity:
+   * the one its result lands on (NavigationStore.beginPageRead). Supplied by
+   * the store that owns this one; without it no request is a page's, and a
+   * reader handed other data always resets.
+   */
+  constructor(
+    private readonly currentPage: () => unknown = (): unknown => undefined,
+  ) {}
 
   private getOrCreate(bucketKey: string): InternalEntry {
     let e = this.entries.get(bucketKey);
@@ -452,6 +485,8 @@ export class LoaderStore {
   ): void {
     const e = this.entries.get(bucketKey);
     if (!e || requestId !== e.latestRequestId) return;
+    // The page beginPageRead captures in the same synchronous step.
+    const page = this.currentPage();
     const requestFor = new Set<unknown>();
     if (initiatorRouteData) requestFor.add(initiatorRouteData());
     for (const read of e.routeDataSources) requestFor.add(read());
@@ -459,6 +494,7 @@ export class LoaderStore {
     if (
       prev.isLoading &&
       prev.error === null &&
+      prev.page === page &&
       [...requestFor].every((d) => prev.requestFor.has(d))
     ) {
       return;
@@ -469,6 +505,7 @@ export class LoaderStore {
       isLoading: true,
       requestId,
       requestFor,
+      page,
     });
     this.notify(e);
   }
@@ -489,9 +526,118 @@ export class LoaderStore {
       requestId,
       valueFor: e.snapshot.requestFor,
       requestFor: e.snapshot.requestFor,
+      page: e.snapshot.page,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);
+  }
+
+  /**
+   * A page read's `result` landed on `page`'s history entries
+   * (NavigationStore.beginPageRead, before a tree can be built from them).
+   * Landing again from another page marks it shared (heldBy).
+   */
+  landed(result: unknown, page: unknown): void {
+    if (!isObject(result)) return;
+    if (this.readResults.has(result)) this.heldBy(result, page);
+    else this.readResults.set(result, page);
+  }
+
+  /**
+   * An entry of `page` holds `data` (NavigationStore.cacheSegmentsForHistory,
+   * which a commit that shows another page runs before it emits that page's
+   * tree). A landed result held by a page other than its own is shared for
+   * good: trees of either page can hand it to a reader, so it no longer
+   * tells them apart (readPage).
+   */
+  heldBy(data: unknown, page: unknown): void {
+    if (!isObject(data)) return;
+    const first = this.readResults.get(data);
+    if (first !== undefined && first !== page) {
+      this.readResults.set(data, SHARED);
+    }
+  }
+
+  /** `value` is the result of a page read that landed (objects only). */
+  isReadResult(value: unknown): boolean {
+    return isObject(value) && this.readResults.has(value);
+  }
+
+  /**
+   * The page `data` is a landed read's result of, when only that page's
+   * entries ever held it; undefined for any other data or a shared result.
+   * A tree that hands such a result to a reader is one of that page's, so
+   * it is the page's own refresh, not route data the server sent anew. A
+   * result is recorded when it lands, and marked shared before a tree of
+   * another page that holds it is emitted. A `prefetch: false` fill emits its
+   * tree before it rewrites the entry (partial-update.ts), but it stays on
+   * its page and carries only data the server sent.
+   */
+  readPage(data: unknown): unknown {
+    const page = isObject(data) ? this.readResults.get(data) : undefined;
+    return page === SHARED ? undefined : page;
+  }
+
+  /** `data` is a reader's own in `owners`: in the set, or a read exclusive to `page` (readPage). */
+  owns(data: unknown, owners: ReadonlySet<unknown>, page: unknown): boolean {
+    if (owners.has(data)) return true;
+    const exclusive = this.readPage(data);
+    return exclusive !== undefined && exclusive === page;
+  }
+
+  /**
+   * Keeps, in each sticky bucket of the family, the value and the latest
+   * request that are `data`'s (owns), re-owned by the readers' current route
+   * data; drops the rest as clear() does (the id bump stops a dropped reply
+   * from committing) and clears a bucket that keeps neither. False when no
+   * bucket keeps anything: `data` is new route data and the caller runs
+   * clearFamily.
+   */
+  adopt(loaderId: string, data: unknown): boolean {
+    let kept = false;
+    for (const bucketKey of this.families.get(loaderId) ?? []) {
+      const e = this.entries.get(bucketKey);
+      if (!e || !e.sticky || e.snapshot === EMPTY_SNAPSHOT) continue;
+      const s = e.snapshot;
+      const pending = s.isLoading || s.error !== null;
+      const keepsValue =
+        s.hasValue && this.owns(data, s.valueFor, this.readPage(s.value));
+      const keepsRequest = pending && this.owns(data, s.requestFor, s.page);
+      if (!keepsValue && !keepsRequest) {
+        this.clear(bucketKey);
+        continue;
+      }
+      kept = true;
+      const owners = new Set<unknown>();
+      for (const read of e.routeDataSources) owners.add(read());
+      const dropsValue = s.hasValue && !keepsValue;
+      const dropsRequest = pending && !keepsRequest;
+      if (
+        !dropsValue &&
+        !dropsRequest &&
+        sameSet(s.requestFor, owners) &&
+        (!keepsValue || sameSet(s.valueFor, owners))
+      ) {
+        continue;
+      }
+      if (dropsRequest) e.latestRequestId++;
+      let next: LoaderEntry = { ...s, requestFor: owners };
+      if (keepsValue) next = { ...next, valueFor: owners };
+      else if (dropsValue)
+        next = {
+          ...next,
+          value: undefined,
+          hasValue: false,
+          valueFor: NO_ROUTE_DATA,
+        };
+      if (dropsRequest) next = { ...next, isLoading: false, error: null };
+      e.snapshot = Object.freeze(next);
+      this.notify(e);
+      // An owned bucket left mid-flight waits for its request to settle,
+      // which the bump above stops from committing (as in clear()).
+      if (dropsRequest) this.dropIfSettled(bucketKey, e);
+    }
+    return kept;
   }
 
   /**
@@ -536,6 +682,7 @@ export class LoaderStore {
       requestId,
       valueFor: e.snapshot.valueFor,
       requestFor: e.snapshot.requestFor,
+      page: e.snapshot.page,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);

@@ -9,7 +9,11 @@ import {
   usePathname,
   useRefreshLoaders,
 } from "@rangojs/router/client";
-import { LoaderReadHandlesChat } from "./loader-read-handles.loaders.js";
+import { bumpLoaderReadHandlesTallySlowly } from "./loader-read-handles.actions.js";
+import {
+  LoaderReadHandlesChat,
+  LoaderReadHandlesTally,
+} from "./loader-read-handles.loaders.js";
 
 /** The fixture's crumbs (the app's root layout pushes its own) and title. */
 export function LoaderReadHandlesHead() {
@@ -57,6 +61,25 @@ export function LoaderReadHandlesReader() {
       <Link to={`${pathname}?id=2`} data-testid="lrh-next">
         Next
       </Link>
+    </section>
+  );
+}
+
+/**
+ * The kept page's tally, and the action that bumps it: the action keeps the
+ * chat's loader and re-runs the tally's, which shows once its update commits.
+ */
+export function LoaderReadHandlesTallyBar() {
+  const { data } = useLoader(LoaderReadHandlesTally);
+  return (
+    <section>
+      <p data-testid="lrh-tally">{data.tally}</p>
+      <button
+        data-testid="lrh-act"
+        onClick={() => bumpLoaderReadHandlesTallySlowly().catch(() => {})}
+      >
+        Act
+      </button>
     </section>
   );
 }

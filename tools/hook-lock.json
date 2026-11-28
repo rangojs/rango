@@ -27,6 +27,7 @@
     "packages/rangojs-router/src/__tests__/use-link-status.test.ts",
     "packages/rangojs-router/src/__tests__/use-loader-nav-pending.test.tsx",
     "packages/rangojs-router/src/__tests__/use-loader-settled-read.test.tsx",
+    "packages/rangojs-router/src/testing/__tests__/render-route-loader-read-commit.test.tsx",
     "packages/rangojs-router/src/testing/__tests__/render-route-hook-stability.test.tsx",
     "tests/cloudflare-basic/test/render-route-hook-stability.test.tsx",
     "packages/rangojs-router/e2e/hook-render-stability.test.ts",

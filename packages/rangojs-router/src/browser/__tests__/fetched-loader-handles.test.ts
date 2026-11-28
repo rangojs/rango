@@ -652,6 +652,93 @@ describe("the page's read record across entry writes", () => {
   });
 });
 
+// A later tree hands a landed read's result to the loader's readers as its
+// data. While only its own page's entries hold it, only that page's trees can
+// (LoaderStore.readPage): an entry of another page holding it makes it shared.
+describe("the page a landed read's result is exclusive to", () => {
+  const readPage = (page: FetchedLoaderPage, result: unknown) =>
+    page.store.loaders.readPage(result);
+
+  it("is the page the read was sent from, the one its bucket's request is of", () => {
+    const page = mountPage();
+    const result = sendRead(page, "title")(undefined);
+    expect(page.store.loaders.isReadResult(result)).toBe(true);
+    expect(readPage(page, result)).toBeDefined();
+    expect(readPage(page, result)).toBe(
+      page.store.loaders.getSnapshot("title").page,
+    );
+  });
+
+  it("is shared once an entry of another page holds it: a navigation that kept the loader", () => {
+    const page = mountPage();
+    const result = sendRead(page, "title")(undefined);
+    const kept = page.store.getCachedSegments("/chat")!.segments;
+    page.store.cacheSegmentsForHistory("/next", [...kept], rendered());
+    expect(entryData(page, "/next")).toEqual([result]);
+    expect(readPage(page, result)).toBeUndefined();
+    // For good: the page it landed on does not get it back.
+    page.store.setHistoryKey("/next");
+    page.store.setHistoryKey("/chat");
+    page.store.cacheSegmentsForHistory(
+      "/chat",
+      kept.map((s) => ({ ...s })),
+      rendered(),
+    );
+    expect(readPage(page, result)).toBeUndefined();
+  });
+
+  it("stays the page's across an action's write under the same key", () => {
+    const page = mountPage();
+    const result = sendRead(page, "title")(undefined);
+    const before = readPage(page, result);
+    const live = page.store.getCachedSegments("/chat")!.segments;
+    page.store.cacheSegmentsForHistory(
+      "/chat",
+      live.map((s) => ({ ...s })),
+      rendered(),
+    );
+    expect(entryData(page, "/chat")).toEqual([result]);
+    expect(readPage(page, result)).toBe(before);
+  });
+
+  it("stays the page's across a shallow navigation's twin key, and an action on it", () => {
+    const page = mountPage();
+    const result = sendRead(page, "title")(undefined);
+    const before = readPage(page, result);
+    const segments = page.store.getCachedSegments("/chat")!.segments;
+    page.store.cacheSegmentsForHistory("/chat?tab=2", segments, rendered());
+    page.store.setHistoryKey("/chat?tab=2");
+    expect(readPage(page, result)).toBe(before);
+    page.store.cacheSegmentsForHistory(
+      "/chat?tab=2",
+      segments.map((s) => ({ ...s })),
+      rendered(),
+    );
+    expect(entryData(page, "/chat?tab=2")).toEqual([result]);
+    expect(readPage(page, result)).toBe(before);
+  });
+
+  it("a read sent from the next page is that page's, beside a shared one", () => {
+    const page = mountPage();
+    const onChat = sendRead(page, "title")(undefined, undefined, {
+      name: "on chat",
+    });
+    const kept = page.store.getCachedSegments("/chat")!.segments;
+    page.store.cacheSegmentsForHistory("/next", [...kept], rendered());
+    page.store.setHistoryKey("/next");
+    const onNext = sendRead(page, "title")(undefined, undefined, {
+      name: "on next",
+    });
+    expect(entryData(page, "/next")).toEqual([onNext]);
+    expect(entryData(page, "/chat")).toEqual([onChat]);
+    expect(readPage(page, onChat)).toBeUndefined();
+    expect(readPage(page, onNext)).toBeDefined();
+    expect(readPage(page, onNext)).toBe(
+      page.store.loaders.getSnapshot("title").page,
+    );
+  });
+});
+
 describe("applyLateHandles", () => {
   // The document's late yield: the layout's late value beside the
   // document's own run of "title".
