@@ -83,9 +83,6 @@ const NO_ROUTE_DATA: ReadonlySet<unknown> = new Set();
 /** A landed read's result that the entries of more than one page have held. */
 const SHARED = Symbol("shared");
 
-const isObject = (value: unknown): value is object =>
-  typeof value === "object" && value !== null;
-
 const sameSet = (a: ReadonlySet<unknown>, b: ReadonlySet<unknown>): boolean =>
   a.size === b.size && [...a].every((value) => b.has(value));
 
@@ -219,7 +216,9 @@ export class LoaderStore {
    * The page each landed read's result landed on, or SHARED once an entry of
    * another page holds it (heldBy). Objects only: a result that is a string,
    * a number or null cannot be told from the server's data. Weak, so a page
-   * that polls keeps no chain of old results.
+   * that polls keeps no chain of old results. Only set() needs an object
+   * key: get() and has() answer undefined and false for any other value, so
+   * the readers pass data unchecked.
    */
   private readonly readResults = new WeakMap<object, unknown>();
 
@@ -519,14 +518,13 @@ export class LoaderStore {
     const e = this.entries.get(bucketKey);
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
+      ...e.snapshot,
       value,
       hasValue: true,
       error: null,
       isLoading: false,
       requestId,
       valueFor: e.snapshot.requestFor,
-      requestFor: e.snapshot.requestFor,
-      page: e.snapshot.page,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);
@@ -538,7 +536,7 @@ export class LoaderStore {
    * Landing again from another page marks it shared (heldBy).
    */
   landed(result: unknown, page: unknown): void {
-    if (!isObject(result)) return;
+    if (typeof result !== "object" || result === null) return;
     if (this.readResults.has(result)) this.heldBy(result, page);
     else this.readResults.set(result, page);
   }
@@ -551,16 +549,15 @@ export class LoaderStore {
    * tells them apart (readPage).
    */
   heldBy(data: unknown, page: unknown): void {
-    if (!isObject(data)) return;
-    const first = this.readResults.get(data);
+    const first = this.readResults.get(data as object);
     if (first !== undefined && first !== page) {
-      this.readResults.set(data, SHARED);
+      this.readResults.set(data as object, SHARED);
     }
   }
 
   /** `value` is the result of a page read that landed (objects only). */
   isReadResult(value: unknown): boolean {
-    return isObject(value) && this.readResults.has(value);
+    return this.readResults.has(value as object);
   }
 
   /**
@@ -574,15 +571,15 @@ export class LoaderStore {
    * its page and carries only data the server sent.
    */
   readPage(data: unknown): unknown {
-    const page = isObject(data) ? this.readResults.get(data) : undefined;
+    const page = this.readResults.get(data as object);
     return page === SHARED ? undefined : page;
   }
 
   /** `data` is a reader's own in `owners`: in the set, or a read exclusive to `page` (readPage). */
   owns(data: unknown, owners: ReadonlySet<unknown>, page: unknown): boolean {
-    if (owners.has(data)) return true;
-    const exclusive = this.readPage(data);
-    return exclusive !== undefined && exclusive === page;
+    return (
+      owners.has(data) || (page !== undefined && this.readPage(data) === page)
+    );
   }
 
   /**
@@ -610,28 +607,26 @@ export class LoaderStore {
       kept = true;
       const owners = new Set<unknown>();
       for (const read of e.routeDataSources) owners.add(read());
-      const dropsValue = s.hasValue && !keepsValue;
       const dropsRequest = pending && !keepsRequest;
+      // A snapshot without a value carries EMPTY_SNAPSHOT's value fields (no
+      // write sets hasValue false otherwise), so one that keeps no value
+      // takes them unchanged and only a value it had counts as a change.
       if (
-        !dropsValue &&
         !dropsRequest &&
         sameSet(s.requestFor, owners) &&
-        (!keepsValue || sameSet(s.valueFor, owners))
+        (keepsValue ? sameSet(s.valueFor, owners) : !s.hasValue)
       ) {
         continue;
       }
       if (dropsRequest) e.latestRequestId++;
-      let next: LoaderEntry = { ...s, requestFor: owners };
-      if (keepsValue) next = { ...next, valueFor: owners };
-      else if (dropsValue)
-        next = {
-          ...next,
-          value: undefined,
-          hasValue: false,
-          valueFor: NO_ROUTE_DATA,
-        };
-      if (dropsRequest) next = { ...next, isLoading: false, error: null };
-      e.snapshot = Object.freeze(next);
+      e.snapshot = Object.freeze({
+        ...s,
+        requestFor: owners,
+        ...(keepsValue
+          ? { valueFor: owners }
+          : { value: undefined, hasValue: false, valueFor: NO_ROUTE_DATA }),
+        ...(dropsRequest && { isLoading: false, error: null }),
+      });
       this.notify(e);
       // An owned bucket left mid-flight waits for its request to settle,
       // which the bump above stops from committing (as in clear()).
@@ -675,14 +670,10 @@ export class LoaderStore {
     const e = this.entries.get(bucketKey);
     if (!e || requestId !== e.latestRequestId) return;
     e.snapshot = Object.freeze({
-      value: e.snapshot.value,
-      hasValue: e.snapshot.hasValue,
+      ...e.snapshot,
       error,
       isLoading: false,
       requestId,
-      valueFor: e.snapshot.valueFor,
-      requestFor: e.snapshot.requestFor,
-      page: e.snapshot.page,
     });
     this.notify(e);
     this.dropIfSettled(bucketKey, e);

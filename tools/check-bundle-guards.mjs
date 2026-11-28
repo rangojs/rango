@@ -368,7 +368,26 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // refresh and history-entry write runs it, and the late channel applies
 // right after hydration. By the owner's rule above: 56720B + 256B, rounded
 // up to the next 128B step.
-const ROUTER_CHUNK_GZIP_MAX = 55.75 * 1024;
+//
+// Raised 55.75KB -> 56.375KB on 2026-11-28 for a loader refresh that lands
+// while an action's update is on its way staying on the page, measured on
+// cloudflare-basic from main 7b70712 56979B -> 57426B (+447B gzip; main's
+// router source with the branch's fixtures measures 56978B, so all of it is
+// router code). The loader store records the page each landed read's result
+// landed on and marks it shared once another page's entry holds it
+// (LoaderStore readResults, landed, heldBy, readPage), a refresh's snapshot
+// carries the page it was sent from (`page`, the currentPage constructor
+// argument the navigation store supplies), and a reader whose route data
+// changed keeps the buckets that hold its page's own read instead of
+// clearing the family (LoaderStore owns, adopt; use-loader.tsx). None of it
+// can load lazily: the ownership check runs during useLoader's render and in
+// its reset effect, and the landed and heldBy bookkeeping runs in the
+// navigation store's page-read commit and every history-entry write.
+// Trimmed from 57475B before raising (finishData and finishError spread the
+// snapshot, adopt rebuilds it in one object, the WeakMap reads drop their
+// object guard). By the owner's rule above: 57426B + 256B, rounded up to the
+// next 128B step.
+const ROUTER_CHUNK_GZIP_MAX = 56.375 * 1024;
 const EAGER_MANIFEST_GZIP_MAX = 2 * 1024;
 
 const DEFAULT_APPS = [
