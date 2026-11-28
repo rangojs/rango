@@ -66,10 +66,10 @@ type HistoryCacheEntry = [
  * layout copy beside a re-run route copy holds two). `previous` is the
  * result of the read it replaced, or `result` when none did. A write of the
  * page's segments swaps a loader segment that holds base, previous or any
- * other read's result (readResults) for `result`: a commit that reconciled
- * from the entry before several reads landed holds an older one of them.
- * readResults holds objects only, so an older result that is a string or a
- * number is known only while it is `previous`.
+ * other read's result (LoaderStore.isReadResult) for `result`: a commit that
+ * reconciled from the entry before several reads landed holds an older one
+ * of them. The loader store records objects only, so an older result that is
+ * a string or a number is known only while it is `previous`.
  */
 interface PageReadRecord {
   readonly base: readonly unknown[];
@@ -86,9 +86,6 @@ const NO_PAGE_READ: PageRead = {
 };
 
 const NO_PAGE_READ_LOADERS: ReadonlySet<string> = new Set();
-
-const isObject = (value: unknown): value is object =>
-  typeof value === "object" && value !== null;
 
 /** The distinct loader data of `loaderId`'s segments, in segment order. */
 function loaderDataOf(
@@ -326,10 +323,13 @@ export function createNavigationStore(
     Map<string, PageReadRecord>
   >();
 
-  // Every result a page read landed. The server never sends one, so a loader
+  // Client loader data. It records every result a page read landed, with
+  // its page (LoaderStore.landed): the server never sends one, so a loader
   // segment holding one was copied from an entry before a newer read landed.
-  // Weak, so a page that polls keeps no chain of old results.
-  const readResults = new WeakSet<object>();
+  const loaders = new LoaderStore(() => {
+    const shown = entryAt(currentHistoryKey)?.[1];
+    return shown && pageOf(shown);
+  });
 
   // The page each entry's segments array shows. An array written under a key
   // in place of another (an action, a refresh, a new visit of the URL) shows
@@ -367,7 +367,7 @@ export function createNavigationStore(
     return (
       value === record.previous ||
       record.base.includes(value) ||
-      (isObject(value) && readResults.has(value))
+      loaders.isReadResult(value)
     );
   }
 
@@ -637,7 +637,7 @@ export function createNavigationStore(
   }
 
   const store: NavigationStore = {
-    loaders: new LoaderStore(),
+    loaders,
 
     // ========================================================================
     // Internal Segment State (for bridges)
@@ -777,7 +777,7 @@ export function createNavigationStore(
             if (!records) pageReads.set(segments, (records = new Map()));
             records.set(loaderId, record);
           });
-          if (isObject(result)) readResults.add(result);
+          loaders.landed(result, page);
           landed = record;
           return true;
         },
@@ -859,6 +859,16 @@ export function createNavigationStore(
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
           historyCache.shift();
+        }
+      }
+      // A landed read's result that another page's entry now holds (a
+      // navigation that kept the loader) is no longer one page's: marked
+      // here, which a commit that shows another page runs before it emits
+      // that page's tree (LoaderStore.readPage).
+      const page = pageOf(segments);
+      for (const segment of segments) {
+        if (segment.loaderId !== undefined) {
+          loaders.heldBy(segment.loaderData, page);
         }
       }
     },

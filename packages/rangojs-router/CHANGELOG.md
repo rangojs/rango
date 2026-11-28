@@ -1,5 +1,75 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a loader refresh that lands while a server action's update is on its way stays on the page
+
+**Before.** Since 0.37.0 a refresh (`load()` / `refetch()`, a
+`useRefreshLoaders()` refresh) is kept in the page's history entry. An update
+that keeps the loader, such as a server action on a route whose loader is
+bound with `revalidate(false)`, builds its page from that entry. Once one
+refresh had landed, the next such update reset the loader's readers when it
+committed. A newer refresh that had landed in the meantime flipped back to
+the older one, under the newer title. A refresh still in flight was dropped:
+`isLoading` fell to `false` and its reply never showed. Back onto the page
+then showed the newer data, which the screen never had.
+
+**Now.** The update leaves the readers alone: the newest refresh stays on
+screen with its title, and one in flight keeps `isLoading` until it lands.
+
+```tsx
+"use client";
+function Chat() {
+  const { data, load } = useLoader(ChatLoader);
+  useEffect(() => {
+    const id = setInterval(() => void load(), 5000);
+    return () => clearInterval(id);
+  }, [load]);
+  return (
+    <form action={markRead}>
+      <h1>{data.name}</h1>
+      <button>Mark read</button>
+    </form>
+  );
+}
+// urls: loader(ChatLoader, () => [revalidate(false)])
+// A poll replies while markRead's update is on its way: its data stays.
+```
+
+- It holds for `useLoader`, a `key` reader and a `refreshGroup` reader, for
+  several refreshes in that window, and on a page reached by a navigation
+  that kept a layout's loader.
+- Each reader keeps the refresh it asked for: a plain reader and a `key`
+  reader of one loader that each refreshed no longer both switch to the
+  newest one.
+- A reader of the loader that mounts with the update shows the newest
+  refresh too.
+- A refresh that failed keeps its `error` across the update, until the next
+  refresh. Before, the update cleared it.
+- A refresh in flight across the update that then fails reports its failure
+  as any refresh does (`error`, or the error boundary with `throwOnError`).
+  Before, the update dropped it silently.
+- Only what belongs to the page stays: on a page reached by a navigation
+  that kept the loader, the update never shows the previous page's refresh,
+  nor the reply to a refresh sent from it.
+- An action or a navigation that re-runs the loader replaces a refresh with
+  the server's data, as before. A navigation to another page, Back and
+  Forward included, that hands the readers other data still resets them to
+  it, as before, even when it kept the loader. A navigation to the URL on
+  screen counts as an update of the page: its refresh stays.
+- A loader whose result is a string, a number, a boolean or `null` still
+  resets, as before.
+
+Nothing changes in your code.
+
+Testing: `renderRoute`'s `action()` and `navigate()` keep a loader when the
+data they carry for it is the object the page on screen was given (the
+render's data when the call names none): its segment comes from the page's
+history entry, as production keeps a loader the server did not send, so a
+`load()` that landed before stays the page's data. Pass a new object to
+re-run the loader. `refresh()` re-runs every loader, as production's
+`router.refresh()` does.
+
 ## 0.37.0 (2026-11-19)
 
 ### Added: client components push handle values with `usePushHandle()` ([#1447](https://github.com/rangojs/rango/pull/1447))

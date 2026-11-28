@@ -1016,4 +1016,425 @@ describe("LoaderStore", () => {
       expect(store.getSnapshot("L::k").valueFor.has(5)).toBe(true);
     });
   });
+
+  // A page read's result lands on its page's history entries, and a later
+  // tree of that page hands it to a reader as the loader's data. Only that
+  // page's trees can, while no other page's entry holds it
+  // (navigation-store.ts calls landed and heldBy).
+  describe("the page a landed read's result is exclusive to", () => {
+    const pageA = { page: "a" };
+    const pageB = { page: "b" };
+
+    it("records the page a result first landed on", () => {
+      const result = { v: 1 };
+      expect(store.isReadResult(result)).toBe(false);
+      expect(store.readPage(result)).toBeUndefined();
+      store.landed(result, pageA);
+      expect(store.isReadResult(result)).toBe(true);
+      expect(store.readPage(result)).toBe(pageA);
+    });
+
+    it("an entry of the same page holding it leaves it that page's", () => {
+      const result = { v: 1 };
+      store.landed(result, pageA);
+      store.heldBy(result, pageA);
+      store.landed(result, pageA);
+      expect(store.readPage(result)).toBe(pageA);
+    });
+
+    it("an entry of another page holding it makes it shared, for good", () => {
+      const result = { v: 1 };
+      store.landed(result, pageA);
+      store.heldBy(result, pageB);
+      expect(store.readPage(result)).toBeUndefined();
+      expect(store.isReadResult(result)).toBe(true);
+      store.heldBy(result, pageA);
+      store.landed(result, pageA);
+      expect(store.readPage(result)).toBeUndefined();
+    });
+
+    it("landing again from another page makes it shared", () => {
+      const result = { v: 1 };
+      store.landed(result, pageA);
+      store.landed(result, pageB);
+      expect(store.readPage(result)).toBeUndefined();
+    });
+
+    it("data no read landed stays no page's, whoever holds it", () => {
+      const sent = { v: 0 };
+      store.heldBy(sent, pageA);
+      expect(store.isReadResult(sent)).toBe(false);
+      expect(store.readPage(sent)).toBeUndefined();
+    });
+
+    it("a result that is not an object has no identity to record", () => {
+      for (const value of ["text", 5, true, null, undefined]) {
+        store.landed(value, pageA);
+        store.heldBy(value, pageB);
+        expect(store.isReadResult(value)).toBe(false);
+        expect(store.readPage(value)).toBeUndefined();
+      }
+    });
+  });
+
+  // Each snapshot carries the page its latest request was sent from, as the
+  // store that owns this one names it.
+  describe("the page a bucket's latest request was sent from", () => {
+    let page: object | undefined;
+    let paged: LoaderStore;
+
+    beforeEach(() => {
+      page = { url: "/a" };
+      paged = new LoaderStore(() => page);
+    });
+
+    it("the empty snapshot is no page's", () => {
+      expect(EMPTY_LOADER_SNAPSHOT.page).toBeUndefined();
+    });
+
+    it("beginRequest stamps it, finishData, finishError and setLoading carry it", () => {
+      const a = page;
+      const r1 = paged.reserveRequestId("L");
+      paged.beginRequest("L", r1);
+      expect(paged.getSnapshot("L").page).toBe(a);
+      page = { url: "/b" };
+      paged.finishData("L", r1, { v: 1 });
+      expect(paged.getSnapshot("L").page).toBe(a);
+
+      const r2 = paged.reserveRequestId("L");
+      paged.beginRequest("L", r2);
+      const b = page;
+      expect(paged.getSnapshot("L").page).toBe(b);
+      paged.setLoading("L", r2, false);
+      expect(paged.getSnapshot("L").page).toBe(b);
+      page = { url: "/c" };
+      paged.finishError("L", r2, new Error("boom"));
+      expect(paged.getSnapshot("L")).toMatchObject({
+        page: b,
+        hasValue: true,
+        isLoading: false,
+      });
+    });
+
+    it("a request already loading for the same readers from another page takes the new page", () => {
+      const reader = { route: "data" };
+      paged.subscribe("L", () => {}, {
+        loaderId: "L",
+        routeData: () => reader,
+      });
+      const r1 = paged.reserveRequestId("L");
+      paged.beginRequest("L", r1);
+      const loading = paged.getSnapshot("L");
+      const r2 = paged.reserveRequestId("L");
+      paged.beginRequest("L", r2);
+      expect(paged.getSnapshot("L")).toBe(loading);
+
+      page = { url: "/b" };
+      const r3 = paged.reserveRequestId("L");
+      paged.beginRequest("L", r3);
+      const moved = paged.getSnapshot("L");
+      expect(moved).not.toBe(loading);
+      expect(moved).toMatchObject({ page, requestId: r3, isLoading: true });
+      expect([...moved.requestFor]).toEqual([reader]);
+    });
+
+    it("a store given no page stamps undefined", () => {
+      const r = store.reserveRequestId("L");
+      store.beginRequest("L", r);
+      store.finishData("L", r, { v: 1 });
+      expect(store.getSnapshot("L").page).toBeUndefined();
+    });
+  });
+
+  // A reader handed new data by a commit asks the store whether the data is
+  // a commit that kept the loader (use-loader.tsx): each sticky bucket of the
+  // family keeps its value and its request when each is the data's, owned by
+  // the readers' current data, and loses what is not.
+  describe("adopt", () => {
+    const pageA = { url: "/a" };
+    const pageB = { url: "/b" };
+    let page: object = pageA;
+    let paged: LoaderStore;
+    const sent = { v: 0 };
+    const NO_OWNERS: ReadonlySet<unknown> = new Set();
+
+    beforeEach(() => {
+      page = pageA;
+      paged = new LoaderStore(() => page);
+    });
+
+    /** A route reader of `bucket` whose committed data is `current()`. */
+    const reader = (bucket: string, current: () => unknown) => {
+      const listener = vi.fn();
+      paged.subscribe(bucket, listener, { loaderId: "L", routeData: current });
+      return listener;
+    };
+
+    /** A read of `bucket` from the page shown now, landed as `value`. */
+    const read = (bucket: string, value: object): void => {
+      const r = paged.reserveRequestId(bucket);
+      paged.beginRequest(bucket, r);
+      paged.finishData(bucket, r, value);
+      paged.landed(value, page);
+    };
+
+    it("owns: a member, or a read exclusive to the page; never a shared, another page's or a primitive result", () => {
+      const member = { v: 0 };
+      const owners = new Set<unknown>([member]);
+      const mine = { v: 1 };
+      paged.landed(mine, pageA);
+      const shared = { v: 2 };
+      paged.landed(shared, pageA);
+      paged.heldBy(shared, pageB);
+      const onB = { v: 3 };
+      paged.landed(onB, pageB);
+
+      expect(paged.owns(member, owners, pageB)).toBe(true);
+      expect(paged.owns(member, owners, undefined)).toBe(true);
+      expect(paged.owns(mine, NO_OWNERS, pageA)).toBe(true);
+      expect(paged.owns(mine, NO_OWNERS, pageB)).toBe(false);
+      expect(paged.owns(shared, NO_OWNERS, pageA)).toBe(false);
+      expect(paged.owns(onB, NO_OWNERS, pageA)).toBe(false);
+      expect(paged.owns({ v: 4 }, NO_OWNERS, pageA)).toBe(false);
+      expect(paged.owns("text", NO_OWNERS, pageA)).toBe(false);
+      // No page: only membership counts, even for a landed result.
+      expect(paged.owns(mine, NO_OWNERS, undefined)).toBe(false);
+      expect(paged.owns(undefined, NO_OWNERS, undefined)).toBe(false);
+    });
+
+    it("a read of the bucket's page hands the owner sets to the readers' current data", () => {
+      let held: unknown = sent;
+      const listener = reader("L", () => held);
+      const first = { v: 1 };
+      const second = { v: 2 };
+      read("L", first);
+      read("L", second);
+      listener.mockClear();
+      // The commit's tree carries the first read, from the entry.
+      held = first;
+      expect(paged.adopt("L", first)).toBe(true);
+      expect(paged.getSnapshot("L")).toEqual({
+        value: second,
+        hasValue: true,
+        error: null,
+        isLoading: false,
+        requestId: 2,
+        valueFor: new Set([first]),
+        requestFor: new Set([first]),
+        page: pageA,
+      });
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("a read in flight from the result's page is for it", () => {
+      let held: unknown = sent;
+      reader("L", () => held);
+      const first = { v: 1 };
+      read("L", first);
+      const r = paged.reserveRequestId("L");
+      paged.beginRequest("L", r);
+      held = first;
+      expect(paged.adopt("L", first)).toBe(true);
+      expect(paged.getSnapshot("L")).toMatchObject({
+        value: first,
+        isLoading: true,
+        requestId: r,
+        page: pageA,
+      });
+      expect([...paged.getSnapshot("L").requestFor]).toEqual([first]);
+      expect([...paged.getSnapshot("L").valueFor]).toEqual([first]);
+    });
+
+    it("a value of the result's page is kept, and a failed request of another page dropped", () => {
+      let held: unknown = sent;
+      reader("L", () => held);
+      const first = { v: 1 };
+      read("L", first);
+      // A request from another page that failed leaves the value of page a.
+      page = pageB;
+      const r = paged.reserveRequestId("L");
+      paged.beginRequest("L", r);
+      paged.finishError("L", r, new Error("boom"));
+      held = first;
+      expect(paged.adopt("L", first)).toBe(true);
+      expect(paged.getSnapshot("L")).toEqual({
+        value: first,
+        hasValue: true,
+        error: null,
+        isLoading: false,
+        requestId: r,
+        valueFor: new Set([first]),
+        requestFor: new Set([first]),
+        page: pageB,
+      });
+    });
+
+    it("a value kept beside a request in flight that is not the data's: the request is dropped, and its reply ignored", () => {
+      let held: unknown = sent;
+      const listener = reader("L", () => held);
+      const first = { v: 1 };
+      read("L", first);
+      // A read in flight, sent from another page.
+      page = pageB;
+      const r = paged.reserveRequestId("L");
+      paged.beginRequest("L", r);
+      page = pageA;
+      held = first;
+      listener.mockClear();
+      expect(paged.adopt("L", first)).toBe(true);
+      const kept = paged.getSnapshot("L");
+      expect(kept).toEqual({
+        value: first,
+        hasValue: true,
+        error: null,
+        isLoading: false,
+        requestId: r,
+        valueFor: new Set([first]),
+        requestFor: new Set([first]),
+        page: pageB,
+      });
+      expect(listener).toHaveBeenCalledTimes(1);
+      // As clear() drops one: its reply can no longer commit.
+      paged.finishData("L", r, { v: "late" });
+      paged.setLoading("L", r, false);
+      paged.finishError("L", r, new Error("late"));
+      expect(paged.getSnapshot("L")).toBe(kept);
+      expect(paged.holdsRequest("L", r)).toBe(false);
+    });
+
+    it("a request in flight kept beside a value that is not the data's: the value is dropped", () => {
+      let held: unknown = sent;
+      reader("L", () => held);
+      const shared = { v: 1 };
+      read("L", shared);
+      // Another page's entry took the result: it is no page's own now.
+      paged.heldBy(shared, pageB);
+      const r = paged.reserveRequestId("L");
+      paged.beginRequest("L", r);
+      const mine = { v: 2 };
+      paged.landed(mine, pageA);
+      held = mine;
+      expect(paged.adopt("L", mine)).toBe(true);
+      expect(paged.getSnapshot("L")).toEqual({
+        value: undefined,
+        hasValue: false,
+        error: null,
+        isLoading: true,
+        requestId: r,
+        valueFor: new Set(),
+        requestFor: new Set([mine]),
+        page: pageA,
+      });
+      // The kept request still commits, for the data's readers.
+      const reply = { v: 3 };
+      paged.finishData("L", r, reply);
+      expect(paged.getSnapshot("L")).toMatchObject({
+        value: reply,
+        hasValue: true,
+        isLoading: false,
+      });
+      expect([...paged.getSnapshot("L").valueFor]).toEqual([mine]);
+    });
+
+    it("a failed request of the data's page keeps its error", () => {
+      let held: unknown = sent;
+      reader("L", () => held);
+      const first = { v: 1 };
+      read("L", first);
+      const r = paged.reserveRequestId("L");
+      paged.beginRequest("L", r);
+      const boom = new Error("boom");
+      paged.finishError("L", r, boom);
+      held = first;
+      expect(paged.adopt("L", first)).toBe(true);
+      expect(paged.getSnapshot("L")).toMatchObject({
+        value: first,
+        error: boom,
+        isLoading: false,
+      });
+      expect([...paged.getSnapshot("L").requestFor]).toEqual([first]);
+    });
+
+    it("data already in the owner sets is for the bucket; an unchanged bucket is not written", () => {
+      const listener = reader("L", () => sent);
+      read("L", { v: 1 });
+      const before = paged.getSnapshot("L");
+      listener.mockClear();
+      expect(paged.adopt("L", sent)).toBe(true);
+      expect(paged.getSnapshot("L")).toBe(before);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["other data", () => ({ v: 0 })],
+      [
+        "a shared result",
+        () => {
+          const shared = { v: 2 };
+          paged.landed(shared, pageA);
+          paged.heldBy(shared, pageB);
+          return shared;
+        },
+      ],
+      [
+        "another page's result",
+        () => {
+          const onB = { v: 3 };
+          paged.landed(onB, pageB);
+          return onB;
+        },
+      ],
+      ["a string", () => "text"],
+    ])(
+      "%s keeps neither the value nor the request: the bucket is cleared",
+      (_, make) => {
+        const listener = reader("L", () => sent);
+        read("L", { v: 1 });
+        const r = paged.reserveRequestId("L");
+        paged.beginRequest("L", r);
+        listener.mockClear();
+        expect(paged.adopt("L", make())).toBe(false);
+        expect(paged.getSnapshot("L")).toBe(EMPTY_LOADER_SNAPSHOT);
+        expect(listener).toHaveBeenCalledTimes(1);
+        paged.finishData("L", r, { v: "late" });
+        expect(paged.getSnapshot("L")).toBe(EMPTY_LOADER_SNAPSHOT);
+      },
+    );
+
+    it("a bucket with no route reader (not sticky) is left alone", () => {
+      const listener = vi.fn();
+      paged.subscribe("L::e", listener, { loaderId: "L", ephemeral: true });
+      read("L::e", { v: 1 });
+      const before = paged.getSnapshot("L::e");
+      listener.mockClear();
+      expect(paged.adopt("L", { v: 0 })).toBe(false);
+      expect(paged.getSnapshot("L::e")).toBe(before);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("an empty family, or one whose buckets are empty, is new route data", () => {
+      const result = { v: 1 };
+      paged.landed(result, pageA);
+      expect(paged.adopt("L", result)).toBe(false);
+      reader("L", () => sent);
+      expect(paged.adopt("L", result)).toBe(false);
+      expect(paged.getSnapshot("L")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+
+    it("clears the family's buckets that keep nothing of the data, as clearFamily would", () => {
+      let held: unknown = sent;
+      reader("L", () => held);
+      reader("L::k", () => held);
+      const plain = { v: 1 };
+      read("L", plain);
+      // The keyed bucket's read was sent from another page.
+      page = pageB;
+      read("L::k", { v: 2 });
+      page = pageA;
+      held = plain;
+      expect(paged.adopt("L", plain)).toBe(true);
+      expect([...paged.getSnapshot("L").valueFor]).toEqual([plain]);
+      expect(paged.getSnapshot("L::k")).toBe(EMPTY_LOADER_SNAPSHOT);
+    });
+  });
 });

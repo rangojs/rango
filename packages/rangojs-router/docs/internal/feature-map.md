@@ -684,7 +684,10 @@ server projection.
   read's data and values together for Back (its loader segments swapped in
   place, the read
   record carried over by `cacheSegmentsForHistory` and
-  `replaceEntrySegments`); a late document push merges around the loaders a
+  `replaceEntrySegments`); a landed result is recorded with its page
+  (`LoaderStore.landed`, `heldBy`, `readPage`), and `LoaderStore.adopt` keeps
+  a reader's buckets across an update that hands back the page's own read; a
+  late document push merges around the loaders a
   read refreshed (`applyLateHandles`, `mergeLateHandleData`,
   `EventController.setLateHandleData`); a push the body makes after it
   returned is not in the reply and warns in development

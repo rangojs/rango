@@ -350,12 +350,16 @@ function useLoaderInternal<T>(
   // A route reader shows a refresh only when it was requested for this
   // reader's route data: never another page's, nor one a navigation replaced
   // (the rule the reset effect below applies when a mounted reader's data
-  // changes, here also for a reader that mounts).
+  // changes, here also for a reader that mounts). A landed read's result
+  // that only one page's entries held, handed back by that page's tree, is
+  // for that page's value and request too (LoaderStore.owns). Without a
+  // store (the server) the snapshot is empty, so no owner set holds the data.
+  const isFor = (owners: ReadonlySet<unknown>, page: unknown): boolean =>
+    !hasContextData || (loaders?.owns(contextData, owners, page) ?? false);
   const sharedValue =
     sharedSnapshot.hasValue &&
-    (!hasContextData || sharedSnapshot.valueFor.has(contextData));
-  const sharedRequest =
-    !hasContextData || sharedSnapshot.requestFor.has(contextData);
+    isFor(sharedSnapshot.valueFor, loaders?.readPage(sharedSnapshot.value));
+  const sharedRequest = isFor(sharedSnapshot.requestFor, sharedSnapshot.page);
   useEffect(() => {
     if (!loaders) return;
     const initial = loaders.getSnapshot(bucketKey);
@@ -431,16 +435,18 @@ function useLoaderInternal<T>(
   // and is dropped — fixes the race where a stale fetch overwrites the
   // new route's context.
   useEffect(() => {
-    if (prevContextDataRef.current !== contextData) {
-      setLocalFetchedData({ has: false, value: undefined });
-      setLocalIsLoading(false);
-      setLocalError(null);
-      lastSharedRequestIdRef.current = null;
-      // Reset every sticky bucket of this loader (keyed or not). Ephemeral
-      // (unregistered keyed) buckets are left to their refcount lifecycle.
-      loaders?.clearFamily(loaderId);
-      prevContextDataRef.current = contextData;
-    }
+    if (prevContextDataRef.current === contextData) return;
+    prevContextDataRef.current = contextData; // adopt reads it (routeDataOf)
+    setLocalFetchedData({ has: false, value: undefined });
+    setLocalIsLoading(false);
+    setLocalError(null);
+    // A commit that kept the loader hands back the page's own read: the
+    // family's buckets stay, owned by the new data (LoaderStore.adopt).
+    if (loaders?.adopt(loaderId, contextData)) return;
+    lastSharedRequestIdRef.current = null;
+    // Reset every sticky bucket of this loader (keyed or not). Ephemeral
+    // (unregistered keyed) buckets are left to their refcount lifecycle.
+    loaders?.clearFamily(loaderId);
   }, [contextData, loaderId, loaders]);
 
   // Read priority: a committed parameterized load() result overrides the shared

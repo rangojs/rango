@@ -46,6 +46,12 @@
  *     lane production's Back uses (useNavigation() idle), with the loader
  *     data current then. The prefetch request, its decode and the HTTP cache
  *     are e2e territory.
+ *   - navigate() and action() keep a loader whose data they carry as the
+ *     object the page on screen was given: its segment comes from that
+ *     page's history entry, as production's reconcile keeps a segment the
+ *     server did not send, so a load() that landed before stays the page's
+ *     data (keepHeldLoaders). A new object re-runs the loader, and so does
+ *     refresh(), as production's router.refresh() re-runs every loader.
  *   - useLoader().load() and a refreshGroup refresh reach the loader endpoint:
  *     renderRoute answers a GET for `_rsc_loader=<id>` with the last value the
  *     test gave that loader (the render seeds or respondToLoads()),
@@ -1223,6 +1229,8 @@ export async function renderRoute(
     segments: ResolvedSegment[];
     params: Record<string, string>;
     state: unknown;
+    /** The loader data the response that wrote the page carried. */
+    seeds: Record<string, unknown>;
   }
   const entries = new Map<number, EntryPage>();
   const entryIndex = (): number => {
@@ -1235,6 +1243,7 @@ export async function renderRoute(
     segments: initialSegments,
     params: initialMatch.params,
     state: window.history.state,
+    seeds: { ...loaderData },
   });
   // A write the router makes to the entry history is on (a flash read,
   // Def.write() or delete()) stays that entry's state, as production's
@@ -1302,6 +1311,27 @@ export async function renderRoute(
         ? liveHandleDataForCache(eventController, store, key)
         : eventController.getHandleState().data,
     );
+  };
+  /**
+   * Keeps the history entry's segment for each loader whose data in `seeds`
+   * is the object the page on screen was given, as production's reconcile
+   * keeps a segment the server did not send (browser/segment-reconciler.ts).
+   */
+  const keepHeldLoaders = (
+    segments: ResolvedSegment[],
+    seeds: Record<string, unknown>,
+  ): ResolvedSegment[] => {
+    const shown = entries.get(entryOnScreen)?.seeds;
+    const held = store.getCachedSegments(store.getHistoryKey())?.segments;
+    if (!shown || !held) return segments;
+    return segments.map((segment) => {
+      const loaderId = segment.type === "loader" ? segment.loaderId : undefined;
+      return loaderId !== undefined &&
+        loaderId in shown &&
+        shown[loaderId] === seeds[loaderId]
+        ? (held.find((kept) => kept.id === segment.id) ?? segment)
+        : segment;
+    });
   };
   let popGeneration = 0;
   // The navigation's lifecycle, as navigation-transaction.ts drives it:
@@ -1405,12 +1435,15 @@ export async function renderRoute(
       : undefined;
     const nextUrl = new URL(target, TEST_ORIGIN);
     const match = resolve(nextUrl.pathname);
-    const segments = buildSegments(
-      routes,
-      match.params,
-      seedLoaders(navOptions?.seeds ?? loaderData, navOptions?.loaders),
-      mount,
+    const seeds = seedLoaders(
+      navOptions?.seeds ?? loaderData,
+      navOptions?.loaders,
     );
+    const built = buildSegments(routes, match.params, seeds, mount);
+    // refresh() re-runs every loader, as production's router.refresh() does.
+    const segments = navOptions?.sameEntry
+      ? built
+      : keepHeldLoaders(built, seeds);
     const metadata = makeMetadata(nextUrl.pathname, segments, match.params);
     // The destination's handle pushes arrive on the response's handle
     // stream, as production's do, behind the page's commit.
@@ -1482,6 +1515,7 @@ export async function renderRoute(
       segments,
       params: match.params,
       state: window.history.state,
+      seeds,
     });
     cacheCommit(nextUrl, segments, navOptions?.sameEntry === true);
     const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
@@ -1552,7 +1586,11 @@ export async function renderRoute(
     handles?: ReadonlyArray<HandleSeed>,
   ): Promise<{ commit(): Promise<void> }> => {
     const match = resolve(url.pathname);
-    const segments = buildSegments(routes, match.params, loaderData, mount);
+    const seeds = { ...loaderData };
+    const segments = keepHeldLoaders(
+      buildSegments(routes, match.params, seeds, mount),
+      seeds,
+    );
     const metadata = makeMetadata(url.pathname, segments, match.params);
     if (handles)
       metadata.handles = handleStream(seedHandles({}, handles, segments));
@@ -1580,7 +1618,7 @@ export async function renderRoute(
       commit: async () => {
         store.setSegmentIds(segments.map((s) => s.id));
         const shown = entries.get(entryOnScreen);
-        if (shown) shown.segments = segments;
+        if (shown) Object.assign(shown, { segments, seeds });
         cacheCommit(url, segments, true);
         const emit: UpdateSubscriber = (update) => store.emitUpdate(update);
         await act(async () => {
