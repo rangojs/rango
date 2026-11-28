@@ -18,11 +18,16 @@ import { expect, test, type Page } from "@playwright/test";
  * under `?id=2` (lrh-next). `${base}/late?lateHold=<probe>` is the same page
  * with a second loader that pushes the crumb `Late` on the document's late
  * handle channel once a request to `${base}/late?lateRelease=<probe>`
- * released it.
+ * released it. `${base}/kept` is the chat page again, its loader kept across
+ * actions (`revalidate(false)`), with a second loader's tally (lrh-tally) and
+ * a button (lrh-act) whose action bumps it: the tally loader's re-run then
+ * holds its data back for 2 s, so the action's response stays open after the
+ * browser built the update's tree.
  *
  * Back onto a refreshed page shows it as it was left, its data and the title
  * and crumb the refresh pushed together, and a late push from the document
- * never undoes a refresh's values.
+ * never undoes a refresh's values. A refresh that lands while an action's
+ * update is on its way stays when that update commits.
  */
 
 export interface LoaderReadHandlesScenarioOptions {
@@ -34,6 +39,13 @@ export interface LoaderReadHandlesScenarioOptions {
 }
 
 const NAME = /^Chat \d+$/;
+
+/**
+ * How long the kept-loader case holds a read's reply back. It is shorter
+ * than the fixture action's TALLY_HOLD_MS (2 s, loader-read-handles.actions.ts):
+ * the read lands after the update's tree is built and before it commits.
+ */
+const READ_DELAY_MS = 400;
 
 const testId = (page: Page, id: string) =>
   page.locator(`[data-testid="${id}"]`);
@@ -159,5 +171,61 @@ export function runLoaderReadHandlesTests(
     await expect(testId(page, "lrh-title")).toHaveText(`LRH ${refreshed}`);
     await expect(page).toHaveTitle(new RegExp(escape(`LRH ${refreshed}`)));
     await expect(testId(page, "lrh-name")).toHaveText(refreshed);
+  });
+
+  test("a load() that lands while an action's update is on its way stays when the update commits", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(url(`${base}/kept`));
+    await waitForHydration(page);
+    const first = await nameAfter(page, null);
+
+    // A read lands: the page's history entry holds its data from here on.
+    await testId(page, "lrh-load").click();
+    const refreshed = await nameAfter(page, first);
+    await expectHandlesOf(page, refreshed);
+    const tally = (await testId(page, "lrh-tally").textContent()) ?? "";
+
+    // The action keeps the chat's loader and re-runs the tally's, which
+    // holds its data back for 2 s: the browser builds the update's tree from
+    // the first rows of the response, with the chat data the entry holds
+    // then, and commits it once the tally is in.
+    const answered = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`${base}/kept`),
+    );
+    await testId(page, "lrh-act").click();
+    await answered;
+
+    // The read's reply is held back, so it lands after that tree was built
+    // and well before the tally is in.
+    await page.route(
+      (requested) => requested.searchParams.has("_rsc_loader"),
+      async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, READ_DELAY_MS));
+        await route.continue();
+      },
+    );
+    await testId(page, "lrh-load").click();
+    const latest = await nameAfter(page, refreshed);
+    // The update has not committed yet.
+    await expect(testId(page, "lrh-tally")).toHaveText(tally);
+
+    await expect(testId(page, "lrh-tally")).not.toHaveText(tally, {
+      timeout: 15000,
+    });
+    // The read is newer than the chat data the update carried.
+    await expect(testId(page, "lrh-name")).toHaveText(latest);
+    await expectHandlesOf(page, latest);
+
+    // The entry holds it too: Back onto the page shows it.
+    await testId(page, "lrh-next").click();
+    await expect(page).toHaveURL(/[?&]id=2$/);
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`${escape(base)}/kept$`));
+    await expect(testId(page, "lrh-name")).toHaveText(latest);
+    await expectHandlesOf(page, latest);
   });
 }

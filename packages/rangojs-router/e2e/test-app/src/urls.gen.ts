@@ -372,6 +372,7 @@ export const routes = {
   "loaderCookie.reverseTest": "/loader-cookie/reverse-test",
   loaderParams: "/loader-params",
   loaderReadHandlesChat: "/loader-read-handles/chat",
+  loaderReadHandlesKept: "/loader-read-handles/kept",
   loaderReadHandlesLate: "/loader-read-handles/late",
   "loaderReverse.detail": "/loader-reverse/:id",
   "loaderReverse.index": "/loader-reverse",

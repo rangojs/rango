@@ -122,8 +122,16 @@ history-cache restore does; a stale entry's revalidation and a restore that
 fetches stay at e2e. `router.prefetch(url)` keeps a page as a prefetch made
 then carries it, and `router.action({ loaders, keepClientCache })` lands a
 server action's response through production's store, which marks every
-prefetch stale (#1329). A `navigate(url)` to a stale prefetch commits it at
-once and then revalidates the page with the post-write data in Back's lane,
+prefetch stale (#1329). A `navigate()` or an `action()` keeps a loader when
+the data it carries for it is the object the page on screen was given (the
+render's data when the call names none): the loader's segment then comes
+from the page's history entry, as production keeps a segment the server did
+not send (`browser/segment-reconciler.ts`), so a `load()` that landed before
+stays the page's data. A new object re-runs the loader, and so does
+`refresh()`, as production's `router.refresh()` re-runs every loader
+(`src/testing/__tests__/render-route-loader-read-commit.test.tsx`). A
+`navigate(url)` to a stale prefetch commits it at once and then revalidates
+the page with the post-write data in Back's lane,
 `useNavigation()` idle, so "the click shows the prefetch, then the write" is
 unit-testable (`src/testing/__tests__/render-route-stale-prefetch.test.tsx`).
 Production's own guards decide that revalidation

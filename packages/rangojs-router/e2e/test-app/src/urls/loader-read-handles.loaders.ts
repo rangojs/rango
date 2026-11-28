@@ -1,4 +1,5 @@
 import { Breadcrumbs, createLoader, Meta } from "@rangojs/router";
+import { readLoaderReadHandlesTally } from "./loader-read-handles.store.js";
 
 // Registered fetchable loader of /loader-read-handles/chat
 // (loader-read-handles.tsx): names the chat by its run, and writes the page's
@@ -15,6 +16,15 @@ export const LoaderReadHandlesChat = createLoader(
     return { name };
   },
   true,
+);
+
+// Registered on /loader-read-handles/kept beside the chat loader, which that
+// page keeps across an action: this one re-runs after it, and holds its data
+// back when the action asked for that (loader-read-handles.store.ts).
+export const LoaderReadHandlesTally = createLoader(
+  async (): Promise<{ tally: number }> => ({
+    tally: await readLoaderReadHandlesTally(),
+  }),
 );
 
 // The ?lateHold probes a request with ?lateRelease has released.
