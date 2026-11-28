@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.37.1 (2026-11-28)
 
-### Fixed: a loader refresh that lands while a server action's update is on its way stays on the page
+### Fixed: a loader refresh that lands while a server action's update is on its way stays on the page ([#1458](https://github.com/rangojs/rango/pull/1458))
 
 **Before.** Since 0.37.0 a refresh (`load()` / `refetch()`, a
 `useRefreshLoaders()` refresh) is kept in the page's history entry. An update
